@@ -1,7 +1,7 @@
-module VeilLiteTest where
+module VeilTest where
 
 import Daml.Script
-import VeilLite
+import Veil
 
 testSkeletonCompiles : Script ()
 testSkeletonCompiles = script do

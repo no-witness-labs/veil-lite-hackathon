@@ -1,8 +1,8 @@
-# Veil Lite — Confidential Lending on Canton
+# Veil — Confidential Lending on Canton
 
 > Hackathon-scoped Canton app for the Encode Build on Canton Hackathon.
 
-Veil Lite is a deliberately small proof-of-concept for **private bilateral secured lending** on Canton.
+Veil is a deliberately small proof-of-concept for **private bilateral secured lending** on Canton.
 A lender and borrower are assumed to already know each other; the lender privately offers a loan, the borrower accepts, collateral is locked, and only the lender, borrower, and optional regulator can see the resulting position.
 
 ## Why this exists
@@ -61,13 +61,13 @@ If `dpm` is not installed, install/activate the Canton/Daml SDK first, then reru
 ## Directory map
 
 ```text
-veil-lite-hackathon/
+veil/
 ├── README.md
 ├── daml.yaml
 ├── daml/
-│   └── VeilLite.daml
+│   └── Veil.daml
 ├── test/
-│   └── VeilLiteTest.daml
+│   └── VeilTest.daml
 ├── docs/
 │   ├── PRD.md
 │   ├── CONTEXT.md

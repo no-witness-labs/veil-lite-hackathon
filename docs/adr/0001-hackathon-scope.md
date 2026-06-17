@@ -1,4 +1,4 @@
-# ADR 0001: Scope Veil Lite as a separate hackathon MVP
+# ADR 0001: Scope Veil as a separate hackathon MVP
 
 Date: 2026-06-15
 
@@ -17,7 +17,7 @@ The hackathon rewards technical execution, originality, user experience, and rea
 Create a new directory outside `lending/`:
 
 ```text
-/Users/hoangvu/hade/no-witness-labs/canton/veil-lite-hackathon
+/Users/hoangvu/hade/no-witness-labs/canton/veil
 ```
 
 The project will implement a focused Canton/Daml proof-of-concept for private bilateral secured lending.
