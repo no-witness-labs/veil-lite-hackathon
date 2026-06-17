@@ -1,0 +1,22 @@
+module VeilLiteTest where
+
+import Daml.Script
+import VeilLite
+
+testSkeletonCompiles : Script ()
+testSkeletonCompiles = script do
+  lender <- allocateParty "Lender"
+  borrower <- allocateParty "Borrower"
+  regulator <- allocateParty "Regulator"
+
+  let _offer = LoanOffer
+        with
+          lender
+          borrower
+          regulator
+          principal = 100.0
+          interest = 5.0
+          collateralAsset = "Tokenized Treasury"
+          collateralQuantity = 150.0
+
+  pure ()
