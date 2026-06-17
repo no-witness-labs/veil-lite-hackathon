@@ -6,17 +6,30 @@ Institutional lending workflows cannot run on fully transparent public ledgers w
 
 ## Product hypothesis
 
-A small Canton application can demonstrate a better primitive: **private bilateral secured lending** where only relevant parties see the deal, while an optional regulator can receive selective disclosure.
+A small Canton application can demonstrate a better primitive: **private pre-negotiated bilateral secured lending** where lender and borrower already know each other, only relevant parties see the deal, and an optional regulator can receive selective disclosure.
+
+## Scope decision: known-counterparty MVP
+
+For the hackathon MVP, lender and borrower are assumed to know each other before the on-ledger flow starts. Discovery, borrower acquisition, and marketplace matching are intentionally out of scope.
+
+This means the app models the **execution layer** of a private bilateral credit deal, not a public lending marketplace:
+
+1. Off-ledger relationship / negotiation already identifies lender, borrower, desired principal, collateral, and rough terms.
+2. Lender creates a borrower-specific `LoanOffer` on Canton.
+3. Borrower accepts the offer.
+4. The resulting loan is visible only to lender, borrower, and optional regulator.
+
+This is realistic for institutional private credit, repo, OTC lending, and relationship-based treasury lending.
 
 ## Target users
 
 ### Primary user: institutional lender
 
-Wants to extend secured credit without publicly revealing counterparties, terms, pricing, or liquidation state.
+Wants to extend secured credit to a known borrower without publicly revealing counterparties, terms, pricing, or liquidation state.
 
 ### Primary user: institutional borrower
 
-Wants credit while keeping treasury activity, collateral, and borrowing terms confidential.
+Wants credit from a known lender while keeping treasury activity, collateral, and borrowing terms confidential.
 
 ### Secondary user: regulator/auditor
 
@@ -28,33 +41,38 @@ Used in the demo to prove Canton privacy: this party should not see the offer or
 
 ## Goals
 
-1. Demonstrate private loan offer visibility.
+1. Demonstrate private borrower-specific loan offer visibility.
 2. Demonstrate borrower acceptance into an active loan.
 3. Demonstrate collateral lock during active loan.
 4. Demonstrate repayment and collateral release.
 5. Demonstrate regulator observer visibility.
-6. Demonstrate outsider non-visibility.
+6. Demonstrate outsider non-visibility for offer and loan.
 7. Optionally demonstrate private liquidation after oracle price drop.
 
 ## Non-goals
 
-1. No real money movement.
-2. No production Token Standard integration.
-3. No external wallet signing.
-4. No PQS-backed analytics dashboard.
-5. No production oracle network.
-6. No partial liquidation.
-7. No reserve/bad-debt waterfall.
-8. No mainnet readiness claim.
+1. No lender/borrower discovery marketplace.
+2. No `LoanProgram` catalog in the MVP.
+3. No borrower-created `BorrowRequest` in the MVP.
+4. No real money movement.
+5. No production Token Standard integration.
+6. No external wallet signing.
+7. No PQS-backed analytics dashboard.
+8. No production oracle network.
+9. No partial liquidation.
+10. No reserve/bad-debt waterfall.
+11. No mainnet readiness claim.
 
 ## User stories
 
 ### US1: Create private offer
 
-As a lender, I can create a loan offer for a specific borrower so only the lender, borrower, and regulator can see the terms.
+As a lender, I can create a loan offer for a known borrower so only the lender, borrower, and regulator can see the terms.
 
 Acceptance criteria:
 
+- Lender controls offer creation and withdrawal.
+- Offer includes lender, borrower, regulator, principal, interest, collateral asset, collateral quantity, and maturity.
 - Lender sees the offer.
 - Borrower sees the offer.
 - Regulator sees the offer.
@@ -98,7 +116,7 @@ As the demo presenter, I can switch to outsider view and show no sensitive contr
 
 Acceptance criteria:
 
-- Outsider query returns no offers or loans.
+- Outsider query returns no borrower-specific offers or loans.
 - UI explicitly labels this as Canton privacy.
 
 ### US6: Optional liquidation branch
@@ -110,6 +128,24 @@ Acceptance criteria:
 - Oracle publishes price.
 - Liquidation only succeeds below threshold.
 - Outsider cannot see liquidation-relevant loan state.
+
+## Future marketplace extension
+
+The comment about lender programs and borrow requests is valid for a marketplace-style product:
+
+```text
+Lender publishes LoanProgram
+        ↓
+Borrower creates BorrowRequest
+        ↓
+Lender creates LoanOffer
+        ↓
+Borrower accepts
+```
+
+We are not implementing that in the hackathon MVP because it adds discovery and matching scope. It should be documented as the first post-MVP extension if the core contract remains simple.
+
+Canton caveat: a “public loan program” is not Ethereum-style global readable state. Discovery would likely be app-provider mediated, off-ledger, or scoped to an allowlisted borrower cohort.
 
 ## Proposed modules
 
@@ -157,18 +193,20 @@ The UI must answer these questions immediately:
 2. What can this party see?
 3. What can this party do?
 4. Why is this different from public-chain lending?
+5. Why does this MVP assume known counterparties?
 
 ## Demo script
 
-1. Open app as lender.
-2. Create offer: 100 USDC principal, 5 USDC interest, 150 RWA collateral.
-3. Switch to borrower: offer is visible.
-4. Switch to outsider: offer is not visible.
-5. Switch to borrower: accept offer.
-6. Switch to lender/borrower/regulator: active loan is visible.
-7. Switch to outsider: active loan is not visible.
-8. Repay loan: loan closes and collateral releases.
-9. Optional: reset, accept, price drops, lender liquidates.
+1. Explain that lender and borrower already know each other from an off-ledger private credit relationship.
+2. Open app as lender.
+3. Create offer: 100 USDC principal, 5 USDC interest, 150 RWA collateral.
+4. Switch to borrower: offer is visible.
+5. Switch to outsider: offer is not visible.
+6. Switch to borrower: accept offer.
+7. Switch to lender/borrower/regulator: active loan is visible.
+8. Switch to outsider: active loan is not visible.
+9. Repay loan: loan closes and collateral releases.
+10. Optional: reset, accept, price drops, lender liquidates.
 
 ## Technical acceptance criteria
 
@@ -184,16 +222,15 @@ The UI must answer these questions immediately:
 - A judge can understand the product in 30 seconds.
 - The demo clearly shows outsider non-visibility.
 - The codebase is small enough to inspect.
-- The README is honest about demo vs production.
+- The README is honest about known-counterparty MVP vs marketplace future work.
 - The final video has no dependency on live external infrastructure.
 
 ## Open questions
 
 1. Should the hackathon name be `Veil Lite`, `No Witness Lending`, or something else?
-2. Should the MVP use pure local Daml holdings, or keep a thin compatibility path toward the current `lending/protocol` assets?
-3. Should liquidation be in the mandatory demo, or kept as bonus if time allows?
-4. Should the first implementation be Daml-only before adding backend/frontend?
+2. Should liquidation be in the mandatory demo, or kept as bonus if time allows?
+3. Should the first implementation be Daml-only before adding backend/frontend?
 
 ## Recommendation
 
-Start Daml-only, prove privacy and lifecycle with scripts, then wrap the proof in a tiny UI. Do not port the full existing lending protocol.
+Start Daml-only, prove privacy and lifecycle with scripts, then wrap the proof in a tiny UI. Do not port the full existing lending protocol. Keep `LoanProgram` / `BorrowRequest` as a documented next step, not MVP scope.

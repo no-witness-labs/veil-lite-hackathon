@@ -36,7 +36,7 @@ This document tracks the exact submission requirements for the Build on Canton H
 1. **Problem** — Institutional lending cannot expose counterparties, terms, collateral, or liquidation state publicly.
 2. **Solution** — Veil Lite: private bilateral secured lending on Canton.
 3. **Why Canton** — stakeholder privacy, structural authorization, atomic workflows, selective regulator disclosure.
-4. **Demo Flow** — lender offer → borrower accept → collateral lock → regulator observes → outsider sees nothing → repay/release.
+4. **Demo Flow** — known-counterparty lender offer → borrower accept → collateral lock → regulator observes → outsider sees nothing → repay/release.
 5. **Architecture** — Daml contracts, demo runner/API, role-based UI.
 6. **What Works Today** — Daml build/tests, privacy checks, local demo, optional liquidation branch.
 7. **Roadmap** — Token Standard integration, wallet/external signing, PQS, production oracle/compliance.
@@ -61,12 +61,14 @@ This document tracks the exact submission requirements for the Build on Canton H
 - **0:00–0:20 — Hook:** Public DeFi leaks institutional credit activity.
 - **0:20–0:45 — Product:** Veil Lite is private bilateral secured lending on Canton.
 - **0:45–2:15 — Demo:**
-  1. Lender creates offer.
-  2. Borrower sees and accepts offer.
-  3. Regulator sees active loan.
-  4. Outsider sees nothing.
-  5. Borrower repays and collateral releases.
-  6. Optional quick branch: price drop/liquidation.
+  1. Presenter explains lender and borrower already know each other.
+  2. Lender creates borrower-specific offer.
+  3. Borrower sees and accepts offer.
+  4. Regulator sees active loan.
+  5. Outsider sees nothing.
+  6. Borrower repays and collateral releases.
+  7. Optional quick branch: price drop/liquidation.
+  8. Mention marketplace `LoanProgram` / `BorrowRequest` as next step.
 - **2:15–2:40 — Canton value:** privacy, atomicity, selective disclosure.
 - **2:40–3:00 — Roadmap/close:** Token Standard, wallet signing, PQS, production compliance.
 

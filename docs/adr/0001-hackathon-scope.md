@@ -24,12 +24,13 @@ The project will implement a focused Canton/Daml proof-of-concept for private bi
 
 Mandatory lifecycle:
 
-1. Lender creates offer.
-2. Borrower accepts.
-3. Active loan exists with collateral locked.
-4. Regulator observes.
-5. Outsider cannot see.
-6. Borrower repays and collateral releases.
+1. Lender and borrower are known counterparties before the on-ledger flow.
+2. Lender creates a borrower-specific `LoanOffer`.
+3. Borrower accepts.
+4. Active loan exists with collateral locked.
+5. Regulator observes offer and loan.
+6. Outsider cannot see borrower-specific offer or loan state.
+7. Borrower repays and collateral releases.
 
 Optional lifecycle:
 
@@ -52,4 +53,4 @@ Negative:
 
 ## Follow-up
 
-If the MVP works, selectively backport ideas or integrate Token Standard pieces from `lending/` after the hackathon submission.
+If the MVP works, selectively backport ideas or integrate Token Standard pieces from `lending/` after the hackathon submission. The first product extension is `LoanProgram` + `BorrowRequest` for lender/borrower discovery.

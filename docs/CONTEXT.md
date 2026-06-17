@@ -7,7 +7,10 @@
 - **Borrower**: Party accepting credit and pledging collateral.
 - **Regulator**: Optional observer who can view sensitive contracts but cannot act.
 - **Outsider**: Party used in tests/UI to prove non-stakeholders cannot see private contracts.
-- **Loan Offer**: Lender-created proposal containing loan terms.
+- **Known Counterparty**: Lender and borrower already know each other before the on-ledger MVP flow starts. Discovery/relationship formation is out of scope.
+- **Loan Offer**: Borrower-specific lender proposal containing loan terms for a known borrower.
+- **Loan Program**: Future extension where a lender publishes lending policy for borrower discovery. Not MVP scope.
+- **Borrow Request**: Future extension where a borrower requests credit against a loan program. Not MVP scope.
 - **Loan**: Active bilateral credit position after borrower acceptance.
 - **Collateral Lock**: MVP representation of collateral being encumbered while the loan is active.
 - **Price Feed**: Simple oracle-signed value used only for the liquidation branch.

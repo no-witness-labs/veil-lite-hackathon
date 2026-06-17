@@ -3,7 +3,7 @@
 > Hackathon-scoped Canton app for the Encode Build on Canton Hackathon.
 
 Veil Lite is a deliberately small proof-of-concept for **private bilateral secured lending** on Canton.
-A lender privately offers a loan to a borrower, the borrower accepts, collateral is locked, and only the lender, borrower, and optional regulator can see the resulting position.
+A lender and borrower are assumed to already know each other; the lender privately offers a loan, the borrower accepts, collateral is locked, and only the lender, borrower, and optional regulator can see the resulting position.
 
 ## Why this exists
 
@@ -18,13 +18,15 @@ Institutional lending cannot expose borrower identity, lender identity, terms, p
 
 Build the smallest judge-friendly flow that proves Canton's advantage:
 
-1. Lender creates a private loan offer.
-2. Borrower accepts and opens a loan.
-3. Borrower's collateral becomes locked/escrowed in the loan state.
-4. Regulator can observe the offer and loan.
-5. Outsider cannot see either offer or loan.
-6. Borrower repays and collateral is released.
-7. Optional demo branch: oracle price drops and lender liquidates.
+1. Lender and borrower already know each other from an off-ledger private credit relationship.
+2. Lender creates a private borrower-specific `LoanOffer`.
+3. Borrower accepts and opens a loan.
+4. Borrower's collateral becomes locked/escrowed in the loan state.
+5. Regulator can observe the offer and loan.
+6. Outsider cannot see either offer or loan.
+7. Borrower repays and collateral is released.
+8. Optional demo branch: oracle price drops and lender liquidates.
+9. Future extension: lender publishes `LoanProgram`, borrower creates `BorrowRequest`, then lender offers.
 
 ## Non-goals for hackathon
 
@@ -42,7 +44,7 @@ This project explicitly tracks the Encode submission requirements in [`docs/SUBM
 
 - **Public repository** — publish this directory as a public GitHub repo with setup/demo docs.
 - **Presentation deck** — create a 5–7 slide deck covering problem, solution, why Canton, demo flow, architecture, current status, and roadmap.
-- **3 minute video pitch with demo** — record lender offer → borrower accept → regulator observes → outsider sees nothing → repay/release.
+- **3 minute video pitch with demo** — record known-counterparty lender offer → borrower accept → regulator observes → outsider sees nothing → repay/release.
 - **Link to live product** — host a judge-friendly role-based demo URL, preferably static and reliable.
 
 ## Directory map

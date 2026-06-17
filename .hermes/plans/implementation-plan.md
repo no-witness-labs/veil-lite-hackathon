@@ -46,8 +46,8 @@ dpm build
 
 Test:
 
-- lender offer
-- borrower accept
+- lender creates borrower-specific offer
+- borrower accepts offer
 - regulator visibility
 - outsider non-visibility
 - borrower repay
