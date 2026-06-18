@@ -33,8 +33,8 @@ This document tracks the exact submission requirements for the Build on Canton H
 
 **Recommended slides:**
 
-1. **Problem** — Institutional lending cannot expose counterparties, terms, collateral, or liquidation state publicly.
-2. **Solution** — Veil: private bilateral secured lending on Canton.
+1. **Problem** — Institutional repo/private-credit workflows need shared coordination but cannot expose counterparties, terms, collateral, or liquidation state publicly.
+2. **Solution + Asset Logic** — Veil: private repo-style financing against tokenized collateral; 100 USDC-equivalent principal, 5 interest, 105 repayment, 150 tokenized T-Bill/MMF collateral units, 66.7% initial LTV.
 3. **Why Canton** — stakeholder privacy, structural authorization, atomic workflows, selective regulator disclosure.
 4. **Demo Flow** — known-counterparty lender offer → borrower accept → collateral lock → regulator observes → outsider sees nothing → repay/release.
 5. **Architecture** — Daml contracts, demo runner/API, role-based UI.
@@ -59,10 +59,10 @@ This document tracks the exact submission requirements for the Build on Canton H
 **Suggested timing:**
 
 - **0:00–0:20 — Hook:** Public DeFi leaks institutional credit activity.
-- **0:20–0:45 — Product:** Veil is private bilateral secured lending on Canton.
+- **0:20–0:45 — Product:** Veil is private repo-style financing against tokenized collateral on Canton.
 - **0:45–2:15 — Demo:**
   1. Presenter explains lender and borrower already know each other.
-  2. Lender creates borrower-specific offer.
+  2. Lender creates borrower-specific offer: 100 USDC-equivalent principal, 5 interest, 150 tokenized T-Bill/MMF collateral units.
   3. Borrower sees and accepts offer.
   4. Regulator sees active loan.
   5. Outsider sees nothing.

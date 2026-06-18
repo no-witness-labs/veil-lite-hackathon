@@ -1,0 +1,76 @@
+module Veil.Test where
+
+import Daml.Script
+import DA.Assert ((===))
+import Veil
+
+testOfferAcceptRepayLifecycle : Script ()
+testOfferAcceptRepayLifecycle = script do
+  lender <- allocateParty "Lender"
+  borrower <- allocateParty "Borrower"
+  regulator <- allocateParty "Regulator"
+
+  offerCid <- submit lender do
+    createCmd LoanOffer
+      with
+        lender
+        borrower
+        regulator
+        principal = 100.0
+        interest = 5.0
+        collateralAsset = "Tokenized Treasury"
+        collateralQuantity = 150.0
+        maturity = "2026-07-13"
+
+  borrowerOffers <- query @LoanOffer borrower
+  length borrowerOffers === 1
+
+  loanCid <- submit borrower do
+    exerciseCmd offerCid Accept
+
+  borrowerOffersAfterAccept <- query @LoanOffer borrower
+  length borrowerOffersAfterAccept === 0
+
+  Some loan <- queryContractId borrower loanCid
+  loan.lender === lender
+  loan.borrower === borrower
+  loan.regulator === regulator
+  loan.principal === 100.0
+  loan.interest === 5.0
+  loan.collateralAsset === "Tokenized Treasury"
+  loan.collateralQuantity === 150.0
+  loan.maturity === "2026-07-13"
+  loan.collateralLocked === True
+
+  lenderLoans <- query @Loan lender
+  length lenderLoans === 1
+
+  submit borrower do
+    exerciseCmd loanCid Repay
+
+  borrowerLoansAfterRepay <- query @Loan borrower
+  length borrowerLoansAfterRepay === 0
+
+testLenderCanWithdrawOffer : Script ()
+testLenderCanWithdrawOffer = script do
+  lender <- allocateParty "Lender"
+  borrower <- allocateParty "Borrower"
+  regulator <- allocateParty "Regulator"
+
+  offerCid <- submit lender do
+    createCmd LoanOffer
+      with
+        lender
+        borrower
+        regulator
+        principal = 100.0
+        interest = 5.0
+        collateralAsset = "Tokenized Treasury"
+        collateralQuantity = 150.0
+        maturity = "2026-07-13"
+
+  submit lender do
+    exerciseCmd offerCid Withdraw
+
+  lenderOffersAfterWithdraw <- query @LoanOffer lender
+  length lenderOffersAfterWithdraw === 0

@@ -33,8 +33,10 @@ Templates:
 
 - `LoanOffer`
 - `Loan`
-- `PriceFeed`
-- simple local collateral lock representation
+- `CashHolding` or equivalent demo principal representation
+- `CollateralHolding` or equivalent tokenized collateral representation
+- `PriceFeed` for optional liquidation
+- simple local collateral lock/release representation
 
 Verification:
 
@@ -46,8 +48,8 @@ dpm build
 
 Test:
 
-- lender creates borrower-specific offer
-- borrower accepts offer
+- lender creates borrower-specific offer with 100 principal, 5 interest, 150 tokenized T-Bill/MMF collateral, and 66.7% initial LTV
+- borrower accepts offer and collateral is locked
 - regulator visibility
 - outsider non-visibility
 - borrower repay

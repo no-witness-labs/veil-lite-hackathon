@@ -2,12 +2,12 @@
 
 > Hackathon-scoped Canton app for the Encode Build on Canton Hackathon.
 
-Veil is a deliberately small proof-of-concept for **private bilateral secured lending** on Canton.
-A lender and borrower are assumed to already know each other; the lender privately offers a loan, the borrower accepts, collateral is locked, and only the lender, borrower, and optional regulator can see the resulting position.
+Veil is a deliberately small proof-of-concept for **private repo-style financing against tokenized collateral** on Canton.
+A known borrower pledges tokenized collateral, such as tokenized Treasury bills or money-market fund units, to receive short-term financing from a known lender. The lender privately offers terms, the borrower accepts, collateral is locked, and only the lender, borrower, and optional regulator can see the resulting position.
 
 ## Why this exists
 
-Institutional lending cannot expose borrower identity, lender identity, terms, positions, collateral, or liquidation state to a public chain. Canton is a strong fit because it gives us:
+Institutional financing workflows cannot expose borrower identity, lender identity, terms, positions, collateral, or liquidation state to a public chain. At the same time, purely offchain workflows are fragmented across emails, PDFs, spreadsheets, custodians, and reconciliation processes. Canton is a strong fit because it gives us:
 
 - **Need-to-know privacy**: contracts are visible only to signatories/observers.
 - **Structural authorization**: signatories/controllers define who must authorize each lifecycle step.
@@ -16,7 +16,11 @@ Institutional lending cannot expose borrower identity, lender identity, terms, p
 
 ## Hackathon scope
 
-Build the smallest judge-friendly flow that proves Canton's advantage:
+Build the smallest judge-friendly flow that proves Canton's advantage and satisfies the business criteria: strong real-world relevance, clear asset/financing logic, practical workflow design, and a use case where tokenization/onchain coordination genuinely helps.
+
+Concrete demo framing: **private repo-style financing**. The borrower pledges 150 units of tokenized T-Bill/MMF collateral, receives 100 USDC-equivalent principal, owes 105 at repayment, and gets collateral released after repayment.
+
+Build the flow:
 
 1. Lender and borrower already know each other from an off-ledger private credit relationship.
 2. Lender creates a private borrower-specific `LoanOffer`.
@@ -52,11 +56,12 @@ This project explicitly tracks the Encode submission requirements in [`docs/SUBM
 This repo uses Daml SDK `3.5.1` and Daml-LF target `2.1` for Canton-oriented development.
 
 ```bash
+export PATH="$HOME/.dpm/bin:$PATH"
 dpm build
-dpm test
+(cd test && dpm build && dpm test)
 ```
 
-If `dpm` is not installed, install/activate the Canton/Daml SDK first, then rerun the commands above.
+The root package contains deployable templates only. The `test/` package depends on the root DAR and contains Daml Script tests, keeping `daml-script` out of the deployable package.
 
 ## Directory map
 
@@ -65,10 +70,14 @@ veil/
 ├── README.md
 ├── daml.yaml
 ├── daml/
-│   ├── Veil.daml
-│   └── Veil/
-│       └── Test.daml
+│   └── Veil.daml
+├── test/
+│   ├── daml.yaml
+│   └── daml/
+│       └── Veil/
+│           └── Test.daml
 ├── docs/
+│   ├── BUSINESS-CASE.md
 │   ├── PRD.md
 │   ├── CONTEXT.md
 │   ├── GRILL.md

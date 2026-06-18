@@ -2,11 +2,13 @@
 
 ## Problem statement
 
-Institutional lending workflows cannot run on fully transparent public ledgers when borrower identity, lender identity, loan terms, collateral, health, and liquidation timing are public. Existing DeFi-style lending demonstrates useful mechanics, but its public-state model leaks exactly the information professional counterparties need to protect.
+Institutional financing workflows cannot run on fully transparent public ledgers when borrower identity, lender identity, loan terms, collateral, health, and liquidation timing are public. Existing DeFi-style lending demonstrates useful mechanics, but its public-state model leaks exactly the information professional counterparties need to protect.
+
+At the same time, purely offchain private credit workflows are fragmented across emails, PDFs, spreadsheets, custodians, and reconciliation processes. Veil targets the middle ground: shared workflow state for relevant parties, without global public disclosure.
 
 ## Product hypothesis
 
-A small Canton application can demonstrate a better primitive: **private pre-negotiated bilateral secured lending** where lender and borrower already know each other, only relevant parties see the deal, and an optional regulator can receive selective disclosure.
+A small Canton application can demonstrate a better primitive: **private repo-style financing against tokenized collateral** where lender and borrower already know each other, only relevant parties see the deal, and an optional regulator can receive selective disclosure.
 
 ## Scope decision: known-counterparty MVP
 
@@ -38,6 +40,38 @@ Needs visibility into the transaction for compliance/audit without making the tr
 ### Negative user: outsider
 
 Used in the demo to prove Canton privacy: this party should not see the offer or loan.
+
+## Hackathon evaluation criteria
+
+Veil should be judged against four business/product criteria:
+
+1. **Strong real-world business relevance** — institutional repo, private credit, OTC secured lending, treasury financing, and RWA-backed credit are real workflows.
+2. **Clear asset / financing logic** — the demo must show principal asset, collateral asset, haircut/LTV, repayment amount, collateral lock, and collateral release.
+3. **Practical workflow design** — known-counterparty execution is realistic for institutional financing and avoids fake marketplace discovery scope.
+4. **Tokenization/onchain coordination genuinely helps** — tokenized collateral and loan state are coordinated across lender, borrower, and regulator with Canton privacy.
+
+## Concrete asset / financing logic
+
+Recommended demo story:
+
+```text
+Borrower pledges 150 tokenized T-Bill/MMF collateral units
+Lender provides 100 USDC-equivalent principal
+Borrower owes 105 at repayment
+Initial LTV = 100 / 150 = 66.7%
+Collateral remains locked until repayment or optional liquidation
+```
+
+Core fields:
+
+- principal asset: USDC, Canton Coin, or another cash-like token for the demo;
+- principal amount: `100`;
+- interest: `5`;
+- repayment amount: `105`;
+- collateral asset: tokenized T-Bill/MMF/fund/invoice/RWA claim;
+- collateral quantity/value: `150`;
+- maturity date;
+- optional oracle price for liquidation.
 
 ## Goals
 
@@ -149,14 +183,16 @@ Canton caveat: a “public loan program” is not Ethereum-style global readable
 
 ## Proposed modules
 
-### Deep module 1: Daml lending lifecycle
+### Deep module 1: Daml financing lifecycle
 
 A compact Daml module containing templates and choices:
 
 - `LoanOffer`
 - `Loan`
-- `PriceFeed`
-- minimal local holding/lock representation
+- `CashHolding` or equivalent local demo principal representation
+- `CollateralHolding` or equivalent local demo collateral representation
+- `PriceFeed` for optional liquidation
+- collateral lock/release representation
 
 Why deep: most product logic and authorization live here and can be tested with Daml Script.
 
@@ -199,7 +235,7 @@ The UI must answer these questions immediately:
 
 1. Explain that lender and borrower already know each other from an off-ledger private credit relationship.
 2. Open app as lender.
-3. Create offer: 100 USDC principal, 5 USDC interest, 150 RWA collateral.
+3. Create offer: 100 USDC-equivalent principal, 5 interest, 150 tokenized T-Bill/MMF collateral units, 66.7% initial LTV.
 4. Switch to borrower: offer is visible.
 5. Switch to outsider: offer is not visible.
 6. Switch to borrower: accept offer.
