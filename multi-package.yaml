@@ -1,0 +1,4 @@
+# veil contains deployable templates only; veil-test contains Daml Script tests.
+packages:
+  - .
+  - ./test

@@ -1,8 +1,11 @@
 module Veil where
 
--- | Minimal borrower-specific offer data used by the initial project skeleton.
--- Full contract templates and choices are implemented in the next issue.
-data LoanOffer = LoanOffer
+-- | Borrower-specific loan offer for a known-counterparty lending flow.
+--
+-- The lender is the signatory because they commit to the offered terms. The
+-- borrower and regulator are observers so the offer is selectively disclosed
+-- without becoming globally visible.
+template LoanOffer
   with
     lender : Party
     borrower : Party
@@ -11,4 +14,54 @@ data LoanOffer = LoanOffer
     interest : Decimal
     collateralAsset : Text
     collateralQuantity : Decimal
-  deriving (Eq, Show)
+    maturity : Text
+  where
+    signatory lender
+    observer borrower, regulator
+
+    ensure principal > 0.0 && interest >= 0.0 && collateralQuantity > 0.0
+
+    choice Accept : ContractId Loan
+      controller borrower
+      do
+        create Loan with
+          lender
+          borrower
+          regulator
+          principal
+          interest
+          collateralAsset
+          collateralQuantity
+          maturity
+          collateralLocked = True
+
+    choice Withdraw : ()
+      controller lender
+      do
+        pure ()
+
+-- | Active private bilateral loan created after the borrower accepts an offer.
+--
+-- Both lender and borrower are signatories because the active loan records a
+-- shared obligation. The regulator is read-only via observer visibility.
+template Loan
+  with
+    lender : Party
+    borrower : Party
+    regulator : Party
+    principal : Decimal
+    interest : Decimal
+    collateralAsset : Text
+    collateralQuantity : Decimal
+    maturity : Text
+    collateralLocked : Bool
+  where
+    signatory lender, borrower
+    observer regulator
+
+    ensure principal > 0.0 && interest >= 0.0 && collateralQuantity > 0.0
+
+    choice Repay : ()
+      controller borrower
+      do
+        pure ()

@@ -52,11 +52,12 @@ This project explicitly tracks the Encode submission requirements in [`docs/SUBM
 This repo uses Daml SDK `3.5.1` and Daml-LF target `2.1` for Canton-oriented development.
 
 ```bash
+export PATH="$HOME/.dpm/bin:$PATH"
 dpm build
-dpm test
+(cd test && dpm build && dpm test)
 ```
 
-If `dpm` is not installed, install/activate the Canton/Daml SDK first, then rerun the commands above.
+The root package contains deployable templates only. The `test/` package depends on the root DAR and contains Daml Script tests, keeping `daml-script` out of the deployable package.
 
 ## Directory map
 
@@ -65,9 +66,12 @@ veil/
 ├── README.md
 ├── daml.yaml
 ├── daml/
-│   ├── Veil.daml
-│   └── Veil/
-│       └── Test.daml
+│   └── Veil.daml
+├── test/
+│   ├── daml.yaml
+│   └── daml/
+│       └── Veil/
+│           └── Test.daml
 ├── docs/
 │   ├── PRD.md
 │   ├── CONTEXT.md
