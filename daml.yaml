@@ -1,8 +1,6 @@
 sdk-version: 3.5.1
 name: veil
-source:
-  - daml
-  - test
+source: daml
 version: 0.1.0
 dependencies:
   - daml-prim

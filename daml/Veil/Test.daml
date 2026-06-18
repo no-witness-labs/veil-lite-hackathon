@@ -1,4 +1,4 @@
-module VeilTest where
+module Veil.Test where
 
 import Daml.Script
 import Veil

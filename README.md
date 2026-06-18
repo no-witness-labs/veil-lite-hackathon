@@ -65,9 +65,9 @@ veil/
 ├── README.md
 ├── daml.yaml
 ├── daml/
-│   └── Veil.daml
-├── test/
-│   └── VeilTest.daml
+│   ├── Veil.daml
+│   └── Veil/
+│       └── Test.daml
 ├── docs/
 │   ├── PRD.md
 │   ├── CONTEXT.md
