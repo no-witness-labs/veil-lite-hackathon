@@ -1,4 +1,4 @@
-# Veil Lite Hackathon MVP Implementation Plan
+# Veil Hackathon MVP Implementation Plan
 
 > **For Hermes:** Use subagent-driven-development skill to implement this plan task-by-task.
 
@@ -17,8 +17,8 @@
 Files:
 
 - Create: `daml.yaml`
-- Create: `daml/VeilLite.daml`
-- Create: `test/VeilLiteTest.daml`
+- Create: `daml/Veil.daml`
+- Create: `test/VeilTest.daml`
 
 Verification:
 

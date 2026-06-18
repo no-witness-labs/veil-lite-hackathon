@@ -1,0 +1,14 @@
+module Veil where
+
+-- | Minimal borrower-specific offer data used by the initial project skeleton.
+-- Full contract templates and choices are implemented in the next issue.
+data LoanOffer = LoanOffer
+  with
+    lender : Party
+    borrower : Party
+    regulator : Party
+    principal : Decimal
+    interest : Decimal
+    collateralAsset : Text
+    collateralQuantity : Decimal
+  deriving (Eq, Show)

@@ -1,4 +1,4 @@
-# PRD: Veil Lite Hackathon MVP
+# PRD: Veil Hackathon MVP
 
 ## Problem statement
 
@@ -227,7 +227,7 @@ The UI must answer these questions immediately:
 
 ## Open questions
 
-1. Should the hackathon name be `Veil Lite`, `No Witness Lending`, or something else?
+1. Should the hackathon name be `Veil`, `No Witness Lending`, or something else?
 2. Should liquidation be in the mandatory demo, or kept as bonus if time allows?
 3. Should the first implementation be Daml-only before adding backend/frontend?
 

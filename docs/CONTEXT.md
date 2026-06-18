@@ -1,4 +1,4 @@
-# Veil Lite Context
+# Veil Context
 
 ## Domain vocabulary
 
@@ -19,7 +19,7 @@
 
 ## Canton mental model
 
-Do not explain Veil Lite as Ethereum-style public global state. Explain it as:
+Do not explain Veil as Ethereum-style public global state. Explain it as:
 
 - private contracts with stakeholder-based visibility;
 - immutable contracts plus archive/create transitions;

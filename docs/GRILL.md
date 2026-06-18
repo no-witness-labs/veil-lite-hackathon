@@ -50,7 +50,7 @@ Mitigation: Daml-only proof first; UI second; production integrations after judg
 
 Recommended answer: trying to reuse the production lending code directly, which carries complexity not needed for the MVP.
 
-Mitigation: create this separate directory and implement a small `VeilLite` model.
+Mitigation: create this separate directory and implement a small `Veil` model.
 
 ## Question 8: Should the lender offer first, before knowing the borrower?
 
