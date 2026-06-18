@@ -20,14 +20,14 @@ Create a new directory outside `lending/`:
 /Users/hoangvu/hade/no-witness-labs/canton/veil
 ```
 
-The project will implement a focused Canton/Daml proof-of-concept for private bilateral secured lending.
+The project will implement a focused Canton/Daml proof-of-concept for private repo-style financing against tokenized collateral. The concrete business story is a known borrower pledging tokenized T-Bill/MMF collateral to receive short-term financing from a known lender.
 
 Mandatory lifecycle:
 
 1. Lender and borrower are known counterparties before the on-ledger flow.
 2. Lender creates a borrower-specific `LoanOffer`.
 3. Borrower accepts.
-4. Active loan exists with collateral locked.
+4. Active loan exists with tokenized collateral locked and financing terms recorded: principal asset, interest, repayment amount, collateral asset, collateral quantity/value, and maturity.
 5. Regulator observes offer and loan.
 6. Outsider cannot see borrower-specific offer or loan state.
 7. Borrower repays and collateral releases.
