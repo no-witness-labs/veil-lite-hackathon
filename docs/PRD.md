@@ -50,6 +50,15 @@ Veil should be judged against four business/product criteria:
 3. **Practical workflow design** — known-counterparty execution is realistic for institutional financing and avoids fake marketplace discovery scope.
 4. **Tokenization/onchain coordination genuinely helps** — tokenized collateral and loan state are coordinated across lender, borrower, and regulator with Canton privacy.
 
+## What judges look for
+
+The pitch, demo, PRD, and deck should make these judging signals obvious:
+
+1. **Clear use of privacy/confidentiality** — the demo must show that lender, borrower, and regulator can see the deal while an outsider cannot query the offer, loan, collateral state, or liquidation-relevant data.
+2. **A real financial use case** — frame Veil as private repo-style financing/private credit against tokenized collateral, not generic lending or generic privacy infrastructure.
+3. **Strong product logic, not infrastructure for infrastructure's sake** — every contract, UI state, and demo step should explain a financing workflow: offer, accept, collateral lock, repayment, release, and optional liquidation.
+4. **Credible relevance to institutional or professional markets** — emphasize institutional treasury, repo, OTC secured lending, asset managers, auditors, and regulated/private-credit workflows.
+
 ## Concrete asset / financing logic
 
 Recommended demo story:
