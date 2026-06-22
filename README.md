@@ -101,6 +101,10 @@ The UI surfaces the ledger's own evidence, so nothing has to be taken on trust:
   synchronizer ID, and the contracts created/archived.
 - **Raw ledger view** (collapsible) — the exact JSON each party gets from the `active-contracts` query.
   Switching to **Outsider** makes the strongest point: the same panel is literally `[]`.
+- **Your holdings** — each party's own wallet (cash + tokenized collateral). Holdings are owner-signatory with
+  no observers, so a party sees only its own. The full double-entry settles on-ledger: the borrower starts with
+  150 collateral + 105 cash, accepting locks the collateral and delivers 100 principal, and repaying returns the
+  collateral while the lender ends with 105 (principal + 5 interest).
 
 Strongest single demo moment: view the deal as **Lender**, expand the raw ledger view, then switch to
 **Outsider** — the same query returns nothing.
@@ -128,7 +132,7 @@ Spring Boot backend, PQS, Keycloak OAuth2, and the Splice token-standard apps (i
 | --- | --- | --- |
 | Runtime | single-process `dpm sandbox`, in-memory | Docker Compose LocalNet |
 | Participants | one (privacy shown per-party on one node) | three (privacy across separate nodes) |
-| Assets | demo `Decimal` fields | test Canton Coin / token standard |
+| Assets | demo `CashHolding` / `CollateralHolding` (on-ledger double-entry) | test Canton Coin / token standard |
 | Auth | none (sandbox, dev only) | Keycloak OAuth2 / shared-secret |
 | Extras | hand-rolled JSON Ledger API v2 client | backend, PQS, wallet, Scan, observability |
 | Start | `./scripts/start-sandbox.sh` | `make setup && make build && make start` |

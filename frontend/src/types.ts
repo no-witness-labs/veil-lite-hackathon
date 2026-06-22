@@ -2,23 +2,40 @@ export type Role = 'lender' | 'borrower' | 'regulator' | 'outsider'
 
 export type Status = 'none' | 'offered' | 'active' | 'repaid' | 'liquidated'
 
-export type TemplateName = 'LoanOffer' | 'Loan' | 'LoanClosed'
+export type TemplateName =
+  | 'LoanOffer'
+  | 'Loan'
+  | 'LoanClosed'
+  | 'CashHolding'
+  | 'CollateralHolding'
 
-/** The Daml record fields shared across LoanOffer / Loan / LoanClosed. */
+/** The Daml record fields across the deal templates and the holdings. */
 export interface DealArgs {
-  lender: string
-  borrower: string
-  regulator: string
-  principal: string
-  interest: string
-  collateralAsset: string
-  collateralQuantity: string
-  maturity: string
-  // Loan-only
+  // Deal templates
+  lender?: string
+  borrower?: string
+  regulator?: string
+  principal?: string
+  interest?: string
+  collateralAsset?: string
+  collateralQuantity?: string
+  maturity?: string
   collateralLocked?: boolean
-  // LoanClosed-only
   reason?: string
   collateralReleased?: boolean
+  // Holdings
+  owner?: string
+  amount?: string
+  asset?: string
+  quantity?: string
+}
+
+/** A wallet holding owned by the active party (its own cash / collateral). */
+export interface Holding {
+  contractId: string
+  kind: 'cash' | 'collateral'
+  amount: number
+  asset?: string
 }
 
 /** A normalized active contract as seen by the querying party. */

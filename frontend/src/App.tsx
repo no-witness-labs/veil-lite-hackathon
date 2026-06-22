@@ -7,6 +7,7 @@ import {
   liquidateLoan,
   listActive,
   loadConfig,
+  parseHoldings,
   repayLoan,
   resetDemo,
   withdrawOffer,
@@ -27,6 +28,7 @@ import { ExplainerSidebar } from './components/ExplainerSidebar'
 import { ActivityFeed } from './components/ActivityFeed'
 import { RawInspector } from './components/RawInspector'
 import { PartyBar } from './components/PartyBar'
+import { HoldingsPanel } from './components/HoldingsPanel'
 import { ErrorBanner, OutsiderEmpty, ShockBanner, Waiting } from './components/EmptyStates'
 
 export default function App() {
@@ -81,6 +83,7 @@ export default function App() {
 
   const deal = currentDeal(contracts)
   const status = statusOf(deal)
+  const holdings = parseHoldings(contracts)
 
   const isOutsider = role === 'outsider'
   const hasDeal = status !== 'none'
@@ -188,7 +191,10 @@ export default function App() {
                   actions={{
                     onWithdraw: () => act('Withdraw offer', PARTY_NAMES.lender, () => withdrawOffer(deal.contractId)),
                     onAccept: () => act('Accept offer', PARTY_NAMES.borrower, () => acceptOffer(deal.contractId)),
-                    onRepay: () => act('Repay loan', PARTY_NAMES.borrower, () => repayLoan(deal.contractId)),
+                    onRepay: () =>
+                      act('Repay loan', PARTY_NAMES.borrower, () =>
+                        repayLoan(deal.contractId, Number(deal.args.principal) + Number(deal.args.interest)),
+                      ),
                     onLiquidate: (collateralValue: number) =>
                       act('Liquidate collateral', PARTY_NAMES.lender, () => liquidateLoan(deal.contractId, collateralValue)),
                     onSimulateShock: () => setShock(true),
@@ -196,6 +202,7 @@ export default function App() {
                 />
               )}
 
+              {!isOutsider && <HoldingsPanel role={role} holdings={holdings} />}
               {!isOutsider && <ActivityFeed entries={activity} />}
               <RawInspector role={role} raw={raw} offset={offset} />
             </div>
