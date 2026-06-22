@@ -50,6 +50,8 @@ testFullLifecycle = script do
   -- Funding left the lender (offer is pre-funded).
   lenderCashAfterOffer <- query @CashHolding lender
   length lenderCashAfterOffer === 0
+  -- Regulator (observer) can see the offer; outsider cannot.
+  query @LoanOffer regulator >>= \o -> length o === 1
 
   loanCid <- submit borrower do
     exerciseCmd offerCid Accept with collateralCid = borrowerColl
@@ -57,6 +59,13 @@ testFullLifecycle = script do
   -- Accepting locks/encumbers collateral and delivers the principal.
   Some loan <- queryContractId borrower loanCid
   loan.collateralLocked === True
+  loan.principal === 100.0
+  loan.interest === 5.0
+  -- Canonical numbers as values: repayment = 105, initial LTV = 66.7% (collateral = 1.5x principal).
+  (loan.principal + loan.interest) === 105.0
+  loan.collateralQuantity === loan.principal * 1.5
+  -- Regulator can see the active loan.
+  query @Loan regulator >>= \l -> length l === 1
   borrowerCollLocked <- query @CollateralHolding borrower
   length borrowerCollLocked === 0
   cashAmounts borrower >>= \a -> a === [100.0, 105.0]
@@ -87,6 +96,12 @@ testLiquidationRequiresBreach = script do
   offerCid <- makeOffer lender borrower regulator lenderCash
   loanCid <- submit borrower do exerciseCmd offerCid Accept with collateralCid = borrowerColl
 
+  -- Non-stakeholders cannot see the active loan (outsider and an oracle party).
+  outsider <- allocateParty "Outsider"
+  oracle <- allocateParty "Oracle"
+  query @Loan outsider >>= \l -> length l === 0
+  query @Loan oracle >>= \l -> length l === 0
+
   -- Healthy mark (LTV 66.7%) must NOT permit liquidation.
   submitMustFail lender do exerciseCmd loanCid Liquidate with currentCollateralValue = 150.0
   query @Loan borrower >>= \l -> length l === 1
@@ -100,6 +115,8 @@ testLiquidationRequiresBreach = script do
   -- Collateral was seized to the lender, not released to the borrower.
   query @CollateralHolding lender >>= \c -> length c === 1
   query @CollateralHolding borrower >>= \c -> length c === 0
+  -- Outsider still sees no liquidation-relevant state.
+  query @LoanClosed outsider >>= \c -> length c === 0
 
 testWithdrawRefunds : Script ()
 testWithdrawRefunds = script do
@@ -110,3 +127,60 @@ testWithdrawRefunds = script do
   -- Principal refunded to the lender.
   cashAmounts lender >>= \a -> a === [100.0]
   query @LoanOffer borrower >>= \o -> length o === 0
+
+-- Authorization: each choice can only be exercised by its controller.
+testOnlyControllerCanAct : Script ()
+testOnlyControllerCanAct = script do
+  (lender, borrower, regulator, lenderCash, borrowerCash, borrowerColl) <- setup
+  outsider <- allocateParty "Outsider"
+  offerCid <- makeOffer lender borrower regulator lenderCash
+
+  -- Only the lender may withdraw the offer.
+  submitMustFail borrower do exerciseCmd offerCid Withdraw
+  -- Only the borrower may accept (a non-stakeholder cannot).
+  submitMustFail outsider do exerciseCmd offerCid Accept with collateralCid = borrowerColl
+
+  loanCid <- submit borrower do exerciseCmd offerCid Accept with collateralCid = borrowerColl
+
+  -- Only the borrower may repay; only the lender may liquidate.
+  submitMustFail lender do exerciseCmd loanCid Repay with repaymentCid = borrowerCash
+  submitMustFail borrower do exerciseCmd loanCid Liquidate with currentCollateralValue = 93.0
+
+-- Validation guards: choice bodies reject inconsistent inputs.
+testValidationGuards : Script ()
+testValidationGuards = script do
+  lender <- allocateParty "Lender"
+  borrower <- allocateParty "Borrower"
+  regulator <- allocateParty "Regulator"
+  lenderCash <- submit lender do createCmd CashHolding with owner = lender; amount = 100.0
+
+  -- MakeOffer cannot fund more principal than the cash holds.
+  submitMustFail lender do
+    exerciseCmd lenderCash MakeOffer with
+      borrower; regulator
+      principal = 200.0
+      interest = 5.0
+      collateralAsset = tbill
+      collateralQuantity = 150.0
+      maturity = "2026-07-13"
+      liquidationThresholdLtv = 90.0
+
+  offerCid <- submit lender do
+    exerciseCmd lenderCash MakeOffer with
+      borrower; regulator
+      principal = 100.0
+      interest = 5.0
+      collateralAsset = tbill
+      collateralQuantity = 150.0
+      maturity = "2026-07-13"
+      liquidationThresholdLtv = 90.0
+
+  -- Accept rejects collateral that doesn't match the offered quantity.
+  wrongColl <- submit borrower do createCmd CollateralHolding with owner = borrower; asset = tbill; quantity = 100.0
+  submitMustFail borrower do exerciseCmd offerCid Accept with collateralCid = wrongColl
+
+  -- A matching holding is accepted; then repayment cannot be underfunded.
+  goodColl <- submit borrower do createCmd CollateralHolding with owner = borrower; asset = tbill; quantity = 150.0
+  loanCid <- submit borrower do exerciseCmd offerCid Accept with collateralCid = goodColl
+  shortCash <- submit borrower do createCmd CashHolding with owner = borrower; amount = 50.0
+  submitMustFail borrower do exerciseCmd loanCid Repay with repaymentCid = shortCash
