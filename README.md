@@ -69,6 +69,9 @@ The demo is a React UI wired to a live Canton sandbox over the JSON Ledger API v
 ledger as its own party, so the **Outsider tab genuinely returns nothing** — the privacy claim is proven
 on-ledger, not mocked.
 
+> Quick start below. For full operational detail, the demo walkthrough, and troubleshooting, see the
+> **[Runbook](./docs/RUNBOOK.md)**.
+
 > **JDK requirement:** Canton 3.5 must run on an LTS JDK. On Oracle JDK 20 the bundled BouncyCastle provider
 > fails JCE authentication (`JCE cannot authenticate the provider BC`) and every transaction errors. The start
 > script pins Homebrew **OpenJDK 17**; install it with `brew install openjdk@17`, or point `VEIL_JAVA_HOME` at
