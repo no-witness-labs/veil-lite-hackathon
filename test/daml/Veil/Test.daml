@@ -45,11 +45,53 @@ testOfferAcceptRepayLifecycle = script do
   lenderLoans <- query @Loan lender
   length lenderLoans === 1
 
-  submit borrower do
+  outsider <- allocateParty "Outsider"
+  outsiderLoans <- query @Loan outsider
+  length outsiderLoans === 0
+
+  closedCid <- submit borrower do
     exerciseCmd loanCid Repay
 
   borrowerLoansAfterRepay <- query @Loan borrower
   length borrowerLoansAfterRepay === 0
+
+  Some closed <- queryContractId regulator closedCid
+  closed.reason === "Repaid"
+  closed.collateralReleased === True
+
+  outsiderClosed <- query @LoanClosed outsider
+  length outsiderClosed === 0
+
+testLenderCanLiquidate : Script ()
+testLenderCanLiquidate = script do
+  lender <- allocateParty "Lender"
+  borrower <- allocateParty "Borrower"
+  regulator <- allocateParty "Regulator"
+
+  offerCid <- submit lender do
+    createCmd LoanOffer
+      with
+        lender
+        borrower
+        regulator
+        principal = 100.0
+        interest = 5.0
+        collateralAsset = "Tokenized Treasury"
+        collateralQuantity = 150.0
+        maturity = "2026-07-13"
+
+  loanCid <- submit borrower do
+    exerciseCmd offerCid Accept
+
+  closedCid <- submit lender do
+    exerciseCmd loanCid Liquidate
+
+  borrowerLoansAfterLiquidate <- query @Loan borrower
+  length borrowerLoansAfterLiquidate === 0
+
+  Some closed <- queryContractId borrower closedCid
+  closed.reason === "Liquidated"
+  closed.collateralReleased === False
 
 testLenderCanWithdrawOffer : Script ()
 testLenderCanWithdrawOffer = script do

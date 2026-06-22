@@ -63,6 +63,47 @@ dpm build
 
 The root package contains deployable templates only. The `test/` package depends on the root DAR and contains Daml Script tests, keeping `daml-script` out of the deployable package.
 
+## Run the role-based demo
+
+The demo is a React UI wired to a live Canton sandbox over the JSON Ledger API v2. Each role queries the
+ledger as its own party, so the **Outsider tab genuinely returns nothing** — the privacy claim is proven
+on-ledger, not mocked.
+
+> **JDK requirement:** Canton 3.5 must run on an LTS JDK. On Oracle JDK 20 the bundled BouncyCastle provider
+> fails JCE authentication (`JCE cannot authenticate the provider BC`) and every transaction errors. The start
+> script pins Homebrew **OpenJDK 17**; install it with `brew install openjdk@17`, or point `VEIL_JAVA_HOME` at
+> your own JDK 17/21.
+
+```bash
+# 1. Start the sandbox on JDK 17, upload the DAR, allocate the four demo parties,
+#    and write frontend/src/ledger-config.json.
+./scripts/start-sandbox.sh
+
+# 2. In a second terminal, run the UI (Vite dev server proxies /v2 to the sandbox).
+npm --prefix frontend install
+npm --prefix frontend run dev   # http://localhost:5173
+```
+
+3-minute click path: **Lender** create offer → **Borrower** sees it → **Outsider** sees nothing →
+**Borrower** accept (collateral LOCKED) → **Regulator** observes read-only → **Borrower** repay (collateral
+RELEASED). Optional: **Lender** simulate price drop → liquidate. "Reset demo" clears the ledger for another run.
+
+### What the UI proves it is really on Canton
+
+The UI surfaces the ledger's own evidence, so nothing has to be taken on trust:
+
+- **Party-ID strip** (under the header) — the four roles are distinct on-ledger Canton parties on one participant.
+- **Deal card** — shows the real contract ID and ledger offset behind the position.
+- **Ledger activity feed** — every action lists its committed transaction: `updateId`, ledger offset,
+  synchronizer ID, and the contracts created/archived.
+- **Raw ledger view** (collapsible) — the exact JSON each party gets from the `active-contracts` query.
+  Switching to **Outsider** makes the strongest point: the same panel is literally `[]`.
+
+Strongest single demo moment: view the deal as **Lender**, expand the raw ledger view, then switch to
+**Outsider** — the same query returns nothing.
+
+The sandbox runs with auth disabled for local development only.
+
 ## Directory map
 
 ```text
@@ -76,6 +117,16 @@ veil/
 │   └── daml/
 │       └── Veil/
 │           └── Test.daml
+├── scripts/
+│   ├── start-sandbox.sh   # start Canton on JDK 17 + bootstrap
+│   └── bootstrap.sh       # upload DAR, allocate parties, write config
+├── frontend/              # Vite + React UI over the JSON Ledger API v2
+│   ├── package.json
+│   └── src/
+│       ├── App.tsx
+│       ├── ledger.ts      # JSON Ledger API v2 client
+│       ├── state.ts       # view derivation
+│       └── components/
 ├── docs/
 │   ├── BUSINESS-CASE.md
 │   ├── PRD.md
