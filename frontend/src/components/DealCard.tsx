@@ -31,7 +31,7 @@ export interface DealActions {
   onWithdraw: () => void
   onAccept: () => void
   onRepay: () => void
-  onLiquidate: () => void
+  onLiquidate: (collateralValue: number) => void
   onSimulateShock: () => void
 }
 
@@ -200,7 +200,7 @@ export function DealCard({
                 Liquidate
               </button>
             )}
-            {fLiquidateActive && <ActionButton label="Liquidate collateral" onClick={actions.onLiquidate} busy={busy} variant="danger" />}
+            {fLiquidateActive && <ActionButton label="Liquidate collateral" onClick={() => actions.onLiquidate(collateralValue)} busy={busy} variant="danger" />}
             {fClosed && <div style={{ fontSize: 13, color: '#8a929e' }}>This facility is closed.</div>}
           </div>
         </div>

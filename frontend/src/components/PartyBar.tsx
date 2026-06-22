@@ -1,5 +1,5 @@
 import type { Role } from '../types'
-import { parties } from '../ledger'
+import { getParties } from '../ledger'
 import { ROLE_DOT, ROLE_LABELS } from '../state'
 
 const mono: React.CSSProperties = { fontFamily: "'IBM Plex Mono',monospace" }
@@ -13,6 +13,7 @@ function shortParty(p: string): string {
 /** Slim strip exposing the real Canton party identifiers — proves the four
  * roles are distinct on-ledger parties on one participant, not UI fiction. */
 export function PartyBar({ active }: { active: Role }) {
+  const parties = getParties()
   const fingerprint = (parties.lender.split('::')[1] ?? '').slice(0, 10)
   return (
     <div style={{ borderBottom: '1px solid #eef0f3', background: '#fbfbfc' }}>

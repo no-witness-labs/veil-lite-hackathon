@@ -3,22 +3,53 @@
 // The npm @daml/ledger package targets the old v1 HTTP JSON API, so we talk to
 // v2 directly with fetch. The sandbox runs with auth disabled, so requests carry
 // no bearer token — the acting party is named explicitly in each command.
-import config from './ledger-config.json'
+//
+// Runtime config (party ids) is fetched from /ledger-config.json, which
+// scripts/bootstrap.sh writes into frontend/public. Keeping it out of the source
+// import means `npm run build` succeeds on a clean checkout (CI / Vercel) before
+// any sandbox has run; the app shows a clear "run start-sandbox" message instead.
 import type { ActiveState, Contract, DealArgs, Draft, Role, TemplateName, TxResult } from './types'
 
-// In dev, call same-origin ("/v2/...") so the Vite proxy forwards to the sandbox
-// (the JSON API sends no CORS headers). In a production build, use the configured
-// absolute URL.
-const BASE = import.meta.env.DEV ? '' : config.jsonApiUrl
-const PKG = config.packageRef // "#veil"
-const USER_ID = config.userId
-export const parties: Record<Role, string> = config.parties as Record<Role, string>
+interface LedgerConfig {
+  jsonApiUrl: string
+  packageRef: string
+  userId: string
+  parties: Record<Role, string>
+}
 
-const TEMPLATES = {
-  LoanOffer: `${PKG}:Veil:LoanOffer`,
-  Loan: `${PKG}:Veil:Loan`,
-  LoanClosed: `${PKG}:Veil:LoanClosed`,
-} as const
+const DEFAULTS: LedgerConfig = {
+  jsonApiUrl: 'http://127.0.0.1:6864',
+  packageRef: '#veil',
+  userId: 'veil',
+  parties: { lender: '', borrower: '', regulator: '', outsider: '' },
+}
+
+let cfg: LedgerConfig = DEFAULTS
+
+/** Load runtime config written by scripts/bootstrap.sh. Returns false when it's
+ * missing or has no parties yet (i.e. the sandbox hasn't been bootstrapped). */
+export async function loadConfig(): Promise<boolean> {
+  try {
+    const res = await fetch('/ledger-config.json', { cache: 'no-store' })
+    if (!res.ok) return false
+    const loaded = await res.json()
+    cfg = {
+      ...DEFAULTS,
+      ...loaded,
+      parties: { ...DEFAULTS.parties, ...(loaded.parties ?? {}) },
+    }
+    return Boolean(cfg.parties.lender)
+  } catch {
+    return false
+  }
+}
+
+export const getParties = (): Record<Role, string> => cfg.parties
+
+// In dev, call same-origin ("/v2/...") so the Vite proxy forwards to the sandbox
+// (the JSON API sends no CORS headers). In a production build, use the configured URL.
+const base = () => (import.meta.env.DEV ? '' : cfg.jsonApiUrl)
+const template = (name: TemplateName) => `${cfg.packageRef}:Veil:${name}`
 
 const KNOWN_TEMPLATES: TemplateName[] = ['LoanOffer', 'Loan', 'LoanClosed']
 
@@ -29,7 +60,7 @@ function nextCommandId(prefix: string): string {
 }
 
 async function api<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await fetch(`${base()}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -43,9 +74,13 @@ async function api<T>(path: string, body: unknown): Promise<T> {
 }
 
 async function ledgerEnd(): Promise<number> {
-  const res = await fetch(`${BASE}/v2/state/ledger-end`)
+  const res = await fetch(`${base()}/v2/state/ledger-end`)
   if (!res.ok) throw new Error(`Failed to read ledger end (HTTP ${res.status})`)
   return (await res.json()).offset as number
+}
+
+function templateName(templateId: unknown): string {
+  return String(templateId).split(':').pop() ?? '?'
 }
 
 /** Active contracts visible to `party`, normalized, plus the raw ledger JSON
@@ -70,7 +105,7 @@ export async function listActive(party: string): Promise<ActiveState> {
   for (const entry of entries) {
     const ce = entry?.contractEntry?.JsActiveContract?.createdEvent
     if (!ce) continue
-    const entity = String(ce.templateId).split(':').pop() as TemplateName
+    const entity = templateName(ce.templateId) as TemplateName
     if (!KNOWN_TEMPLATES.includes(entity)) continue
     contracts.push({
       contractId: ce.contractId,
@@ -82,17 +117,13 @@ export async function listActive(party: string): Promise<ActiveState> {
   return { contracts, raw: entries, offset }
 }
 
-function templateName(templateId: unknown): string {
-  return String(templateId).split(':').pop() ?? '?'
-}
-
 async function submit(actAs: string, command: unknown, prefix: string): Promise<TxResult> {
   const res = await api<any>('/v2/commands/submit-and-wait-for-transaction', {
     commands: {
       commands: [command],
       commandId: nextCommandId(prefix),
       actAs: [actAs],
-      userId: USER_ID,
+      userId: cfg.userId,
     },
   })
   const tx = res.transaction ?? {}
@@ -111,51 +142,62 @@ function create(templateId: string, createArguments: Record<string, unknown>) {
   return { CreateCommand: { templateId, createArguments } }
 }
 
-function exercise(templateId: string, contractId: string, choice: string) {
-  return { ExerciseCommand: { templateId, contractId, choice, choiceArgument: {} } }
+function exercise(templateId: string, contractId: string, choice: string, choiceArgument: Record<string, unknown> = {}) {
+  return { ExerciseCommand: { templateId, contractId, choice, choiceArgument } }
 }
+
+/** LTV threshold (%) above which the on-ledger Liquidate choice is permitted. */
+export const LIQUIDATION_THRESHOLD_LTV = 90
 
 export function createOffer(draft: Draft): Promise<TxResult> {
   return submit(
-    parties.lender,
-    create(TEMPLATES.LoanOffer, {
-      lender: parties.lender,
-      borrower: parties.borrower,
-      regulator: parties.regulator,
+    cfg.parties.lender,
+    create(template('LoanOffer'), {
+      lender: cfg.parties.lender,
+      borrower: cfg.parties.borrower,
+      regulator: cfg.parties.regulator,
       principal: String(draft.principal),
       interest: String(draft.interest),
       collateralAsset: 'Tokenized T-Bill / MMF',
       collateralQuantity: String(draft.collateral),
       maturity: draft.maturity,
+      liquidationThresholdLtv: String(LIQUIDATION_THRESHOLD_LTV),
     }),
     'offer',
   )
 }
 
 export const acceptOffer = (cid: string) =>
-  submit(parties.borrower, exercise(TEMPLATES.LoanOffer, cid, 'Accept'), 'accept')
+  submit(cfg.parties.borrower, exercise(template('LoanOffer'), cid, 'Accept'), 'accept')
 
 export const withdrawOffer = (cid: string) =>
-  submit(parties.lender, exercise(TEMPLATES.LoanOffer, cid, 'Withdraw'), 'withdraw')
+  submit(cfg.parties.lender, exercise(template('LoanOffer'), cid, 'Withdraw'), 'withdraw')
 
 export const repayLoan = (cid: string) =>
-  submit(parties.borrower, exercise(TEMPLATES.Loan, cid, 'Repay'), 'repay')
+  submit(cfg.parties.borrower, exercise(template('Loan'), cid, 'Repay'), 'repay')
 
-export const liquidateLoan = (cid: string) =>
-  submit(parties.lender, exercise(TEMPLATES.Loan, cid, 'Liquidate'), 'liquidate')
+/** Lender liquidates, supplying the current collateral value. The ledger rejects
+ * this unless the resulting LTV breaches the loan's threshold. */
+export const liquidateLoan = (cid: string, currentCollateralValue: number) =>
+  submit(
+    cfg.parties.lender,
+    exercise(template('Loan'), cid, 'Liquidate', { currentCollateralValue: String(currentCollateralValue) }),
+    'liquidate',
+  )
 
 /** Clear the ledger back to an empty state so the demo can be re-run.
- * Run with lender authority: withdraw offers, liquidate live loans, dismiss
- * every settlement record (including ones produced by this reset). */
+ * Run with lender authority: withdraw offers, force-close live loans, dismiss
+ * every settlement record (including ones produced by this reset). A near-zero
+ * mark value is used only to satisfy the on-ledger breach guard during cleanup. */
 export async function resetDemo(): Promise<void> {
-  let { contracts } = await listActive(parties.lender)
+  let { contracts } = await listActive(cfg.parties.lender)
   for (const c of contracts) {
     if (c.template === 'LoanOffer') await withdrawOffer(c.contractId)
-    else if (c.template === 'Loan') await liquidateLoan(c.contractId)
+    else if (c.template === 'Loan') await liquidateLoan(c.contractId, 0.01)
   }
-  ;({ contracts } = await listActive(parties.lender))
+  ;({ contracts } = await listActive(cfg.parties.lender))
   for (const c of contracts) {
     if (c.template === 'LoanClosed')
-      await submit(parties.lender, exercise(TEMPLATES.LoanClosed, c.contractId, 'Dismiss'), 'dismiss')
+      await submit(cfg.parties.lender, exercise(template('LoanClosed'), c.contractId, 'Dismiss'), 'dismiss')
   }
 }

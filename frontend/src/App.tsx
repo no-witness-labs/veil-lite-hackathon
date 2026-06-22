@@ -3,9 +3,10 @@ import type { ActivityEntry, Contract, Draft, Role, TxResult } from './types'
 import {
   acceptOffer,
   createOffer,
+  getParties,
   liquidateLoan,
   listActive,
-  parties,
+  loadConfig,
   repayLoan,
   resetDemo,
   withdrawOffer,
@@ -39,11 +40,12 @@ export default function App() {
   const [busy, setBusy] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [configOk, setConfigOk] = useState<boolean | null>(null)
 
   const refresh = useCallback(async (forRole: Role) => {
     setLoading(true)
     try {
-      const state = await listActive(parties[forRole])
+      const state = await listActive(getParties()[forRole])
       setContracts(state.contracts)
       setRaw(state.raw)
       setOffset(state.offset)
@@ -55,8 +57,12 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    void refresh(role)
-  }, [role, refresh])
+    void loadConfig().then(setConfigOk)
+  }, [])
+
+  useEffect(() => {
+    if (configOk) void refresh(role)
+  }, [role, configOk, refresh])
 
   // Run a ledger action, record the committed transaction in the activity feed.
   const act = async (label: string, actor: string, fn: () => Promise<TxResult>) => {
@@ -131,11 +137,31 @@ export default function App() {
             </button>
           </div>
         </div>
-        <PartyBar active={role} />
+        {configOk === true && <PartyBar active={role} />}
       </div>
 
       {/* BODY */}
       <div style={{ maxWidth: 1200, margin: '0 auto', padding: 32 }}>
+        {configOk !== true ? (
+          <div style={{ background: '#fff', border: '1px solid #e6e8ec', borderRadius: 14, padding: '56px 40px', textAlign: 'center', boxShadow: '0 1px 2px rgba(20,23,31,0.04)' }}>
+            <div style={{ fontSize: 18, fontWeight: 600, color: '#14171f', marginBottom: 10 }}>
+              {configOk === null ? 'Connecting to the Canton sandbox…' : 'Sandbox not ready'}
+            </div>
+            <div style={{ fontSize: 14, color: '#5b6472', lineHeight: 1.6, maxWidth: 460, margin: '0 auto' }}>
+              {configOk === null ? (
+                'Loading ledger configuration.'
+              ) : (
+                <>
+                  No ledger configuration found. Start the sandbox first:
+                  <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 13, color: '#14171f', background: '#f7f8fa', borderRadius: 8, padding: '10px 14px', marginTop: 14 }}>
+                    ./scripts/start-sandbox.sh
+                  </div>
+                  then reload this page.
+                </>
+              )}
+            </div>
+          </div>
+        ) : (
         <div style={{ opacity: loading ? 0.6 : 1, transition: 'opacity .18s ease' }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 358px', gap: 28, alignItems: 'start' }}>
             {/* LEFT */}
@@ -163,7 +189,8 @@ export default function App() {
                     onWithdraw: () => act('Withdraw offer', PARTY_NAMES.lender, () => withdrawOffer(deal.contractId)),
                     onAccept: () => act('Accept offer', PARTY_NAMES.borrower, () => acceptOffer(deal.contractId)),
                     onRepay: () => act('Repay loan', PARTY_NAMES.borrower, () => repayLoan(deal.contractId)),
-                    onLiquidate: () => act('Liquidate collateral', PARTY_NAMES.lender, () => liquidateLoan(deal.contractId)),
+                    onLiquidate: (collateralValue: number) =>
+                      act('Liquidate collateral', PARTY_NAMES.lender, () => liquidateLoan(deal.contractId, collateralValue)),
                     onSimulateShock: () => setShock(true),
                   }}
                 />
@@ -177,6 +204,7 @@ export default function App() {
             <ExplainerSidebar role={role} />
           </div>
         </div>
+        )}
       </div>
 
       {/* a tiny footer note so judges know the privacy is real */}

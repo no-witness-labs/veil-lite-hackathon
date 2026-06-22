@@ -2,4 +2,4 @@
 log/
 frontend/node_modules/
 frontend/dist/
-frontend/src/ledger-config.json
+frontend/public/ledger-config.json

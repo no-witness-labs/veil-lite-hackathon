@@ -21,6 +21,7 @@ testOfferAcceptRepayLifecycle = script do
         collateralAsset = "Tokenized Treasury"
         collateralQuantity = 150.0
         maturity = "2026-07-13"
+        liquidationThresholdLtv = 90.0
 
   borrowerOffers <- query @LoanOffer borrower
   length borrowerOffers === 1
@@ -40,6 +41,7 @@ testOfferAcceptRepayLifecycle = script do
   loan.collateralAsset === "Tokenized Treasury"
   loan.collateralQuantity === 150.0
   loan.maturity === "2026-07-13"
+  loan.liquidationThresholdLtv === 90.0
   loan.collateralLocked === True
 
   lenderLoans <- query @Loan lender
@@ -62,37 +64,6 @@ testOfferAcceptRepayLifecycle = script do
   outsiderClosed <- query @LoanClosed outsider
   length outsiderClosed === 0
 
-testLenderCanLiquidate : Script ()
-testLenderCanLiquidate = script do
-  lender <- allocateParty "Lender"
-  borrower <- allocateParty "Borrower"
-  regulator <- allocateParty "Regulator"
-
-  offerCid <- submit lender do
-    createCmd LoanOffer
-      with
-        lender
-        borrower
-        regulator
-        principal = 100.0
-        interest = 5.0
-        collateralAsset = "Tokenized Treasury"
-        collateralQuantity = 150.0
-        maturity = "2026-07-13"
-
-  loanCid <- submit borrower do
-    exerciseCmd offerCid Accept
-
-  closedCid <- submit lender do
-    exerciseCmd loanCid Liquidate
-
-  borrowerLoansAfterLiquidate <- query @Loan borrower
-  length borrowerLoansAfterLiquidate === 0
-
-  Some closed <- queryContractId borrower closedCid
-  closed.reason === "Liquidated"
-  closed.collateralReleased === False
-
 testLenderCanWithdrawOffer : Script ()
 testLenderCanWithdrawOffer = script do
   lender <- allocateParty "Lender"
@@ -110,9 +81,50 @@ testLenderCanWithdrawOffer = script do
         collateralAsset = "Tokenized Treasury"
         collateralQuantity = 150.0
         maturity = "2026-07-13"
+        liquidationThresholdLtv = 90.0
 
   submit lender do
     exerciseCmd offerCid Withdraw
 
   lenderOffersAfterWithdraw <- query @LoanOffer lender
   length lenderOffersAfterWithdraw === 0
+
+testLiquidationRequiresBreach : Script ()
+testLiquidationRequiresBreach = script do
+  lender <- allocateParty "Lender"
+  borrower <- allocateParty "Borrower"
+  regulator <- allocateParty "Regulator"
+
+  offerCid <- submit lender do
+    createCmd LoanOffer
+      with
+        lender
+        borrower
+        regulator
+        principal = 100.0
+        interest = 5.0
+        collateralAsset = "Tokenized Treasury"
+        collateralQuantity = 150.0
+        maturity = "2026-07-13"
+        liquidationThresholdLtv = 90.0
+
+  loanCid <- submit borrower do
+    exerciseCmd offerCid Accept
+
+  -- A healthy mark price (LTV 66.7%) must NOT permit liquidation.
+  submitMustFail lender do
+    exerciseCmd loanCid Liquidate with currentCollateralValue = 150.0
+
+  loansStillActive <- query @Loan borrower
+  length loansStillActive === 1
+
+  -- A price shock (LTV ~107%) breaches the threshold and permits liquidation.
+  closedCid <- submit lender do
+    exerciseCmd loanCid Liquidate with currentCollateralValue = 93.0
+
+  borrowerLoansAfterLiquidate <- query @Loan borrower
+  length borrowerLoansAfterLiquidate === 0
+
+  Some closed <- queryContractId borrower closedCid
+  closed.reason === "Liquidated"
+  closed.collateralReleased === False

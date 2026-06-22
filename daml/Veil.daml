@@ -15,11 +15,13 @@ template LoanOffer
     collateralAsset : Text
     collateralQuantity : Decimal
     maturity : Text
+    liquidationThresholdLtv : Decimal
   where
     signatory lender
     observer borrower, regulator
 
     ensure principal > 0.0 && interest >= 0.0 && collateralQuantity > 0.0
+      && liquidationThresholdLtv > 0.0
 
     choice Accept : ContractId Loan
       controller borrower
@@ -33,6 +35,7 @@ template LoanOffer
           collateralAsset
           collateralQuantity
           maturity
+          liquidationThresholdLtv
           collateralLocked = True
 
     choice Withdraw : ()
@@ -54,12 +57,14 @@ template Loan
     collateralAsset : Text
     collateralQuantity : Decimal
     maturity : Text
+    liquidationThresholdLtv : Decimal
     collateralLocked : Bool
   where
     signatory lender, borrower
     observer regulator
 
     ensure principal > 0.0 && interest >= 0.0 && collateralQuantity > 0.0
+      && liquidationThresholdLtv > 0.0
 
     choice Repay : ContractId LoanClosed
       controller borrower
@@ -76,9 +81,18 @@ template Loan
           reason = "Repaid"
           collateralReleased = True
 
+    -- | The lender supplies the current (off-ledger oracle) collateral value.
+    -- Liquidation is only authorized when that value puts the loan at or above
+    -- its LTV threshold, so the breach condition is enforced on-ledger rather
+    -- than only in the UI.
     choice Liquidate : ContractId LoanClosed
+      with
+        currentCollateralValue : Decimal
       controller lender
       do
+        assertMsg "Liquidation requires the collateral value to breach the LTV threshold"
+          (currentCollateralValue > 0.0
+            && (principal / currentCollateralValue) * 100.0 >= liquidationThresholdLtv)
         create LoanClosed with
           lender
           borrower

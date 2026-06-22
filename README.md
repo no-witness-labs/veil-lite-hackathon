@@ -104,6 +104,11 @@ Strongest single demo moment: view the deal as **Lender**, expand the raw ledger
 
 The sandbox runs with auth disabled for local development only.
 
+> **Dev dependencies:** `esbuild` is pinned to `^0.25` (via `overrides`) to clear its dev-server advisory.
+> One dev-server-only Vite advisory remains (fixable only by a major `vite@8` bump, deferred to avoid
+> pre-demo regressions). It does not affect production build output — but run `npm run dev` on a trusted
+> network only.
+
 ## Directory map
 
 ```text

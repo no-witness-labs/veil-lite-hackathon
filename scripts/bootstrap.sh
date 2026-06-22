@@ -10,7 +10,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BASE="${1:-http://127.0.0.1:6864}"
 DAR="$ROOT/.daml/dist/veil-0.1.0.dar"
-CONFIG="$ROOT/frontend/src/ledger-config.json"
+CONFIG="$ROOT/frontend/public/ledger-config.json"
 USER_ID="veil"
 
 [ -f "$DAR" ] || { echo "DAR not found at $DAR — run 'dpm build' first." >&2; exit 1; }
