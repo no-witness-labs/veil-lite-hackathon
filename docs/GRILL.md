@@ -104,3 +104,13 @@ Proceed only when we agree on these scope constraints:
 - Optional: liquidation.
 - Next step: loan program + borrow request marketplace flow.
 - Deferred: production integrations.
+
+## Definition of complete checkpoint
+
+The project is hackathon-complete only when these gates are satisfied:
+
+- **Judge-readiness**: privacy/confidentiality is obvious, the financial use case is real, product logic is stronger than infrastructure novelty, and institutional/professional relevance is credible.
+- **Functional demo**: lender offer, borrower accept, collateral lock, regulator observe, outsider non-visibility, borrower repay, and collateral release all work in one rehearsed flow.
+- **Asset logic**: demo terms include 100 USDC-equivalent principal, 5 interest, 105 repayment, 150 tokenized T-Bill/MMF collateral units, and 66.7% initial LTV or an equivalent fixture.
+- **Engineering**: Daml build/tests pass, lifecycle/privacy tests exist, and the frontend/demo path runs locally or from a hosted URL.
+- **Submission**: public repo, live product URL, deck, 3-minute video, and README links are ready.

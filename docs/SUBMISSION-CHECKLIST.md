@@ -108,14 +108,40 @@ This document tracks the exact submission requirements for the Build on Canton H
 
 ---
 
-## Final submission readiness gate
+## Definition of complete for hackathon
 
-Do not submit until all are true:
+Do not submit until all gates are true.
+
+### Product / judge-readiness gate
+
+- [ ] Demo clearly uses privacy/confidentiality: lender, borrower, and regulator can see the deal; outsider cannot see offer, loan, collateral state, or liquidation-relevant data.
+- [ ] Demo is a real financial use case: private repo-style financing/private credit against tokenized collateral.
+- [ ] Product logic is clear: offer → accept → collateral lock → repayment → collateral release, with optional liquidation.
+- [ ] Institutional/professional relevance is explicit: treasury financing, repo, OTC secured lending, asset managers, auditors, or regulated private credit.
+
+### Functional demo gate
+
+- [ ] Lender can create a borrower-specific offer with 100 USDC-equivalent principal, 5 interest, 105 repayment, 150 tokenized T-Bill/MMF collateral units, and 66.7% initial LTV.
+- [ ] Borrower can accept the offer and create an active loan.
+- [ ] Collateral is represented as locked/encumbered while the loan is active.
+- [ ] Borrower can repay and release collateral.
+- [ ] Regulator/auditor role can observe but cannot act.
+- [ ] Outsider role has an explicit empty/non-visible view.
+- [ ] Optional bonus: oracle price drop enables lender liquidation.
+
+### Engineering gate
+
+- [ ] Daml build/test commands pass.
+- [ ] Tests include lifecycle and privacy checks.
+- [ ] Tests include the concrete asset/financing numbers or equivalent fixture.
+- [ ] Frontend can run locally or via hosted link.
+- [ ] Demo script has been rehearsed end-to-end in under 3 minutes.
+
+### Submission gate
 
 - [ ] Public repo URL exists.
 - [ ] Deck PDF exists.
-- [ ] 3 minute video URL exists.
+- [ ] 3-minute video URL exists.
 - [ ] Live product URL exists.
 - [ ] README includes all four links.
-- [ ] Daml build/test commands pass.
-- [ ] Demo script has been rehearsed end-to-end.
+- [ ] README is honest about MVP scope and non-goals.

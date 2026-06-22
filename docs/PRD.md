@@ -253,14 +253,44 @@ The UI must answer these questions immediately:
 9. Repay loan: loan closes and collateral releases.
 10. Optional: reset, accept, price drops, lender liquidates.
 
-## Technical acceptance criteria
+## Definition of complete for hackathon
+
+Veil is complete enough for hackathon submission when all of these gates are true:
+
+### Product / judge-readiness gate
+
+- The demo clearly uses privacy/confidentiality: lender, borrower, and regulator can see the deal; outsider cannot see offer, loan, collateral state, or liquidation-relevant data.
+- The demo is recognizably a real financial use case: private repo-style financing/private credit against tokenized collateral.
+- The demo shows strong product logic, not infrastructure for infrastructure's sake: offer, accept, collateral lock, repayment, collateral release, and optional liquidation all map to financing logic.
+- The story is credible for institutional/professional markets: treasury financing, repo, OTC secured lending, asset managers, auditors, or regulated private credit.
+
+### Functional demo gate
+
+- Lender can create a borrower-specific offer with concrete terms: 100 USDC-equivalent principal, 5 interest, 105 repayment, 150 tokenized T-Bill/MMF collateral units, and 66.7% initial LTV.
+- Borrower can accept the offer and create an active loan.
+- Collateral is represented as locked/encumbered while the loan is active.
+- Borrower can repay and release collateral.
+- Regulator/auditor role can observe but cannot act.
+- Outsider role has an explicit empty/non-visible view.
+- Optional bonus: oracle price drop enables lender liquidation.
+
+### Engineering gate
 
 - Daml package builds.
 - Daml Script tests pass.
 - Tests include positive lifecycle and privacy checks.
-- Frontend can run locally.
-- README includes one-command or short-command demo instructions.
+- Tests include the concrete asset/financing numbers or their equivalent fixture.
+- Frontend can run locally or via hosted link.
+- README includes short setup/demo instructions.
 - Demo can be completed in under 3 minutes.
+
+### Submission gate
+
+- Public repo URL exists.
+- Live product URL exists.
+- Presentation deck exists.
+- 3-minute video exists and shows the working demo.
+- README includes all final submission links and honest non-goals.
 
 ## Success metrics for hackathon
 
