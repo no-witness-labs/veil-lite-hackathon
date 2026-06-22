@@ -32,6 +32,54 @@ Build the flow:
 8. Optional demo branch: oracle price drops and lender liquidates.
 9. Future extension: lender publishes `LoanProgram`, borrower creates `BorrowRequest`, then lender offers.
 
+## Contract model
+
+Five Daml templates. Visibility is **structural** — a party sees a contract only if it is a
+signatory (`S`) or observer (`O`); otherwise the contract does not exist for them. That is why the
+outsider's ledger query returns nothing.
+
+```text
+ Who can see each contract            Lender   Borrower  Regulator  Outsider
+ ─────────────────────────────────────────────────────────────────────────
+ CashHolding        sig: owner          own       own        –         –     ← wallet is private:
+ CollateralHolding  sig: owner          own       own        –         –       owner-only, no observers
+ LoanOffer          sig: L  obs: B,R      S         O         O         –
+ Loan               sig: L,B  obs: R      S         S         O         –
+ LoanClosed         sig: L,B  obs: R      S         S         O         –
+   S = signatory (authorizes + sees)   O = observer (sees only)   – = cannot see
+```
+
+Lifecycle and the money/collateral trail (canonical demo numbers):
+
+```text
+  seed ─ Lender wallet: Cash 100      Borrower wallet: Cash 105 · Collateral 150
+
+  Lender ── MakeOffer(100) ─────────────►  LoanOffer            (principal pre-funded,
+            [CashHolding choice]            sig L · obs B,R       escrowed in the offer)
+                                               │
+            Borrower ── Accept(collateral) ────┤  locks collateral, draws principal
+                                               ▼
+                                            Loan  (collateralLocked)      sig L,B · obs R
+                                            ├─ borrower +Cash 100 (principal delivered)
+                                            └─ collateral 150 → LOCKED (no free holding)
+                                               │
+                 ┌── Borrower Repay(cash ≥105) ─┴─ Lender Liquidate(value) ──┐
+                 ▼          (only if LTV breaches threshold) ────────────────▼
+            LoanClosed: Repaid                              LoanClosed: Liquidated
+            ├─ collateral 150 → borrower (released)         └─ collateral 150 → lender (seized)
+            └─ cash 105 → lender (principal + interest)
+
+  (LoanOffer ── Withdraw ──► refunds Cash 100 to the lender, before acceptance)
+
+  Net over a repay:  lender +5 · borrower −5 · collateral round-trips · total cash conserved
+```
+
+State: `none → Offered → Active → Repaid | Liquidated` (Withdraw returns `Offered → none`).
+
+Authorization is structural too: the borrower can draw the lender's principal only because the lender
+pre-signed the `LoanOffer`; `Liquidate` is rejected unless the supplied collateral value breaches the
+LTV threshold; and the active `Loan` needs **both** signatures, so neither side can rewrite the deal.
+
 ## Non-goals for hackathon
 
 - Production Token Standard integration with real external providers.
