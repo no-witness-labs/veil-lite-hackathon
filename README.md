@@ -63,6 +63,85 @@ dpm build
 
 The root package contains deployable templates only. The `test/` package depends on the root DAR and contains Daml Script tests, keeping `daml-script` out of the deployable package.
 
+## Run the role-based demo
+
+The demo is a React UI wired to a live Canton sandbox over the JSON Ledger API v2. Each role queries the
+ledger as its own party, so the **Outsider tab genuinely returns nothing** — the privacy claim is proven
+on-ledger, not mocked.
+
+> Quick start below. For full operational detail, the demo walkthrough, and troubleshooting, see the
+> **[Runbook](./docs/RUNBOOK.md)**.
+
+> **JDK requirement:** Canton 3.5 must run on an LTS JDK. On Oracle JDK 20 the bundled BouncyCastle provider
+> fails JCE authentication (`JCE cannot authenticate the provider BC`) and every transaction errors. The start
+> script pins Homebrew **OpenJDK 17**; install it with `brew install openjdk@17`, or point `VEIL_JAVA_HOME` at
+> your own JDK 17/21.
+
+```bash
+# 1. Start the sandbox on JDK 17, upload the DAR, allocate the four demo parties,
+#    and write frontend/src/ledger-config.json.
+./scripts/start-sandbox.sh
+
+# 2. In a second terminal, run the UI (Vite dev server proxies /v2 to the sandbox).
+npm --prefix frontend install
+npm --prefix frontend run dev   # http://localhost:5173
+```
+
+3-minute click path: **Lender** create offer → **Borrower** sees it → **Outsider** sees nothing →
+**Borrower** accept (collateral LOCKED) → **Regulator** observes read-only → **Borrower** repay (collateral
+RELEASED). Optional: **Lender** simulate price drop → liquidate. "Reset demo" clears the ledger for another run.
+
+### What the UI proves it is really on Canton
+
+The UI surfaces the ledger's own evidence, so nothing has to be taken on trust:
+
+- **Party-ID strip** (under the header) — the four roles are distinct on-ledger Canton parties on one participant.
+- **Deal card** — shows the real contract ID and ledger offset behind the position.
+- **Ledger activity feed** — every action lists its committed transaction: `updateId`, ledger offset,
+  synchronizer ID, and the contracts created/archived.
+- **Raw ledger view** (collapsible) — the exact JSON each party gets from the `active-contracts` query.
+  Switching to **Outsider** makes the strongest point: the same panel is literally `[]`.
+
+Strongest single demo moment: view the deal as **Lender**, expand the raw ledger view, then switch to
+**Outsider** — the same query returns nothing.
+
+The sandbox runs with auth disabled for local development only.
+
+> **Dev dependencies:** `esbuild` is pinned to `^0.25` (via `overrides`) to clear its dev-server advisory.
+> One dev-server-only Vite advisory remains (fixable only by a major `vite@8` bump, deferred to avoid
+> pre-demo regressions). It does not affect production build output — but run `npm run dev` on a trusted
+> network only.
+
+## Where Veil sits in the Canton stack
+
+Veil deliberately runs on the lightest Canton runtime so the demo is dependency-light and judge-runnable.
+The official docs define the **sandbox** as "Run a single Canton node via Daml SDK" (`dpm sandbox`) — a minimal
+environment. Our startup logs confirm exactly that: one participant plus a local synchronizer (sequencer +
+mediator), in-memory, with **no Splice, Super Validator, Canton Coin, or Scan**.
+
+The next rung up is **LocalNet** — a Docker Compose environment that "mirrors the Canton Network topology": three
+participants (App Provider, App User, Super Validator), test Canton Coin, and the wallet / SV / Scan UIs. The
+[`cn-quickstart`](https://github.com/digital-asset/cn-quickstart) full-stack template builds on LocalNet and adds a
+Spring Boot backend, PQS, Keycloak OAuth2, and the Splice token-standard apps (it targets Daml Enterprise).
+
+| | **Veil (this repo)** | **LocalNet / cn-quickstart** |
+| --- | --- | --- |
+| Runtime | single-process `dpm sandbox`, in-memory | Docker Compose LocalNet |
+| Participants | one (privacy shown per-party on one node) | three (privacy across separate nodes) |
+| Assets | demo `Decimal` fields | test Canton Coin / token standard |
+| Auth | none (sandbox, dev only) | Keycloak OAuth2 / shared-secret |
+| Extras | hand-rolled JSON Ledger API v2 client | backend, PQS, wallet, Scan, observability |
+| Start | `./scripts/start-sandbox.sh` | `make setup && make build && make start` |
+
+Trade-off: the sandbox proves the **privacy model and financing lifecycle** with almost no setup, but privacy is
+demonstrated on a single participant rather than across nodes, and there are no real tokenized assets or production
+auth (all explicit non-goals above). The path toward production is to adopt the LocalNet/cn-quickstart stack:
+multiple participants, the token standard, OAuth, and PQS.
+
+Sources: [Canton development stack](https://docs.canton.network/appdev/modules/m1-development-stack.md) ·
+[LocalNet](https://docs.canton.network/appdev/modules/m5-localnet-development.md) ·
+[cn-quickstart](https://github.com/digital-asset/cn-quickstart)
+
 ## Directory map
 
 ```text
@@ -76,6 +155,16 @@ veil/
 │   └── daml/
 │       └── Veil/
 │           └── Test.daml
+├── scripts/
+│   ├── start-sandbox.sh   # start Canton on JDK 17 + bootstrap
+│   └── bootstrap.sh       # upload DAR, allocate parties, write config
+├── frontend/              # Vite + React UI over the JSON Ledger API v2
+│   ├── package.json
+│   └── src/
+│       ├── App.tsx
+│       ├── ledger.ts      # JSON Ledger API v2 client
+│       ├── state.ts       # view derivation
+│       └── components/
 ├── docs/
 │   ├── BUSINESS-CASE.md
 │   ├── PRD.md
