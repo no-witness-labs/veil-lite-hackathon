@@ -80,6 +80,9 @@ Authorization is structural too: the borrower can draw the lender's principal on
 pre-signed the `LoanOffer`; `Liquidate` is rejected unless the supplied collateral value breaches the
 LTV threshold; and the active `Loan` needs **both** signatures, so neither side can rewrite the deal.
 
+For the full end-to-end picture — build, deploy, the JSON Ledger API, and a step-by-step walkthrough of
+every flow (create offer, accept, repay, liquidate, withdraw, reset) — see **[docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)**.
+
 ## Non-goals for hackathon
 
 - Production Token Standard integration with real external providers.
@@ -218,6 +221,8 @@ veil/
 │       ├── state.ts       # view derivation
 │       └── components/
 ├── docs/
+│   ├── ARCHITECTURE.md    # e2e: build, deploy, JSON API, per-flow walkthroughs
+│   ├── RUNBOOK.md         # run steps, demo walkthrough, troubleshooting
 │   ├── BUSINESS-CASE.md
 │   ├── PRD.md
 │   ├── CONTEXT.md
