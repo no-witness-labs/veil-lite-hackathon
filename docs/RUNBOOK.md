@@ -81,6 +81,13 @@ by Canton, not by the UI.
 The activity feed and the deal card show the real `updateId`, ledger `offset`,
 `synchronizerId`, and contract ids, so every action is verifiably on-ledger.
 
+**Holdings / double-entry:** the "Your holdings" panel shows each party's own wallet
+(holdings are owner-signatory with no observers, so a party sees only its own). The
+borrower starts with 150 collateral + 105 cash and the lender with 100 cash; accepting
+locks the collateral and delivers 100 principal to the borrower; repaying returns the
+collateral and the lender ends with 105 (principal + 5 interest). "Reset demo" burns and
+re-seeds the canonical holdings so the run is repeatable.
+
 ## 5. Stopping
 
 ```bash

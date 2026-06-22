@@ -69,4 +69,33 @@ cat > "$CONFIG" <<JSON
 JSON
 
 echo "→ Wrote $CONFIG"
+
+# Seed canonical demo holdings (kept in sync with SEED in frontend/src/ledger.ts):
+# lender 100 cash, borrower 105 cash + 150 collateral. Idempotent: skip if the
+# borrower already holds collateral.
+COLLATERAL_ASSET="Tokenized T-Bill / MMF"
+
+create_holding() {
+  # $1 = acting party, $2 = JSON createArguments, $3 = template entity
+  curl -s -o /dev/null -X POST "$BASE/v2/commands/submit-and-wait-for-transaction" \
+    -H "Content-Type: application/json" \
+    -d "{\"commands\":{\"commands\":[{\"CreateCommand\":{\"templateId\":\"#veil:Veil:$3\",\"createArguments\":$2}}],\"commandId\":\"seed-$3-$RANDOM\",\"actAs\":[\"$1\"],\"userId\":\"$USER_ID\"}}"
+}
+
+already_seeded="$(curl -s -X POST "$BASE/v2/state/active-contracts" \
+  -H "Content-Type: application/json" \
+  -d "{\"filter\":{\"filtersByParty\":{\"$BORROWER\":{\"cumulative\":[{\"identifierFilter\":{\"WildcardFilter\":{\"value\":{\"includeCreatedEventBlob\":false}}}}]}}},\"verbose\":false,\"activeAtOffset\":$(curl -s "$BASE/v2/state/ledger-end" | python3 -c 'import sys,json;print(json.load(sys.stdin)["offset"])')}" \
+  | python3 -c 'import sys,json
+d=json.load(sys.stdin)
+print(any("CollateralHolding" in (e.get("contractEntry",{}).get("JsActiveContract",{}).get("createdEvent",{}) or {}).get("templateId","") for e in d))')"
+
+if [ "$already_seeded" = "True" ]; then
+  echo "→ Holdings already seeded, skipping"
+else
+  echo "→ Seeding demo holdings"
+  create_holding "$LENDER"   "{\"owner\":\"$LENDER\",\"amount\":\"100\"}"   CashHolding
+  create_holding "$BORROWER" "{\"owner\":\"$BORROWER\",\"amount\":\"105\"}" CashHolding
+  create_holding "$BORROWER" "{\"owner\":\"$BORROWER\",\"asset\":\"$COLLATERAL_ASSET\",\"quantity\":\"150\"}" CollateralHolding
+fi
+
 echo "✓ Bootstrap complete"

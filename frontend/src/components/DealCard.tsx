@@ -128,8 +128,8 @@ export function DealCard({
         </div>
         <div>
           <div style={monoLabel}>Maturity</div>
-          <div style={monoValue}>{fmtDate(deal.args.maturity)}</div>
-          <div style={{ fontSize: 11, color: '#aeb4be', marginTop: 3 }}>Matures in {daysTo(deal.args.maturity)} days</div>
+          <div style={monoValue}>{fmtDate(deal.args.maturity ?? '')}</div>
+          <div style={{ fontSize: 11, color: '#aeb4be', marginTop: 3 }}>Matures in {daysTo(deal.args.maturity ?? '')} days</div>
         </div>
       </div>
 

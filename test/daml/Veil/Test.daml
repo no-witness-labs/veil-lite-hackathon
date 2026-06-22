@@ -2,129 +2,111 @@ module Veil.Test where
 
 import Daml.Script
 import DA.Assert ((===))
+import DA.List (sort)
 import Veil
 
-testOfferAcceptRepayLifecycle : Script ()
-testOfferAcceptRepayLifecycle = script do
+tbill : Text
+tbill = "Tokenized T-Bill / MMF"
+
+-- Allocate the demo parties and seed holdings: lender funds with 100 cash,
+-- borrower holds 105 treasury cash plus 150 collateral units.
+setup : Script (Party, Party, Party, ContractId CashHolding, ContractId CashHolding, ContractId CollateralHolding)
+setup = do
   lender <- allocateParty "Lender"
   borrower <- allocateParty "Borrower"
   regulator <- allocateParty "Regulator"
+  lenderCash <- submit lender do createCmd CashHolding with owner = lender; amount = 100.0
+  borrowerCash <- submit borrower do createCmd CashHolding with owner = borrower; amount = 105.0
+  borrowerColl <- submit borrower do createCmd CollateralHolding with owner = borrower; asset = tbill; quantity = 150.0
+  pure (lender, borrower, regulator, lenderCash, borrowerCash, borrowerColl)
 
-  offerCid <- submit lender do
-    createCmd LoanOffer
-      with
-        lender
-        borrower
-        regulator
-        principal = 100.0
-        interest = 5.0
-        collateralAsset = "Tokenized Treasury"
-        collateralQuantity = 150.0
-        maturity = "2026-07-13"
-        liquidationThresholdLtv = 90.0
+makeOffer : Party -> Party -> Party -> ContractId CashHolding -> Script (ContractId LoanOffer)
+makeOffer lender borrower regulator lenderCash =
+  submit lender do
+    exerciseCmd lenderCash MakeOffer with
+      borrower; regulator
+      principal = 100.0
+      interest = 5.0
+      collateralAsset = tbill
+      collateralQuantity = 150.0
+      maturity = "2026-07-13"
+      liquidationThresholdLtv = 90.0
 
-  borrowerOffers <- query @LoanOffer borrower
-  length borrowerOffers === 1
+cashAmounts : Party -> Script [Decimal]
+cashAmounts p = do
+  hs <- query @CashHolding p
+  pure $ sort [h.amount | (_, h) <- hs]
+
+testFullLifecycle : Script ()
+testFullLifecycle = script do
+  (lender, borrower, regulator, lenderCash, borrowerCash, borrowerColl) <- setup
+
+  -- Borrower starts with tokenized collateral.
+  borrowerCollBefore <- query @CollateralHolding borrower
+  length borrowerCollBefore === 1
+
+  offerCid <- makeOffer lender borrower regulator lenderCash
+
+  -- Funding left the lender (offer is pre-funded).
+  lenderCashAfterOffer <- query @CashHolding lender
+  length lenderCashAfterOffer === 0
 
   loanCid <- submit borrower do
-    exerciseCmd offerCid Accept
+    exerciseCmd offerCid Accept with collateralCid = borrowerColl
 
-  borrowerOffersAfterAccept <- query @LoanOffer borrower
-  length borrowerOffersAfterAccept === 0
-
+  -- Accepting locks/encumbers collateral and delivers the principal.
   Some loan <- queryContractId borrower loanCid
-  loan.lender === lender
-  loan.borrower === borrower
-  loan.regulator === regulator
-  loan.principal === 100.0
-  loan.interest === 5.0
-  loan.collateralAsset === "Tokenized Treasury"
-  loan.collateralQuantity === 150.0
-  loan.maturity === "2026-07-13"
-  loan.liquidationThresholdLtv === 90.0
   loan.collateralLocked === True
+  borrowerCollLocked <- query @CollateralHolding borrower
+  length borrowerCollLocked === 0
+  cashAmounts borrower >>= \a -> a === [100.0, 105.0]
 
-  lenderLoans <- query @Loan lender
-  length lenderLoans === 1
-
+  -- Outsider sees nothing throughout.
   outsider <- allocateParty "Outsider"
-  outsiderLoans <- query @Loan outsider
-  length outsiderLoans === 0
+  query @Loan outsider >>= \l -> length l === 0
 
   closedCid <- submit borrower do
-    exerciseCmd loanCid Repay
+    exerciseCmd loanCid Repay with repaymentCid = borrowerCash
 
-  borrowerLoansAfterRepay <- query @Loan borrower
-  length borrowerLoansAfterRepay === 0
-
+  -- Repayment closes the loan and releases collateral to the borrower.
+  query @Loan borrower >>= \l -> length l === 0
+  borrowerCollReleased <- query @CollateralHolding borrower
+  length borrowerCollReleased === 1
   Some closed <- queryContractId regulator closedCid
   closed.reason === "Repaid"
   closed.collateralReleased === True
 
-  outsiderClosed <- query @LoanClosed outsider
-  length outsiderClosed === 0
-
-testLenderCanWithdrawOffer : Script ()
-testLenderCanWithdrawOffer = script do
-  lender <- allocateParty "Lender"
-  borrower <- allocateParty "Borrower"
-  regulator <- allocateParty "Regulator"
-
-  offerCid <- submit lender do
-    createCmd LoanOffer
-      with
-        lender
-        borrower
-        regulator
-        principal = 100.0
-        interest = 5.0
-        collateralAsset = "Tokenized Treasury"
-        collateralQuantity = 150.0
-        maturity = "2026-07-13"
-        liquidationThresholdLtv = 90.0
-
-  submit lender do
-    exerciseCmd offerCid Withdraw
-
-  lenderOffersAfterWithdraw <- query @LoanOffer lender
-  length lenderOffersAfterWithdraw === 0
+  -- Double-entry settled: lender +5 (105), borrower keeps 100 principal.
+  cashAmounts lender >>= \a -> a === [105.0]
+  cashAmounts borrower >>= \a -> a === [100.0]
+  query @LoanClosed outsider >>= \c -> length c === 0
 
 testLiquidationRequiresBreach : Script ()
 testLiquidationRequiresBreach = script do
-  lender <- allocateParty "Lender"
-  borrower <- allocateParty "Borrower"
-  regulator <- allocateParty "Regulator"
+  (lender, borrower, regulator, lenderCash, _, borrowerColl) <- setup
+  offerCid <- makeOffer lender borrower regulator lenderCash
+  loanCid <- submit borrower do exerciseCmd offerCid Accept with collateralCid = borrowerColl
 
-  offerCid <- submit lender do
-    createCmd LoanOffer
-      with
-        lender
-        borrower
-        regulator
-        principal = 100.0
-        interest = 5.0
-        collateralAsset = "Tokenized Treasury"
-        collateralQuantity = 150.0
-        maturity = "2026-07-13"
-        liquidationThresholdLtv = 90.0
+  -- Healthy mark (LTV 66.7%) must NOT permit liquidation.
+  submitMustFail lender do exerciseCmd loanCid Liquidate with currentCollateralValue = 150.0
+  query @Loan borrower >>= \l -> length l === 1
 
-  loanCid <- submit borrower do
-    exerciseCmd offerCid Accept
-
-  -- A healthy mark price (LTV 66.7%) must NOT permit liquidation.
-  submitMustFail lender do
-    exerciseCmd loanCid Liquidate with currentCollateralValue = 150.0
-
-  loansStillActive <- query @Loan borrower
-  length loansStillActive === 1
-
-  -- A price shock (LTV ~107%) breaches the threshold and permits liquidation.
-  closedCid <- submit lender do
-    exerciseCmd loanCid Liquidate with currentCollateralValue = 93.0
-
-  borrowerLoansAfterLiquidate <- query @Loan borrower
-  length borrowerLoansAfterLiquidate === 0
-
+  -- Price shock (LTV ~107%) breaches the threshold and seizes collateral.
+  closedCid <- submit lender do exerciseCmd loanCid Liquidate with currentCollateralValue = 93.0
+  query @Loan borrower >>= \l -> length l === 0
   Some closed <- queryContractId borrower closedCid
   closed.reason === "Liquidated"
   closed.collateralReleased === False
+  -- Collateral was seized to the lender, not released to the borrower.
+  query @CollateralHolding lender >>= \c -> length c === 1
+  query @CollateralHolding borrower >>= \c -> length c === 0
+
+testWithdrawRefunds : Script ()
+testWithdrawRefunds = script do
+  (lender, borrower, regulator, lenderCash, _, _) <- setup
+  offerCid <- makeOffer lender borrower regulator lenderCash
+  query @CashHolding lender >>= \c -> length c === 0
+  _ <- submit lender do exerciseCmd offerCid Withdraw
+  -- Principal refunded to the lender.
+  cashAmounts lender >>= \a -> a === [100.0]
+  query @LoanOffer borrower >>= \o -> length o === 0

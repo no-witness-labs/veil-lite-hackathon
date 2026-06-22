@@ -1,10 +1,63 @@
 module Veil where
 
+-- | Demo cash-like principal asset (e.g. USDC). A "bearer" holding: the owner
+-- is the sole signatory, so it can be spent with only the owner's authority.
+template CashHolding
+  with
+    owner : Party
+    amount : Decimal
+  where
+    signatory owner
+    ensure amount > 0.0
+
+    -- | Lender funds a borrower-specific offer directly from cash. The funded
+    -- principal leaves the lender here and is delivered to the borrower on
+    -- Accept (or refunded on Withdraw), so an offer is always pre-funded.
+    choice MakeOffer : ContractId LoanOffer
+      with
+        borrower : Party
+        regulator : Party
+        principal : Decimal
+        interest : Decimal
+        collateralAsset : Text
+        collateralQuantity : Decimal
+        maturity : Text
+        liquidationThresholdLtv : Decimal
+      controller owner
+      do
+        assertMsg "insufficient cash to fund offer" (amount >= principal)
+        if amount > principal
+          then do
+            _ <- create CashHolding with owner; amount = amount - principal
+            pure ()
+          else pure ()
+        create LoanOffer with
+          lender = owner
+          borrower
+          regulator
+          principal
+          interest
+          collateralAsset
+          collateralQuantity
+          maturity
+          liquidationThresholdLtv
+
+-- | Demo tokenized collateral (e.g. tokenized T-Bill / MMF units). Bearer
+-- holding owned by the borrower until it is locked into a loan.
+template CollateralHolding
+  with
+    owner : Party
+    asset : Text
+    quantity : Decimal
+  where
+    signatory owner
+    ensure quantity > 0.0
+
 -- | Borrower-specific loan offer for a known-counterparty lending flow.
 --
--- The lender is the signatory because they commit to the offered terms. The
--- borrower and regulator are observers so the offer is selectively disclosed
--- without becoming globally visible.
+-- The lender is the signatory because they commit to (and pre-fund) the offered
+-- terms. The borrower and regulator are observers so the offer is selectively
+-- disclosed without becoming globally visible.
 template LoanOffer
   with
     lender : Party
@@ -23,9 +76,20 @@ template LoanOffer
     ensure principal > 0.0 && interest >= 0.0 && collateralQuantity > 0.0
       && liquidationThresholdLtv > 0.0
 
+    -- | Borrower locks matching collateral and draws the principal. The
+    -- borrower's CollateralHolding is consumed (encumbered in the loan) and a
+    -- CashHolding for the principal is delivered to the borrower.
     choice Accept : ContractId Loan
+      with
+        collateralCid : ContractId CollateralHolding
       controller borrower
       do
+        collateral <- fetch collateralCid
+        assertMsg "collateral must be owned by the borrower" (collateral.owner == borrower)
+        assertMsg "collateral asset mismatch" (collateral.asset == collateralAsset)
+        assertMsg "collateral quantity mismatch" (collateral.quantity == collateralQuantity)
+        archive collateralCid
+        _ <- create CashHolding with owner = borrower; amount = principal
         create Loan with
           lender
           borrower
@@ -38,10 +102,12 @@ template LoanOffer
           liquidationThresholdLtv
           collateralLocked = True
 
-    choice Withdraw : ()
+    -- | Lender withdraws the unaccepted offer; the pre-funded principal is
+    -- refunded to the lender.
+    choice Withdraw : ContractId CashHolding
       controller lender
       do
-        pure ()
+        create CashHolding with owner = lender; amount = principal
 
 -- | Active private bilateral loan created after the borrower accepts an offer.
 --
@@ -66,9 +132,26 @@ template Loan
     ensure principal > 0.0 && interest >= 0.0 && collateralQuantity > 0.0
       && liquidationThresholdLtv > 0.0
 
+    -- | Borrower repays principal + interest in cash and gets collateral back.
+    -- The repayment cash moves to the lender (any surplus is returned as
+    -- change) and a CollateralHolding is released to the borrower.
     choice Repay : ContractId LoanClosed
+      with
+        repaymentCid : ContractId CashHolding
       controller borrower
       do
+        let repayment = principal + interest
+        cash <- fetch repaymentCid
+        assertMsg "repayment cash must be owned by the borrower" (cash.owner == borrower)
+        assertMsg "insufficient cash to repay" (cash.amount >= repayment)
+        archive repaymentCid
+        _ <- create CashHolding with owner = lender; amount = repayment
+        if cash.amount > repayment
+          then do
+            _ <- create CashHolding with owner = borrower; amount = cash.amount - repayment
+            pure ()
+          else pure ()
+        _ <- create CollateralHolding with owner = borrower; asset = collateralAsset; quantity = collateralQuantity
         create LoanClosed with
           lender
           borrower
@@ -83,16 +166,16 @@ template Loan
 
     -- | The lender supplies the current (off-ledger oracle) collateral value.
     -- Liquidation is only authorized when that value puts the loan at or above
-    -- its LTV threshold, so the breach condition is enforced on-ledger rather
-    -- than only in the UI.
+    -- its LTV threshold; the collateral is then seized to the lender.
     choice Liquidate : ContractId LoanClosed
       with
         currentCollateralValue : Decimal
       controller lender
       do
-        assertMsg "Liquidation requires the collateral value to breach the LTV threshold"
+        assertMsg "liquidation requires the collateral value to breach the LTV threshold"
           (currentCollateralValue > 0.0
             && (principal / currentCollateralValue) * 100.0 >= liquidationThresholdLtv)
+        _ <- create CollateralHolding with owner = lender; asset = collateralAsset; quantity = collateralQuantity
         create LoanClosed with
           lender
           borrower
