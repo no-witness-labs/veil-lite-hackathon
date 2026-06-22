@@ -112,6 +112,36 @@ The sandbox runs with auth disabled for local development only.
 > pre-demo regressions). It does not affect production build output — but run `npm run dev` on a trusted
 > network only.
 
+## Where Veil sits in the Canton stack
+
+Veil deliberately runs on the lightest Canton runtime so the demo is dependency-light and judge-runnable.
+The official docs define the **sandbox** as "Run a single Canton node via Daml SDK" (`dpm sandbox`) — a minimal
+environment. Our startup logs confirm exactly that: one participant plus a local synchronizer (sequencer +
+mediator), in-memory, with **no Splice, Super Validator, Canton Coin, or Scan**.
+
+The next rung up is **LocalNet** — a Docker Compose environment that "mirrors the Canton Network topology": three
+participants (App Provider, App User, Super Validator), test Canton Coin, and the wallet / SV / Scan UIs. The
+[`cn-quickstart`](https://github.com/digital-asset/cn-quickstart) full-stack template builds on LocalNet and adds a
+Spring Boot backend, PQS, Keycloak OAuth2, and the Splice token-standard apps (it targets Daml Enterprise).
+
+| | **Veil (this repo)** | **LocalNet / cn-quickstart** |
+| --- | --- | --- |
+| Runtime | single-process `dpm sandbox`, in-memory | Docker Compose LocalNet |
+| Participants | one (privacy shown per-party on one node) | three (privacy across separate nodes) |
+| Assets | demo `Decimal` fields | test Canton Coin / token standard |
+| Auth | none (sandbox, dev only) | Keycloak OAuth2 / shared-secret |
+| Extras | hand-rolled JSON Ledger API v2 client | backend, PQS, wallet, Scan, observability |
+| Start | `./scripts/start-sandbox.sh` | `make setup && make build && make start` |
+
+Trade-off: the sandbox proves the **privacy model and financing lifecycle** with almost no setup, but privacy is
+demonstrated on a single participant rather than across nodes, and there are no real tokenized assets or production
+auth (all explicit non-goals above). The path toward production is to adopt the LocalNet/cn-quickstart stack:
+multiple participants, the token standard, OAuth, and PQS.
+
+Sources: [Canton development stack](https://docs.canton.network/appdev/modules/m1-development-stack.md) ·
+[LocalNet](https://docs.canton.network/appdev/modules/m5-localnet-development.md) ·
+[cn-quickstart](https://github.com/digital-asset/cn-quickstart)
+
 ## Directory map
 
 ```text
