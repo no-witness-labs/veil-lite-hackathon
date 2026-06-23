@@ -184,3 +184,50 @@ testValidationGuards = script do
   loanCid <- submit borrower do exerciseCmd offerCid Accept with collateralCid = goodColl
   shortCash <- submit borrower do createCmd CashHolding with owner = borrower; amount = 50.0
   submitMustFail borrower do exerciseCmd loanCid Repay with repaymentCid = shortCash
+
+-- Borrower carves the exact repayment out of an oversized wallet in
+-- an owner-only Split transaction (no lender/regulator informee), so Repay only
+-- ever fetches a 105 holding — value both sides already agreed — instead of
+-- divulging the borrower's full treasury balance. Repay now rejects any holding
+-- whose amount is not exactly principal + interest.
+testRepayExactAmountViaSplit : Script ()
+testRepayExactAmountViaSplit = script do
+  (lender, borrower, regulator, lenderCash, _, borrowerColl) <- setup
+  offerCid <- makeOffer lender borrower regulator lenderCash
+  loanCid <- submit borrower do exerciseCmd offerCid Accept with collateralCid = borrowerColl
+
+  -- An oversized treasury wallet cannot be used to repay directly: the exact-amount
+  -- guard rejects it, so Repay never fetches (and divulges) the larger balance.
+  oversized <- submit borrower do createCmd CashHolding with owner = borrower; amount = 5000.0
+  submitMustFail borrower do exerciseCmd loanCid Repay with repaymentCid = oversized
+
+  -- The borrower splits exactly the 105 repayment in a private, owner-only tx.
+  (exactCid, remainderCid) <- submit borrower do exerciseCmd oversized Split with splitAmount = 105.0
+
+  -- Split conserves value: 105 exact + 4895 remainder, both owned by the borrower.
+  Some exact <- queryContractId borrower exactCid
+  exact.amount === 105.0
+  Some remainder <- queryContractId borrower remainderCid
+  remainder.amount === 4895.0
+
+  -- Repay with the exact holding succeeds and closes the loan.
+  closedCid <- submit borrower do exerciseCmd loanCid Repay with repaymentCid = exactCid
+  Some closed <- queryContractId regulator closedCid
+  closed.reason === "Repaid"
+  closed.collateralReleased === True
+
+  -- Double-entry settled: lender +105; borrower keeps the 100 drawn principal, the
+  -- 105 seed wallet, and the 4895 split remainder. Collateral is released, not cash.
+  cashAmounts lender >>= \a -> a === [105.0]
+  cashAmounts borrower >>= \a -> a === [100.0, 105.0, 4895.0]
+  query @CollateralHolding borrower >>= \c -> length c === 1
+
+-- Split guards: the owner-only Split rejects non-positive amounts and refuses to
+-- split off the entire balance (splitAmount must be strictly less than amount).
+testSplitGuards : Script ()
+testSplitGuards = script do
+  borrower <- allocateParty "Borrower"
+  wallet <- submit borrower do createCmd CashHolding with owner = borrower; amount = 105.0
+  submitMustFail borrower do exerciseCmd wallet Split with splitAmount = 0.0
+  submitMustFail borrower do exerciseCmd wallet Split with splitAmount = 105.0
+  submitMustFail borrower do exerciseCmd wallet Split with splitAmount = 200.0
