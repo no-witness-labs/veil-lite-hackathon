@@ -41,12 +41,23 @@ template CashHolding
           collateralQuantity
           maturity
           liquidationThresholdLtv
+    
+    choice Split : (ContractId CashHolding, ContractId CashHolding)
+      with
+        splitAmount : Decimal
+      controller owner
+      do
+        assertMsg "split amount must be positive and less than total amount" (splitAmount > 0.0 && splitAmount < amount)
+        let remainingAmount = amount - splitAmount
+        cid1 <- create CashHolding with owner; amount = splitAmount
+        cid2 <- create CashHolding with owner; amount = remainingAmount
+        pure (cid1, cid2)
 
 -- | Demo tokenized collateral (e.g. tokenized T-Bill / MMF units). Bearer
 -- holding owned by the borrower until it is locked into a loan.
 template CollateralHolding
   with
-    owner : Party
+    owner : Party -- borrower until locked, then lender if liquidated?
     asset : Text
     quantity : Decimal
   where
@@ -143,7 +154,7 @@ template Loan
         let repayment = principal + interest
         cash <- fetch repaymentCid
         assertMsg "repayment cash must be owned by the borrower" (cash.owner == borrower)
-        assertMsg "insufficient cash to repay" (cash.amount >= repayment)
+        assertMsg "repayment amount mismatch" (cash.amount == repayment)
         archive repaymentCid
         _ <- create CashHolding with owner = lender; amount = repayment
         if cash.amount > repayment
