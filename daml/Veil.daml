@@ -1,129 +1,94 @@
+-- Veil — private repo-style financing on the Canton Token Standard (CIP-056).
+--
+-- Cash/collateral are standard `Holding`s; value moves via the standard `Allocation` DvP. This
+-- module uses ONLY the Splice interfaces, so it works over any CIP-056 registry (OZ simple-token,
+-- Amulet, ...); concrete holdings are minted in tests/bootstrap.
+--
+-- Authority: `Loan` is jointly signed by lender+borrower, so its choices can drive any allocation
+-- whose {executor,sender,receiver} ⊆ {lender,borrower} — including non-consensual liquidation —
+-- with no issuer involvement after funding.
+--
+-- Canonical demo numbers: principal 100, interest 5, repayment 105, collateral 150, 90% threshold.
 module Veil where
 
--- | Demo cash-like principal asset (e.g. USDC). A "bearer" holding: the owner
--- is the sole signatory, so it can be spent with only the owner's authority.
-template CashHolding
-  with
-    owner : Party
-    amount : Decimal
-  where
-    signatory owner
-    ensure amount > 0.0
+import Splice.Api.Token.HoldingV1 (InstrumentId)
+import Splice.Api.Token.AllocationV1
+import Splice.Api.Token.MetadataV1 (ExtraArgs)
+import Helpers (legOf, executorOf)
 
-    -- | Lender funds a borrower-specific offer directly from cash. The funded
-    -- principal leaves the lender here and is delivered to the borrower on
-    -- Accept (or refunded on Withdraw), so an offer is always pre-funded.
-    choice MakeOffer : ContractId LoanOffer
-      with
-        borrower : Party
-        regulator : Party
-        principal : Decimal
-        interest : Decimal
-        collateralAsset : Text
-        collateralQuantity : Decimal
-        maturity : Text
-        liquidationThresholdLtv : Decimal
-      controller owner
-      do
-        assertMsg "insufficient cash to fund offer" (amount >= principal)
-        if amount > principal
-          then do
-            _ <- create CashHolding with owner; amount = amount - principal
-            pure ()
-          else pure ()
-        create LoanOffer with
-          lender = owner
-          borrower
-          regulator
-          principal
-          interest
-          collateralAsset
-          collateralQuantity
-          maturity
-          liquidationThresholdLtv
-    
-    choice Split : (ContractId CashHolding, ContractId CashHolding)
-      with
-        splitAmount : Decimal
-      controller owner
-      do
-        assertMsg "split amount must be positive and less than total amount" (splitAmount > 0.0 && splitAmount < amount)
-        let remainingAmount = amount - splitAmount
-        cid1 <- create CashHolding with owner; amount = splitAmount
-        cid2 <- create CashHolding with owner; amount = remainingAmount
-        pure (cid1, cid2)
-
--- | Demo tokenized collateral (e.g. tokenized T-Bill / MMF units). Bearer
--- holding owned by the borrower until it is locked into a loan.
-template CollateralHolding
-  with
-    owner : Party -- borrower until locked, then lender if liquidated?
-    asset : Text
-    quantity : Decimal
-  where
-    signatory owner
-    ensure quantity > 0.0
-
--- | Borrower-specific loan offer for a known-counterparty lending flow.
---
--- The lender is the signatory because they commit to (and pre-fund) the offered
--- terms. The borrower and regulator are observers so the offer is selectively
--- disclosed without becoming globally visible.
+-- | A lender's private offer, referencing the lender's pre-funded principal allocation
+-- (cash leg: lender -> borrower, executor = lender). Lender signs; borrower/regulator observe.
 template LoanOffer
   with
     lender : Party
     borrower : Party
     regulator : Party
+    cashAllocationCid : ContractId Allocation  -- ^ lender's funded principal leg (-> borrower)
+    cashInstrumentId : InstrumentId
     principal : Decimal
     interest : Decimal
-    collateralAsset : Text
+    collateralInstrumentId : InstrumentId
     collateralQuantity : Decimal
-    maturity : Text
-    liquidationThresholdLtv : Decimal
+    liquidationThresholdLtv : Decimal          -- ^ percent, e.g. 90.0
+    maturity : Time
   where
     signatory lender
     observer borrower, regulator
+    ensure principal > 0.0
+        && interest >= 0.0
+        && collateralQuantity > 0.0
+        && liquidationThresholdLtv > 0.0
+        && lender /= borrower
 
-    ensure principal > 0.0 && interest >= 0.0 && collateralQuantity > 0.0
-      && liquidationThresholdLtv > 0.0
-
-    -- | Borrower locks matching collateral and draws the principal. The
-    -- borrower's CollateralHolding is consumed (encumbered in the loan) and a
-    -- CashHolding for the principal is delivered to the borrower.
+    -- | Borrower supplies its funded collateral allocation (borrower -> lender, executor = lender).
+    -- The principal leg executes (-> borrower); the collateral leg stays escrowed.
     choice Accept : ContractId Loan
       with
-        collateralCid : ContractId CollateralHolding
+        collateralAllocationCid : ContractId Allocation
+        cashExtraArgs : ExtraArgs   -- ^ registry choice-context
       controller borrower
       do
-        collateral <- fetch collateralCid
-        assertMsg "collateral must be owned by the borrower" (collateral.owner == borrower)
-        assertMsg "collateral asset mismatch" (collateral.asset == collateralAsset)
-        assertMsg "collateral quantity mismatch" (collateral.quantity == collateralQuantity)
-        archive collateralCid
-        _ <- create CashHolding with owner = borrower; amount = principal
+        now <- getTime
+        assertMsg "loan maturity must be in the future" (maturity > now)
+        -- Validate the principal (cash) leg.
+        cashLeg <- legOf cashAllocationCid
+        cashExec <- executorOf cashAllocationCid
+        assertMsg "cash leg must be lender -> borrower for the principal"
+          (cashLeg.sender == lender && cashLeg.receiver == borrower && cashLeg.amount == principal)
+        assertMsg "cash leg instrument mismatch" (cashLeg.instrumentId == cashInstrumentId)
+        assertMsg "cash leg executor must be the lender" (cashExec == lender)
+        -- Validate the collateral leg.
+        collLeg <- legOf collateralAllocationCid
+        collExec <- executorOf collateralAllocationCid
+        assertMsg "collateral leg must be borrower -> lender"
+          (collLeg.sender == borrower && collLeg.receiver == lender && collLeg.amount == collateralQuantity)
+        assertMsg "collateral leg instrument mismatch" (collLeg.instrumentId == collateralInstrumentId)
+        assertMsg "collateral leg executor must be the lender" (collExec == lender)
+        -- Initial-LTV health (value = amount at unit price, matching the demo: 100/150 = 66.7%).
+        assertMsg "initial LTV breaches the liquidation threshold"
+          ((principal / collateralQuantity) * 100.0 < liquidationThresholdLtv)
+        -- Settle the principal leg: lender -> borrower. Collateral stays escrowed in its allocation.
+        _ <- exercise cashAllocationCid Allocation_ExecuteTransfer with extraArgs = cashExtraArgs
         create Loan with
           lender
           borrower
           regulator
+          collateralAllocationCid
+          cashInstrumentId
+          collateralInstrumentId
           principal
           interest
-          collateralAsset
           collateralQuantity
-          maturity
           liquidationThresholdLtv
-          collateralLocked = True
+          maturity
 
-    -- | Lender withdraws the unaccepted offer; the pre-funded principal is
-    -- refunded to the lender.
-    choice Withdraw : ContractId CashHolding
+    -- | Lender pulls an unaccepted offer; the principal is refunded separately via `Allocation_Withdraw`.
+    choice Withdraw : ()
       controller lender
-      do
-        create CashHolding with owner = lender; amount = principal
+      do pure ()
 
--- | Active private bilateral loan created after the borrower accepts an offer.
---
--- Both lender and borrower are signatories because the active loan records a
--- shared obligation. The regulator is read-only via observer visibility.
+-- | An active bilateral loan; collateral sits escrowed in `collateralAllocationCid`. Repay returns it
+-- to the borrower, liquidate seizes it to the lender. Both parties sign; regulator observes.
 template Loan
   with
     lender : Party
@@ -131,80 +96,75 @@ template Loan
     regulator : Party
     principal : Decimal
     interest : Decimal
-    collateralAsset : Text
+    collateralAllocationCid : ContractId Allocation
+    cashInstrumentId : InstrumentId
+    collateralInstrumentId : InstrumentId
     collateralQuantity : Decimal
-    maturity : Text
     liquidationThresholdLtv : Decimal
-    collateralLocked : Bool
+    maturity : Time
   where
     signatory lender, borrower
     observer regulator
-
     ensure principal > 0.0 && interest >= 0.0 && collateralQuantity > 0.0
       && liquidationThresholdLtv > 0.0
 
-    -- | Borrower repays principal + interest in cash and gets collateral back.
-    -- The repayment cash moves to the lender (any surplus is returned as
-    -- change) and a CollateralHolding is released to the borrower.
+    -- | Borrower repays via a funded repayment allocation (borrower -> lender, executor = borrower):
+    -- repayment settles to the lender and the collateral is returned to the borrower, atomically.
     choice Repay : ContractId LoanClosed
       with
-        repaymentCid : ContractId CashHolding
+        repayAllocationCid : ContractId Allocation
+        repayExtraArgs : ExtraArgs
+        collateralExtraArgs : ExtraArgs
       controller borrower
       do
-        let repayment = principal + interest
-        cash <- fetch repaymentCid
-        assertMsg "repayment cash must be owned by the borrower" (cash.owner == borrower)
-        assertMsg "repayment amount mismatch" (cash.amount == repayment)
-        archive repaymentCid
-        _ <- create CashHolding with owner = lender; amount = repayment
-        if cash.amount > repayment
-          then do
-            _ <- create CashHolding with owner = borrower; amount = cash.amount - repayment
-            pure ()
-          else pure ()
-        _ <- create CollateralHolding with owner = borrower; asset = collateralAsset; quantity = collateralQuantity
+        let due = principal + interest
+        repayLeg <- legOf repayAllocationCid
+        repayExec <- executorOf repayAllocationCid
+        assertMsg "repayment leg must be borrower -> lender"
+          (repayLeg.sender == borrower && repayLeg.receiver == lender)
+        assertMsg "repayment amount must equal principal + interest" (repayLeg.amount == due)
+        assertMsg "repayment instrument mismatch" (repayLeg.instrumentId == cashInstrumentId)
+        assertMsg "repayment executor must be the borrower" (repayExec == borrower)
+        -- Settle repayment to the lender.
+        _ <- exercise repayAllocationCid Allocation_ExecuteTransfer with extraArgs = repayExtraArgs
+        -- Release escrowed collateral back to the borrower (sender of the collateral leg).
+        _ <- exercise collateralAllocationCid Allocation_Cancel with extraArgs = collateralExtraArgs
         create LoanClosed with
           lender
           borrower
           regulator
           principal
           interest
-          collateralAsset
+          collateralInstrumentId
           collateralQuantity
-          maturity
           reason = "Repaid"
           collateralReleased = True
 
-    -- | The lender supplies the current (off-ledger oracle) collateral value.
-    -- Liquidation is only authorized when that value puts the loan at or above
-    -- its LTV threshold; the collateral is then seized to the lender.
+    -- | Lender liquidates on an LTV breach using a lender-submitted mark (oracle descoped to #17);
+    -- on breach the collateral is seized to the lender.
     choice Liquidate : ContractId LoanClosed
       with
         currentCollateralValue : Decimal
+        collateralExtraArgs : ExtraArgs
       controller lender
       do
         assertMsg "liquidation requires the collateral value to breach the LTV threshold"
           (currentCollateralValue > 0.0
             && (principal / currentCollateralValue) * 100.0 >= liquidationThresholdLtv)
-        _ <- create CollateralHolding with owner = lender; asset = collateralAsset; quantity = collateralQuantity
+        -- Seize: execute the collateral leg -> lender.
+        _ <- exercise collateralAllocationCid Allocation_ExecuteTransfer with extraArgs = collateralExtraArgs
         create LoanClosed with
           lender
           borrower
           regulator
           principal
           interest
-          collateralAsset
+          collateralInstrumentId
           collateralQuantity
-          maturity
           reason = "Liquidated"
           collateralReleased = False
 
--- | Terminal settlement record created when a loan closes, either through
--- borrower repayment or lender liquidation.
---
--- Both lender and borrower remain signatories so the closed position is a
--- shared, auditable record. The regulator keeps observer visibility, while an
--- outsider still sees nothing.
+-- | Terminal settlement record, same visibility as `Loan`.
 template LoanClosed
   with
     lender : Party
@@ -212,17 +172,15 @@ template LoanClosed
     regulator : Party
     principal : Decimal
     interest : Decimal
-    collateralAsset : Text
+    collateralInstrumentId : InstrumentId
     collateralQuantity : Decimal
-    maturity : Text
-    reason : Text
+    reason : Text             -- ^ "Repaid" | "Liquidated"
     collateralReleased : Bool
   where
     signatory lender, borrower
     observer regulator
 
-    -- | Archive the settlement record. Used to clear ledger state when the
-    -- demo is reset; the closed loan has already settled.
+    -- | Archive the settlement record (used to clear ledger state on demo reset).
     choice Dismiss : ()
       controller lender
       do

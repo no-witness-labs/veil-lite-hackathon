@@ -1,0 +1,15 @@
+module Helpers where
+
+import Splice.Api.Token.AllocationV1
+
+-- | Read the transfer leg backing an allocation.
+legOf : ContractId Allocation -> Update TransferLeg
+legOf cid = do
+  a <- fetch cid
+  pure (view a).allocation.transferLeg
+
+-- | Read an allocation's settlement executor.
+executorOf : ContractId Allocation -> Update Party
+executorOf cid = do
+  a <- fetch cid
+  pure (view a).allocation.settlement.executor
