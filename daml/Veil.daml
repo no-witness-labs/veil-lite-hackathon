@@ -111,6 +111,7 @@ template Loan
     borrower : Party
     regulator : Party
     operator : Party
+    -- Trust: the operator owns this holding and is trusted not to move it outside the protocol.
     escrowCollateralCid : ContractId Holding            -- ^ collateral held in escrow by the operator
     collateralFactoryCid : ContractId AllocationFactory
     cashInstrumentId : InstrumentId
