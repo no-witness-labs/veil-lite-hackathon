@@ -90,6 +90,14 @@ section.dark::after { color: rgba(255,255,255,.58); }
 .dot { width: 36px; height: 36px; border-radius: 12px; display: grid; place-items: center; font-family: 'JetBrains Mono'; font-weight: 900; color: white; background: linear-gradient(135deg, var(--blue), var(--cyan)); }
 .row div:last-child { background: rgba(255,255,255,.78); border: 1px solid rgba(15,23,42,.10); border-radius: 16px; padding: 11px 16px; font-size: 17px; color: #334155; }
 .callout { border-left: 8px solid var(--mint); background: rgba(49,208,170,.10); padding: 20px 26px; border-radius: 0 22px 22px 0; font-size: 24px; line-height: 1.25; color: #d9fff5; margin-top: 34px; }
+.howGrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 13px; margin-top: 18px; }
+.howCard { position: relative; min-height: 142px; background: rgba(255,255,255,.84); border: 1px solid rgba(15,23,42,.10); border-radius: 21px; padding: 17px 18px; box-shadow: 0 14px 35px rgba(15,23,42,.07); overflow: hidden; }
+.howCard::before { content: ''; position: absolute; right: -38px; top: -38px; width: 96px; height: 96px; border-radius: 999px; background: rgba(47,109,246,.10); }
+.howNo { font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 900; color: var(--blue); margin-bottom: 9px; }
+.howCard h3 { font-size: 17px; line-height: 1.05; margin-bottom: 7px; }
+.howCard p { font-size: 12.5px; line-height: 1.24; margin: 0; color: #475569; }
+.howFooter { display: grid; grid-template-columns: 1.1fr .9fr; gap: 14px; margin-top: 12px; align-items: stretch; }
+.miniLedger { font-family: 'JetBrains Mono', monospace; font-size: 11px; line-height: 1.35; background: #07111f; color: #e2e8f0; border-radius: 18px; padding: 12px 16px; box-shadow: 0 18px 42px rgba(7,17,31,.20); }
 .small { font-size: 15px; color: var(--muted); }
 .logoMark { width: 72px; height: 72px; border-radius: 24px; background: linear-gradient(135deg, var(--blue), var(--cyan)); transform: rotate(45deg); box-shadow: 0 25px 70px rgba(56,213,255,.28); margin-bottom: 42px; }
 </style>
@@ -154,6 +162,26 @@ section.dark::after { color: rgba(255,255,255,.58); }
 <span class="blue">Repay</span>      borrower controls<br/>
              closes loan + releases collateral
 </div>
+</div>
+
+---
+
+<div class="kicker">How it works</div>
+
+## The private financing lifecycle
+
+<div class="howGrid">
+  <div class="howCard"><div class="howNo">01 · FUND</div><h3>Initial holdings</h3><p>Lender starts with cash. Borrower starts with tokenized T-Bill/MMF collateral. Each holding is visible only to its owner.</p></div>
+  <div class="howCard"><div class="howNo">02 · OFFER</div><h3>Private terms</h3><p>Lender creates a borrower-specific offer. Borrower and regulator observe; outsiders cannot query it.</p></div>
+  <div class="howCard"><div class="howNo">03 · ACCEPT</div><h3>Atomic drawdown</h3><p>Borrower accepts. Collateral locks and principal is delivered in the same Canton transaction.</p></div>
+  <div class="howCard"><div class="howNo">04 · OBSERVE</div><h3>Selective disclosure</h3><p>Regulator gets read-only visibility as an observer without making the deal public.</p></div>
+  <div class="howCard"><div class="howNo">05 · REPAY</div><h3>Close facility</h3><p>Borrower repays principal plus interest. Loan closes and collateral is released back to the borrower.</p></div>
+  <div class="howCard"><div class="howNo">06 · RISK</div><h3>Optional liquidation</h3><p>If price feed marks collateral below threshold, lender can liquidate under on-ledger LTV rules.</p></div>
+</div>
+
+<div class="howFooter">
+  <div class="miniLedger"><span class="green">Privacy proof:</span> same active-contracts query<br/>lender/borrower/regulator → deal visible<br/>outsider → <span class="rose">[]</span></div>
+  <div class="miniLedger"><span class="green">Business proof:</span> 100 principal + 5 interest<br/>150 collateral units locked<br/>105 repayment releases collateral</div>
 </div>
 
 ---
