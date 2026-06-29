@@ -1,6 +1,10 @@
 module Helpers where
 
+import DA.Time (addRelTime, hours)
+import Splice.Api.Token.HoldingV1 (InstrumentId, Holding)
 import Splice.Api.Token.AllocationV1
+import Splice.Api.Token.AllocationInstructionV1
+import Splice.Api.Token.MetadataV1 (ExtraArgs, emptyMetadata)
 
 -- | Read the transfer leg backing an allocation.
 legOf : ContractId Allocation -> Update TransferLeg
@@ -13,3 +17,40 @@ executorOf : ContractId Allocation -> Update Party
 executorOf cid = do
   a <- fetch cid
   pure (view a).allocation.settlement.executor
+
+-- | Require exactly one holding (the result of a settled leg).
+requireSingleHolding : Text -> [ContractId Holding] -> Update (ContractId Holding)
+requireSingleHolding label cids = case cids of
+  [c] -> pure c
+  _ -> abort (label <> ": expected exactly one resulting holding")
+
+-- | Release `amount` of `instrument` from the operator's escrow holding to `dest`, by funding and
+-- executing a one-leg allocation through the registry's factory in the same transaction (atomic).
+-- The operator is the leg sender, so this needs the operator's authority (carried by the `Loan`).
+releaseCollateral
+  :  ContractId AllocationFactory -> ContractId Holding -> Party -> Party -> InstrumentId -> Decimal
+  -> ExtraArgs -> Time -> Update ()
+releaseCollateral factoryCid escrowCid operator dest instrument amount extraArgs now = do
+  let horizon = addRelTime now (hours 24)
+      spec = AllocationSpecification with
+        settlement = SettlementInfo with
+          executor = operator
+          settlementRef = Reference with id = "veil-release"; cid = None
+          requestedAt = now
+          allocateBefore = horizon
+          settleBefore = horizon
+          meta = emptyMetadata
+        transferLegId = "release"
+        transferLeg = TransferLeg with
+          sender = operator; receiver = dest; amount; instrumentId = instrument; meta = emptyMetadata
+  res <- exercise factoryCid AllocationFactory_Allocate with
+    expectedAdmin = instrument.admin
+    allocation = spec
+    requestedAt = now
+    inputHoldingCids = [escrowCid]
+    extraArgs
+  case res.output of
+    AllocationInstructionResult_Completed allocCid -> do
+      _ <- exercise allocCid Allocation_ExecuteTransfer with extraArgs
+      pure ()
+    _ -> abort "collateral release allocation did not complete"

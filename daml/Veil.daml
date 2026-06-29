@@ -4,48 +4,59 @@
 -- module uses ONLY the Splice interfaces, so it works over any CIP-056 registry (OZ simple-token,
 -- Amulet, ...); concrete holdings are minted in tests/bootstrap.
 --
--- Authority: `Loan` is jointly signed by lender+borrower, so its choices can drive any allocation
--- whose {executor,sender,receiver} ⊆ {lender,borrower} — including non-consensual liquidation —
--- with no issuer involvement after funding.
+-- Custody (see docs/adr/0002): on CIP-056 v1 you cannot lock an arbitrary third-party token in place,
+-- so collateral is escrowed to a neutral `operator` — intended to be a regulated qualified custodian
+-- (BitGo-style), as production Canton lenders do. `Accept` settles the collateral into an escrow
+-- `Holding` owned by the operator (NOT a sender-withdrawable allocation); repay/liquidate release it
+-- via the registry's factory. The operator co-signs and must not be a counterparty (see `ensure`).
+-- Migration: replace with CIP-112 committed allocations (custodian-free) once a v2 registry ships.
 --
 -- Canonical demo numbers: principal 100, interest 5, repayment 105, collateral 150, 90% threshold.
 module Veil where
 
-import Splice.Api.Token.HoldingV1 (InstrumentId)
+import Splice.Api.Token.HoldingV1 (InstrumentId, Holding)
 import Splice.Api.Token.AllocationV1
+import Splice.Api.Token.AllocationInstructionV1 (AllocationFactory)
 import Splice.Api.Token.MetadataV1 (ExtraArgs)
-import Helpers (legOf, executorOf)
+import Helpers (legOf, executorOf, requireSingleHolding, releaseCollateral)
 
 -- | A lender's private offer, referencing the lender's pre-funded principal allocation
--- (cash leg: lender -> borrower, executor = lender). Lender signs; borrower/regulator observe.
+-- (cash leg: lender -> borrower, executor = lender). Lender + operator sign; borrower/regulator observe.
 template LoanOffer
   with
     lender : Party
     borrower : Party
     regulator : Party
-    cashAllocationCid : ContractId Allocation  -- ^ lender's funded principal leg (-> borrower)
+    operator : Party                                  -- ^ neutral qualified custodian (escrow + executor)
+    cashAllocationCid : ContractId Allocation          -- ^ lender's funded principal leg (-> borrower)
+    collateralFactoryCid : ContractId AllocationFactory -- ^ registry factory used to release escrow later
     cashInstrumentId : InstrumentId
     principal : Decimal
     interest : Decimal
     collateralInstrumentId : InstrumentId
     collateralQuantity : Decimal
-    liquidationThresholdLtv : Decimal          -- ^ percent, e.g. 90.0
+    liquidationThresholdLtv : Decimal                  -- ^ percent, e.g. 90.0
     maturity : Time
   where
-    signatory lender
+    signatory lender, operator
     observer borrower, regulator
     ensure principal > 0.0
         && interest >= 0.0
         && collateralQuantity > 0.0
         && liquidationThresholdLtv > 0.0
         && lender /= borrower
+        -- The escrow custodian must be a neutral third party: a counterparty acting as operator
+        -- owns the escrow holding and could move it (lender steals collateral / borrower un-secures).
+        && operator /= lender && operator /= borrower
 
-    -- | Borrower supplies its funded collateral allocation (borrower -> lender, executor = lender).
-    -- The principal leg executes (-> borrower); the collateral leg stays escrowed.
+    -- | Borrower supplies its funded collateral allocation (borrower -> operator, executor = operator).
+    -- The principal leg executes (-> borrower) and the collateral leg executes into the operator's
+    -- escrow holding — so it is NOT left in a borrower-withdrawable allocation.
     choice Accept : ContractId Loan
       with
         collateralAllocationCid : ContractId Allocation
-        cashExtraArgs : ExtraArgs   -- ^ registry choice-context
+        cashExtraArgs : ExtraArgs        -- ^ registry choice-context (empty for OZ)
+        collateralExtraArgs : ExtraArgs
       controller borrower
       do
         now <- getTime
@@ -57,23 +68,27 @@ template LoanOffer
           (cashLeg.sender == lender && cashLeg.receiver == borrower && cashLeg.amount == principal)
         assertMsg "cash leg instrument mismatch" (cashLeg.instrumentId == cashInstrumentId)
         assertMsg "cash leg executor must be the lender" (cashExec == lender)
-        -- Validate the collateral leg.
+        -- Validate the collateral leg: borrower -> operator escrow.
         collLeg <- legOf collateralAllocationCid
         collExec <- executorOf collateralAllocationCid
-        assertMsg "collateral leg must be borrower -> lender"
-          (collLeg.sender == borrower && collLeg.receiver == lender && collLeg.amount == collateralQuantity)
+        assertMsg "collateral leg must be borrower -> operator"
+          (collLeg.sender == borrower && collLeg.receiver == operator && collLeg.amount == collateralQuantity)
         assertMsg "collateral leg instrument mismatch" (collLeg.instrumentId == collateralInstrumentId)
-        assertMsg "collateral leg executor must be the lender" (collExec == lender)
+        assertMsg "collateral leg executor must be the operator" (collExec == operator)
         -- Initial-LTV health (value = amount at unit price, matching the demo: 100/150 = 66.7%).
         assertMsg "initial LTV breaches the liquidation threshold"
           ((principal / collateralQuantity) * 100.0 < liquidationThresholdLtv)
-        -- Settle the principal leg: lender -> borrower. Collateral stays escrowed in its allocation.
+        -- Settle the principal to the borrower and the collateral into the operator's escrow holding.
         _ <- exercise cashAllocationCid Allocation_ExecuteTransfer with extraArgs = cashExtraArgs
+        collRes <- exercise collateralAllocationCid Allocation_ExecuteTransfer with extraArgs = collateralExtraArgs
+        escrowCid <- requireSingleHolding "collateral escrow" collRes.receiverHoldingCids
         create Loan with
           lender
           borrower
           regulator
-          collateralAllocationCid
+          operator
+          escrowCollateralCid = escrowCid
+          collateralFactoryCid
           cashInstrumentId
           collateralInstrumentId
           principal
@@ -87,29 +102,33 @@ template LoanOffer
       controller lender
       do pure ()
 
--- | An active bilateral loan; collateral sits escrowed in `collateralAllocationCid`. Repay returns it
--- to the borrower, liquidate seizes it to the lender. Both parties sign; regulator observes.
+-- | An active bilateral loan. The collateral is held as an escrow `Holding` owned by the operator
+-- (`escrowCollateralCid`). Repay returns it to the borrower; liquidate seizes it to the lender. Both
+-- counterparties and the operator sign; the regulator observes.
 template Loan
   with
     lender : Party
     borrower : Party
     regulator : Party
-    principal : Decimal
-    interest : Decimal
-    collateralAllocationCid : ContractId Allocation
+    operator : Party
+    escrowCollateralCid : ContractId Holding            -- ^ collateral held in escrow by the operator
+    collateralFactoryCid : ContractId AllocationFactory
     cashInstrumentId : InstrumentId
     collateralInstrumentId : InstrumentId
+    principal : Decimal
+    interest : Decimal
     collateralQuantity : Decimal
     liquidationThresholdLtv : Decimal
     maturity : Time
   where
-    signatory lender, borrower
+    signatory lender, borrower, operator
     observer regulator
     ensure principal > 0.0 && interest >= 0.0 && collateralQuantity > 0.0
       && liquidationThresholdLtv > 0.0
+      && operator /= lender && operator /= borrower   -- neutral escrow custodian (see LoanOffer)
 
     -- | Borrower repays via a funded repayment allocation (borrower -> lender, executor = borrower):
-    -- repayment settles to the lender and the collateral is returned to the borrower, atomically.
+    -- the repayment settles to the lender and the escrowed collateral is released to the borrower.
     choice Repay : ContractId LoanClosed
       with
         repayAllocationCid : ContractId Allocation
@@ -117,6 +136,7 @@ template Loan
         collateralExtraArgs : ExtraArgs
       controller borrower
       do
+        now <- getTime
         let due = principal + interest
         repayLeg <- legOf repayAllocationCid
         repayExec <- executorOf repayAllocationCid
@@ -125,10 +145,9 @@ template Loan
         assertMsg "repayment amount must equal principal + interest" (repayLeg.amount == due)
         assertMsg "repayment instrument mismatch" (repayLeg.instrumentId == cashInstrumentId)
         assertMsg "repayment executor must be the borrower" (repayExec == borrower)
-        -- Settle repayment to the lender.
         _ <- exercise repayAllocationCid Allocation_ExecuteTransfer with extraArgs = repayExtraArgs
-        -- Release escrowed collateral back to the borrower (sender of the collateral leg).
-        _ <- exercise collateralAllocationCid Allocation_Cancel with extraArgs = collateralExtraArgs
+        releaseCollateral collateralFactoryCid escrowCollateralCid operator borrower
+          collateralInstrumentId collateralQuantity collateralExtraArgs now
         create LoanClosed with
           lender
           borrower
@@ -140,19 +159,22 @@ template Loan
           reason = "Repaid"
           collateralReleased = True
 
-    -- | Lender liquidates on an LTV breach using a lender-submitted mark (oracle descoped to #17);
-    -- on breach the collateral is seized to the lender.
+    -- | Lender liquidates on an LTV breach.
+    -- SECURITY / KNOWN GAP (#17): `currentCollateralValue` is supplied by the lender with no oracle,
+    -- so a malicious lender can pass a low value to force-liquidate a healthy loan. Accepted for now;
+    -- the production fix is an oracle-signed PriceFeed (see veil/protocol Oracle.daml).
     choice Liquidate : ContractId LoanClosed
       with
         currentCollateralValue : Decimal
         collateralExtraArgs : ExtraArgs
       controller lender
       do
+        now <- getTime
         assertMsg "liquidation requires the collateral value to breach the LTV threshold"
           (currentCollateralValue > 0.0
             && (principal / currentCollateralValue) * 100.0 >= liquidationThresholdLtv)
-        -- Seize: execute the collateral leg -> lender.
-        _ <- exercise collateralAllocationCid Allocation_ExecuteTransfer with extraArgs = collateralExtraArgs
+        releaseCollateral collateralFactoryCid escrowCollateralCid operator lender
+          collateralInstrumentId collateralQuantity collateralExtraArgs now
         create LoanClosed with
           lender
           borrower
