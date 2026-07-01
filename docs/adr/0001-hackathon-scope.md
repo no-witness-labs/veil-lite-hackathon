@@ -34,7 +34,8 @@ Mandatory lifecycle:
 
 Optional lifecycle:
 
-- Oracle price drop enables lender liquidation.
+- Lender-submitted stressed collateral mark enables liquidation only when the
+  on-ledger LTV guard is breached. Oracle-signed prices are out of MVP scope.
 
 ## Consequences
 

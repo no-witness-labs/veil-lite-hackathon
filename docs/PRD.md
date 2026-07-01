@@ -80,7 +80,7 @@ Core fields:
 - collateral asset: tokenized T-Bill/MMF/fund/invoice/RWA claim;
 - collateral quantity/value: `150`;
 - maturity date;
-- optional oracle price for liquidation.
+- optional lender-submitted collateral mark for the MVP liquidation branch.
 
 ## Goals
 
@@ -90,7 +90,7 @@ Core fields:
 4. Demonstrate repayment and collateral release.
 5. Demonstrate regulator observer visibility.
 6. Demonstrate outsider non-visibility for offer and loan.
-7. Optionally demonstrate private liquidation after oracle price drop.
+7. Optionally demonstrate private liquidation after a lender-submitted collateral mark breaches the on-ledger LTV guard.
 
 ## Non-goals
 
@@ -164,12 +164,12 @@ Acceptance criteria:
 
 ### US6: Optional liquidation branch
 
-As a lender, I can liquidate when an oracle price drop makes collateral insufficient.
+As a lender, I can liquidate when the submitted collateral mark makes the loan undercollateralized.
 
 Acceptance criteria:
 
-- Oracle publishes price.
-- Liquidation only succeeds below threshold.
+- The lender supplies the current collateral mark for the MVP.
+- The Daml contract only permits liquidation when the mark breaches the threshold.
 - Outsider cannot see liquidation-relevant loan state.
 
 ## Future marketplace extension
@@ -200,7 +200,7 @@ A compact Daml module containing templates and choices:
 - `Loan`
 - `CashHolding` or equivalent local demo principal representation
 - `CollateralHolding` or equivalent local demo collateral representation
-- `PriceFeed` for optional liquidation
+- lender-submitted collateral mark for optional liquidation
 - collateral lock/release representation
 
 Why deep: most product logic and authorization live here and can be tested with Daml Script.
@@ -251,7 +251,7 @@ The UI must answer these questions immediately:
 7. Switch to lender/borrower/regulator: active loan is visible.
 8. Switch to outsider: active loan is not visible.
 9. Repay loan: loan closes and collateral releases.
-10. Optional: reset, accept, price drops, lender liquidates.
+10. Optional: reset, accept, simulated price drop, lender submits stressed mark and liquidates.
 
 ## Definition of complete for hackathon
 
@@ -272,7 +272,7 @@ Veil is complete enough for hackathon submission when all of these gates are tru
 - Borrower can repay and release collateral.
 - Regulator/auditor role can observe but cannot act.
 - Outsider role has an explicit empty/non-visible view.
-- Optional bonus: oracle price drop enables lender liquidation.
+- Optional bonus: lender-submitted stressed mark enables liquidation only when the on-ledger LTV guard is breached.
 
 ### Engineering gate
 

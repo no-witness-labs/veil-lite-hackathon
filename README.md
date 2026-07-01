@@ -38,7 +38,7 @@ Build the flow:
 5. Regulator can observe the offer and loan.
 6. Outsider cannot see either offer or loan.
 7. Borrower repays and collateral is released.
-8. Optional demo branch: oracle price drops and lender liquidates.
+8. Optional demo branch: lender submits a stressed collateral mark and liquidates if the on-ledger LTV guard permits it.
 9. Future extension: lender publishes `LoanProgram`, borrower creates `BorrowRequest`, then lender offers.
 
 ## Contract model
@@ -97,7 +97,7 @@ every flow (create offer, accept, repay, liquidate, withdraw, reset) — see **[
 - Production Token Standard integration with real external providers.
 - Wallet Gateway / external signing UX.
 - PQS dashboard and production indexing.
-- k-of-n oracle network.
+- Oracle-signed `PriceFeed` / k-of-n oracle network.
 - Partial liquidation, reserves, bad debt tranching.
 - Real institution onboarding/compliance workflows.
 - Mainnet/TestNet deployment guarantees.

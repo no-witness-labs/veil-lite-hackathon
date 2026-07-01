@@ -45,7 +45,7 @@ Rationale: this sits between public-chain transparency and fragmented offchain d
 
 ## Question 7: What should not be modeled yet?
 
-Recommended answer: lender/borrower discovery, marketplace loan programs, borrower request workflow, full Token Standard integration, wallet gateway, k-of-n oracles, reserves, partial liquidation, production compliance.
+Recommended answer: lender/borrower discovery, marketplace loan programs, borrower request workflow, full Token Standard integration, wallet gateway, oracle-signed price feeds / k-of-n oracles, reserves, partial liquidation, production compliance.
 
 Rationale: These are valuable but distract from the hackathon proof.
 
@@ -54,8 +54,8 @@ Rationale: These are valuable but distract from the hackathon proof.
 Recommended answer:
 
 - `LoanOffer`: lender signatory; borrower and regulator observers; borrower controls `Accept`; lender controls `Withdraw` if included.
-- `Loan`: lender and borrower signatories; regulator observer; borrower controls `Repay`; lender controls optional `Liquidate`.
-- `PriceFeed`: oracle signatory; relevant loan parties observers.
+- `Loan`: lender and borrower signatories; regulator observer; borrower controls `Repay`; lender controls optional `Liquidate` with a submitted collateral mark.
+- Production roadmap only: oracle-signed `PriceFeed` or k-of-n oracle network for the collateral mark.
 
 Rationale: This maps directly to Canton authorization semantics.
 
