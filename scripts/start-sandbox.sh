@@ -20,6 +20,15 @@ export PATH="$JAVA_HOME/bin:$HOME/.dpm/bin:$PATH"
 echo "→ Java: $(java -version 2>&1 | head -1)"
 [ -f .daml/dist/veil-0.1.0.dar ] || { echo "→ Building DAR"; dpm build; }
 
+# Canton binds 6864–6869; a stale sandbox leaves them occupied and the new one
+# dies immediately with "Failed to bind to address /127.0.0.1:6868" (see log/canton.log).
+if lsof -i :6864 -sTCP:LISTEN >/dev/null 2>&1; then
+  echo "Port 6864 is already in use — a Canton sandbox is probably still running." >&2
+  echo "  Stop it:  pkill -f canton-open-source" >&2
+  echo "  Or re-bootstrap the live sandbox only:  ./scripts/bootstrap.sh" >&2
+  exit 1
+fi
+
 echo "→ Starting Canton sandbox (logs: log/canton.log)"
 rm -f log/canton.log
 dpm sandbox > /tmp/veil-sandbox.log 2>&1 &

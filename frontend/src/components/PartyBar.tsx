@@ -3,7 +3,7 @@ import { getParties } from '../ledger'
 import { ROLE_DOT, ROLE_LABELS } from '../state'
 
 const mono: React.CSSProperties = { fontFamily: "'IBM Plex Mono',monospace" }
-const ROLES: Role[] = ['lender', 'borrower', 'regulator', 'outsider']
+const ROLES: Role[] = ['lender', 'borrower', 'regulator', 'outsider', 'registry', 'operator']
 
 function shortParty(p: string): string {
   const [hint, fp = ''] = p.split('::')

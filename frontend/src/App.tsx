@@ -29,6 +29,7 @@ import { ActivityFeed } from './components/ActivityFeed'
 import { RawInspector } from './components/RawInspector'
 import { PartyBar } from './components/PartyBar'
 import { HoldingsPanel } from './components/HoldingsPanel'
+import { EscrowIndicator } from './components/EscrowIndicator'
 import { ErrorBanner, OutsiderEmpty, ShockBanner, Waiting } from './components/EmptyStates'
 
 export default function App() {
@@ -36,7 +37,7 @@ export default function App() {
   const [contracts, setContracts] = useState<Contract[]>([])
   const [raw, setRaw] = useState<unknown[]>([])
   const [offset, setOffset] = useState(0)
-  const [activity, setActivity] = useState<ActivityEntry[]>([])
+  const [activityByRole, setActivityByRole] = useState<Partial<Record<Role, ActivityEntry[]>>>({})
   const [shock, setShock] = useState(false)
   const [draft, setDraft] = useState<Draft>(DEFAULT_DRAFT)
   const [busy, setBusy] = useState(false)
@@ -66,13 +67,21 @@ export default function App() {
     if (configOk) void refresh(role)
   }, [role, configOk, refresh])
 
+  const activity = activityByRole[role] ?? []
+
   // Run a ledger action, record the committed transaction in the activity feed.
   const act = async (label: string, actor: string, fn: () => Promise<TxResult>) => {
     setBusy(true)
     setError(null)
     try {
       const result = await fn()
-      setActivity((a) => [{ key: result.updateId || `tx-${a.length}`, action: label, actor, result }, ...a])
+      setActivityByRole((prev) => ({
+        ...prev,
+        [role]: [
+          { key: result.updateId || `tx-${(prev[role]?.length ?? 0) + 1}`, action: label, actor, result },
+          ...(prev[role] ?? []),
+        ],
+      }))
       await refresh(role)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -84,20 +93,21 @@ export default function App() {
   const deal = currentDeal(contracts)
   const status = statusOf(deal)
   const holdings = parseHoldings(contracts)
+  const escrows = contracts.filter((c) => c.template === 'Escrow')
 
-  const isOutsider = role === 'outsider'
   const hasDeal = status !== 'none'
-  const showCreateForm = !isOutsider && role === 'lender' && status === 'none'
-  const showWaiting = !isOutsider && (role === 'borrower' || role === 'regulator') && status === 'none'
-  const showDealCard = !isOutsider && hasDeal && !!deal
-  const showShockBanner = !isOutsider && status === 'active' && shock
+  const showCreateForm = role === 'lender' && status === 'none'
+  const showWaiting = (role === 'borrower' || role === 'regulator') && status === 'none'
+  const showDealCard = role !== 'outsider' && hasDeal && !!deal
+  const showShockBanner = role !== 'outsider' && status === 'active' && shock
+  const showMainContent = role !== 'outsider'
 
   const onReset = async () => {
     setBusy(true)
     setError(null)
     try {
       await resetDemo()
-      setActivity([])
+      setActivityByRole({})
       setShock(false)
       setDraft(DEFAULT_DRAFT)
       await refresh(role)
@@ -171,7 +181,7 @@ export default function App() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
               {error && <ErrorBanner message={error} onDismiss={() => setError(null)} />}
               {showShockBanner && <ShockBanner />}
-              {isOutsider && <OutsiderEmpty />}
+              {!showMainContent && <OutsiderEmpty />}
               {showCreateForm && (
                 <CreateOfferForm
                   draft={draft}
@@ -202,8 +212,11 @@ export default function App() {
                 />
               )}
 
-              {!isOutsider && <HoldingsPanel role={role} holdings={holdings} />}
-              {!isOutsider && <ActivityFeed entries={activity} />}
+              {showMainContent && !showDealCard && escrows.length > 0 && (
+                <EscrowIndicator escrows={escrows} />
+              )}
+              {showMainContent && <HoldingsPanel role={role} holdings={holdings} />}
+              {showMainContent && <ActivityFeed entries={activity} />}
               <RawInspector role={role} raw={raw} offset={offset} />
             </div>
 

@@ -1,4 +1,5 @@
 import type { Contract, Role, Status } from '../types'
+import { collateralLabel } from '../ledger'
 import {
   STATUS_TONE,
   dealNumbers,
@@ -60,7 +61,8 @@ export function DealCard({
   const lb = ltvTone(ltv)
 
   // Action flags by role + status.
-  const fObserver = role === 'regulator'
+  const fInfra = role === 'registry' || role === 'operator'
+  const fObserver = role === 'regulator' || fInfra
   const fLenderWithdraw = role === 'lender' && status === 'offered'
   const fBorrowerAccept = role === 'borrower' && status === 'offered'
   const fBorrowerRepay = role === 'borrower' && status === 'active'
@@ -71,7 +73,11 @@ export function DealCard({
   const fClosed = (role === 'lender' || role === 'borrower') && (status === 'repaid' || status === 'liquidated')
 
   let actionHint = 'Actions available to you'
-  if (fObserver) actionHint = 'Read-only observer'
+  if (fObserver) {
+    if (role === 'registry') actionHint = 'Token issuer — cannot act on the deal'
+    else if (role === 'operator') actionHint = 'Escrow custodian — cannot act on the deal'
+    else actionHint = 'Read-only observer'
+  }
   else if (fClosed) actionHint = 'Facility closed'
   else if (fLenderActive && !shock) actionHint = 'Liquidate available only on LTV breach'
 
@@ -139,7 +145,7 @@ export function DealCard({
           <div style={{ ...monoLabel, marginBottom: 10 }}>Collateral</div>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
             <div>
-              <div style={{ fontSize: 14, fontWeight: 600, color: '#14171f' }}>Tokenized T-Bill / MMF</div>
+              <div style={{ fontSize: 14, fontWeight: 600, color: '#14171f' }}>{collateralLabel(deal.args.collateralInstrumentId)}</div>
               <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 13, color: '#5b6472', marginTop: 3 }}>
                 {collateral} units · {collateralValue.toFixed(0)} USDC
               </div>
@@ -183,7 +189,13 @@ export function DealCard({
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
           <div style={{ ...monoLabel, color: '#aeb4be' }}>{actionHint}</div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            {fObserver && (
+            {fInfra && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: role === 'registry' ? '#eef6f3' : '#eef4f8', border: role === 'registry' ? '1px solid #d8ebe3' : '1px solid #d0e0ea', color: role === 'registry' ? '#1f7a4d' : '#2c6e8a', borderRadius: 8, padding: '9px 14px', fontSize: 13, fontWeight: 600 }}>
+                <div style={{ width: 7, height: 7, borderRadius: 999, background: role === 'registry' ? '#2ea36a' : '#3a8fb5' }} />
+                {role === 'registry' ? 'Registry — cannot act' : 'Custodian — cannot act'}
+              </div>
+            )}
+            {fObserver && !fInfra && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#f0eefb', border: '1px solid #e0dbf6', color: '#5b46b8', borderRadius: 8, padding: '9px 14px', fontSize: 13, fontWeight: 600 }}>
                 <div style={{ width: 7, height: 7, borderRadius: 999, background: '#7c5cd6' }} />
                 Observer — cannot act

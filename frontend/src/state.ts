@@ -11,6 +11,8 @@ export const PARTY_NAMES: Record<Role, string> = {
   borrower: 'Northwind Treasury',
   regulator: 'Market Supervisor',
   outsider: 'Unknown party',
+  registry: 'Token Registry',
+  operator: 'ClearTrust Custody',
 }
 
 export const ROLE_LABELS: Record<Role, string> = {
@@ -18,13 +20,21 @@ export const ROLE_LABELS: Record<Role, string> = {
   borrower: 'Borrower',
   regulator: 'Regulator',
   outsider: 'Outsider',
+  registry: 'Registry',
+  operator: 'Custodian',
+}
+
+function defaultMaturity(): string {
+  const d = new Date()
+  d.setDate(d.getDate() + 90)
+  return d.toISOString().slice(0, 10)
 }
 
 export const DEFAULT_DRAFT: Draft = {
   principal: 100,
   interest: 5,
   collateral: 150,
-  maturity: '2026-07-13',
+  maturity: defaultMaturity(),
 }
 
 export interface Tone {
@@ -38,13 +48,13 @@ export const fmtMoney = (n: number) => `${n} USDC`
 
 export function fmtDate(iso: string): string {
   const mo = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-  const d = new Date(`${iso}T00:00:00`)
+  const d = new Date(iso.includes('T') ? iso : `${iso}T00:00:00`)
   if (Number.isNaN(d.getTime())) return iso
   return `${d.getDate()} ${mo[d.getMonth()]} ${d.getFullYear()}`
 }
 
 export function daysTo(iso: string): number {
-  const d = new Date(`${iso}T00:00:00`)
+  const d = new Date(iso.includes('T') ? iso : `${iso}T00:00:00`)
   const today = new Date()
   today.setHours(0, 0, 0, 0)
   return Math.round((d.getTime() - today.getTime()) / 86400000)
@@ -114,6 +124,8 @@ export const SIDEBAR_AVATAR: Record<Role, { bg: string; color: string; initials:
   borrower: { bg: '#f0eefb', color: '#6b46c1', initials: 'NT' },
   regulator: { bg: '#f0eefb', color: '#7c5cd6', initials: 'MS' },
   outsider: { bg: '#f4f5f7', color: '#aeb4be', initials: '?' },
+  registry: { bg: '#eef6f3', color: '#1f7a4d', initials: 'TR' },
+  operator: { bg: '#eef4f8', color: '#2c6e8a', initials: 'CC' },
 }
 
 export const ROLE_DOT: Record<Role, string> = {
@@ -121,6 +133,8 @@ export const ROLE_DOT: Record<Role, string> = {
   borrower: '#6b46c1',
   regulator: '#7c5cd6',
   outsider: '#aeb4be',
+  registry: '#1f7a4d',
+  operator: '#2c6e8a',
 }
 
 export const EXPLAINER: Record<Role, { sees: string; can: string }> = {
@@ -139,6 +153,18 @@ export const EXPLAINER: Record<Role, { sees: string; can: string }> = {
   outsider: {
     sees: 'Nothing. This party is not a stakeholder on the contract and cannot tell it exists.',
     can: 'Nothing.',
+  },
+  registry: {
+    sees:
+      'Every token it issued — admin on all holdings, the SimpleTokenRules factory, and mint/allocation activity across the ledger. It does not see the loan itself.',
+    can:
+      'Nothing on the loan itself — the registry is the token issuer, not a lending counterparty. It co-signs mints and runs the allocation factory.',
+  },
+  operator: {
+    sees:
+      'Only the collateral it holds in escrow (the Escrow contract + the collateral token). It cannot see the offer or the loan terms — principal, interest, and LTV stay private to the lender and borrower.',
+    can:
+      'Custody only: it holds the collateral and releases it as the loan directs (back to the borrower on repay, to the lender on default). It cannot lend, borrow, or view the deal.',
   },
 }
 
