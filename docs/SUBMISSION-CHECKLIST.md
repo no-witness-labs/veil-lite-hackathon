@@ -6,7 +6,7 @@ This document tracks the exact submission requirements for the Build on Canton H
 
 ### 1. Public repository
 
-**Status:** Public / final link pass pending.
+**Status:** Public; final video link pending.
 
 **Deliverable:** A public GitHub repository for `veil`.
 
@@ -16,12 +16,15 @@ This document tracks the exact submission requirements for the Build on Canton H
 - [x] Include clear `README.md` with pitch, setup, demo flow, and honest scope.
 - [x] Include `docs/PRD.md`, `docs/CONTEXT.md`, and `docs/adr/0001-hackathon-scope.md`.
 - [x] Include build/test instructions.
-- [ ] Include license if required.
+- [ ] Include license if required (no license selected yet; owner decision pending).
 - [x] Confirm no tracked secrets, private env files, or local credentials are committed.
 
 **Recommended repo description:**
 
 > Veil — confidential bilateral secured lending on Canton, built for the Encode Build on Canton Hackathon.
+
+**Latest verification (2026-07-01):** repository is public; tracked-file
+secret-pattern scan returned no matches.
 
 ---
 
@@ -111,6 +114,9 @@ This document tracks the exact submission requirements for the Build on Canton H
 - [x] Role switching is obvious.
 - [x] The app does not depend on private keys, local credentials, or fragile external infrastructure.
 
+**Latest verification (2026-07-01):** the GitHub Pages URL and deployed JS/CSS
+assets returned HTTP 200 after the `Deploy static demo` workflow completed.
+
 ---
 
 ## Definition of complete for hackathon
@@ -119,20 +125,20 @@ Do not submit until all gates are true.
 
 ### Product / judge-readiness gate
 
-- [ ] Demo clearly uses privacy/confidentiality: lender, borrower, and regulator can see the deal; outsider cannot see offer, loan, collateral state, or liquidation-relevant data.
-- [ ] Demo is a real financial use case: private repo-style financing/private credit against tokenized collateral.
-- [ ] Product logic is clear: offer → accept → collateral lock → repayment → collateral release, with optional liquidation.
-- [ ] Institutional/professional relevance is explicit: treasury financing, repo, OTC secured lending, asset managers, auditors, or regulated private credit.
+- [x] Demo clearly uses privacy/confidentiality: lender, borrower, and regulator can see the deal; outsider cannot see offer, loan, collateral state, or liquidation-relevant data.
+- [x] Demo is a real financial use case: private repo-style financing/private credit against tokenized collateral.
+- [x] Product logic is clear: offer → accept → collateral lock → repayment → collateral release, with optional liquidation.
+- [x] Institutional/professional relevance is explicit: treasury financing, repo, OTC secured lending, asset managers, auditors, or regulated private credit.
 
 ### Functional demo gate
 
-- [ ] Lender can create a borrower-specific offer with 100 USDC-equivalent principal, 5 interest, 105 repayment, 150 tokenized T-Bill/MMF collateral units, and 66.7% initial LTV.
-- [ ] Borrower can accept the offer and create an active loan.
-- [ ] Collateral is represented as locked/encumbered while the loan is active.
-- [ ] Borrower can repay and release collateral.
-- [ ] Regulator/auditor role can observe but cannot act.
-- [ ] Outsider role has an explicit empty/non-visible view.
-- [ ] Optional bonus: oracle price drop enables lender liquidation.
+- [x] Lender can create a borrower-specific offer with 100 USDC-equivalent principal, 5 interest, 105 repayment, 150 tokenized T-Bill/MMF collateral units, and 66.7% initial LTV.
+- [x] Borrower can accept the offer and create an active loan.
+- [x] Collateral is represented as locked/encumbered while the loan is active.
+- [x] Borrower can repay and release collateral.
+- [x] Regulator/auditor role can observe but cannot act.
+- [x] Outsider role has an explicit empty/non-visible view.
+- [x] Optional bonus: simulated price drop / lender-submitted mark enables demo liquidation.
 
 ### Engineering gate
 
@@ -142,11 +148,16 @@ Do not submit until all gates are true.
 - [x] Frontend can run locally or via hosted link.
 - [ ] Demo script has been rehearsed end-to-end in under 3 minutes.
 
+**Latest verification (2026-07-01):** `dpm build`, `dpm build` in `test/`,
+`dpm test` in `test/`, and `npm --prefix frontend run build` passed. The test
+package still emits the existing tuple-size warning in `daml/Veil/Test.daml`.
+
 ### Submission gate
 
 - [x] Public repo URL exists.
 - [x] Deck PDF exists.
 - [ ] 3-minute video URL exists.
 - [x] Live product URL is published and verified.
-- [ ] README includes all four links.
+- [x] README includes public repo, live product, deck, and pending-video/script links.
+- [ ] README includes final 3-minute video URL.
 - [x] README is honest about MVP scope and non-goals.
