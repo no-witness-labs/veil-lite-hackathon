@@ -83,9 +83,11 @@ This document tracks the exact submission requirements for the Build on Canton H
 
 ### 4. Link to live product
 
-**Status:** Planned / required before submission.
+**Status:** GitHub Pages deployment configured; first published run pending after merge.
 
 **Deliverable:** Public URL where judges can open the demo.
+
+**Live product URL:** <https://no-witness-labs.github.io/veil-lite-hackathon/>
 
 **Recommended options:**
 
@@ -100,11 +102,11 @@ This document tracks the exact submission requirements for the Build on Canton H
 
 **Live product acceptance criteria:**
 
-- [ ] URL opens without auth.
-- [ ] Demo can be completed in under 3 minutes.
-- [ ] Reset button works.
-- [ ] Role switching is obvious.
-- [ ] The app does not depend on private keys, local credentials, or fragile external infrastructure.
+- [ ] URL opens without auth after the first GitHub Pages publish from `main`.
+- [x] Demo can be completed in under 3 minutes.
+- [x] Reset button works.
+- [x] Role switching is obvious.
+- [x] The app does not depend on private keys, local credentials, or fragile external infrastructure.
 
 ---
 
@@ -142,6 +144,6 @@ Do not submit until all gates are true.
 - [x] Public repo URL exists.
 - [x] Deck PDF exists.
 - [ ] 3-minute video URL exists.
-- [ ] Live product URL exists.
+- [ ] Live product URL is published and verified.
 - [ ] README includes all four links.
 - [x] README is honest about MVP scope and non-goals.
