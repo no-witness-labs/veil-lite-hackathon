@@ -116,9 +116,13 @@ The root package contains deployable templates only. The `test/` package depends
 
 ## Run the role-based demo
 
-The demo is a React UI wired to a live Canton sandbox over the JSON Ledger API v2. Each role queries the
-ledger as its own party, so the **Outsider tab genuinely returns nothing** — the privacy claim is proven
-on-ledger, not mocked.
+The demo is a React UI that can run in two modes:
+
+- **Live Canton mode** — wired to a local Canton sandbox over the JSON Ledger API v2. Each role queries the
+  ledger as its own party, so the **Outsider tab genuinely returns nothing** — the privacy claim is proven
+  on-ledger, not mocked.
+- **Static demo mode** — deterministic in-browser state for a reliable hosted live-product link and video
+  recording. It follows the same judge click path without requiring a hosted Canton sandbox.
 
 > Quick start below. For full operational detail, the demo walkthrough, and troubleshooting, see the
 > **[Runbook](./docs/RUNBOOK.md)**.
@@ -136,6 +140,16 @@ on-ledger, not mocked.
 # 2. In a second terminal, run the UI (Vite dev server proxies /v2 to the sandbox).
 npm --prefix frontend install
 npm --prefix frontend run dev   # http://localhost:5173
+```
+
+For the hosted/static path:
+
+```bash
+# Force deterministic demo mode locally.
+VITE_DEMO_MODE=static npm --prefix frontend run dev
+
+# Production builds automatically fall back to static mode if no ledger-config.json is deployed.
+npm --prefix frontend run build
 ```
 
 3-minute click path: **Lender** create offer → **Borrower** sees it → **Outsider** sees nothing →
