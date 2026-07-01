@@ -175,7 +175,7 @@ template Loan
           reason = "Repaid"
           collateralReleased = True
 
-    -- | The lender supplies the current (off-ledger oracle) collateral value.
+    -- | The lender supplies the current off-ledger collateral mark.
     -- Liquidation is only authorized when that value puts the loan at or above
     -- its LTV threshold; the collateral is then seized to the lender.
     choice Liquidate : ContractId LoanClosed

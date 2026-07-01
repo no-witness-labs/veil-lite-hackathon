@@ -1,7 +1,7 @@
 // View derivation — ported from the Claude design's renderVals(), but the loan
 // status is derived from the contracts the active party can actually see on the
 // ledger rather than from local UI state. The price-shock gate stays UI-only
-// (no on-ledger oracle in the MVP).
+// and feeds a lender-submitted mark to the on-ledger liquidation guard.
 import type { Contract, Draft, Role, Status } from './types'
 
 export const ACCENT = '#2748d8'

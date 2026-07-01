@@ -2,7 +2,7 @@
 
 ## Domain vocabulary
 
-- **Party**: Canton/Daml on-ledger identity. In this MVP: `lender`, `borrower`, `regulator`, `oracle`, and `outsider`.
+- **Party**: Canton/Daml on-ledger identity. In this MVP: `lender`, `borrower`, `regulator`, and `outsider`.
 - **Lender**: Party offering principal to the borrower.
 - **Borrower**: Party accepting credit and pledging collateral.
 - **Regulator**: Optional observer who can view sensitive contracts but cannot act.
@@ -17,9 +17,9 @@
 - **Borrow Request**: Future extension where a borrower requests credit against a loan program. Not MVP scope.
 - **Loan**: Active bilateral credit position after borrower acceptance.
 - **Collateral Lock**: MVP representation of collateral being encumbered while the loan is active.
-- **Price Feed**: Simple oracle-signed value used only for the liquidation branch.
+- **Lender-submitted Mark**: Current collateral value supplied by the lender to exercise the MVP liquidation branch. The Daml contract enforces the LTV breach; oracle-signed marks are production roadmap.
 - **Repayment**: Borrower action that archives active loan and releases collateral.
-- **Liquidation**: Lender action enabled when oracle price makes collateral insufficient.
+- **Liquidation**: Lender action enabled when the submitted collateral mark makes the loan undercollateralized.
 
 ## Canton mental model
 

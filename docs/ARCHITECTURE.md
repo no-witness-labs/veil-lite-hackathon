@@ -150,7 +150,7 @@ initial seed on a fresh sandbox.
 | --- | --- |
 | Per-contract visibility (privacy) | Party identity / KYC (known counterparties) |
 | Per-choice authorization | "Simulate price drop" toggle (UI only) |
-| Collateral lock/release, cash movement, double-entry | The oracle **price** for `Liquidate` (lender-supplied mark) |
+| Collateral lock/release, cash movement, double-entry | The collateral **mark** for `Liquidate` (lender-supplied in the MVP) |
 | Liquidation only on real LTV breach | Demo seeding + reset orchestration |
 | `LoanClosed` settlement record | Activity feed (derived from tx responses) |
 
