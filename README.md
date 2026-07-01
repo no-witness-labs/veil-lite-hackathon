@@ -98,7 +98,7 @@ every flow (create offer, accept, repay, liquidate, withdraw, reset) — see **[
 This project explicitly tracks the Encode submission requirements in [`docs/SUBMISSION-CHECKLIST.md`](./docs/SUBMISSION-CHECKLIST.md):
 
 - **Public repository** — publish this directory as a public GitHub repo with setup/demo docs.
-- **Presentation deck** — create a 5–7 slide deck covering problem, solution, why Canton, demo flow, architecture, current status, and roadmap.
+- **Presentation deck** — create a concise 7–10 slide deck covering problem, solution, why Canton, demo flow, architecture, current status, and roadmap.
 - **3 minute video pitch with demo** — record known-counterparty lender offer → borrower accept → regulator observes → outsider sees nothing → repay/release.
 - **Link to live product** — host a judge-friendly role-based demo URL, preferably static and reliable.
 

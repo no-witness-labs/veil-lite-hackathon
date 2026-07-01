@@ -176,11 +176,11 @@ section.dark::after { color: rgba(255,255,255,.58); }
   <div class="howCard"><div class="howNo">03 · ACCEPT</div><h3>Atomic drawdown</h3><p>Borrower accepts. Collateral locks and principal is delivered in the same Canton transaction.</p></div>
   <div class="howCard"><div class="howNo">04 · OBSERVE</div><h3>Selective disclosure</h3><p>Regulator gets read-only visibility as an observer without making the deal public.</p></div>
   <div class="howCard"><div class="howNo">05 · REPAY</div><h3>Close facility</h3><p>Borrower repays principal plus interest. Loan closes and collateral is released back to the borrower.</p></div>
-  <div class="howCard"><div class="howNo">06 · RISK</div><h3>Optional liquidation</h3><p>If price feed marks collateral below threshold, lender can liquidate under on-ledger LTV rules.</p></div>
+  <div class="howCard"><div class="howNo">06 · RISK</div><h3>Optional liquidation</h3><p>If collateral value drops below threshold, lender can liquidate under on-ledger LTV rules.</p></div>
 </div>
 
 <div class="howFooter">
-  <div class="miniLedger"><span class="green">Privacy proof:</span> same active-contracts query<br/>lender/borrower/regulator → deal visible<br/>outsider → <span class="rose">[]</span></div>
+  <div class="miniLedger"><span class="green">Privacy proof:</span> same active-contracts query<br/>lender/borrower/regulator -> deal visible<br/>outsider -> <span class="rose">[]</span></div>
   <div class="miniLedger"><span class="green">Business proof:</span> 100 principal + 5 interest<br/>150 collateral units locked<br/>105 repayment releases collateral</div>
 </div>
 
@@ -204,7 +204,7 @@ section.dark::after { color: rgba(255,255,255,.58); }
     <tr><td>Initial LTV</td><td><strong>66.7%</strong></td></tr>
     <tr><td>Maturity</td><td>2026-07-13</td></tr>
     <tr><td>Collateral state</td><td>Locked while active</td></tr>
-    <tr><td>Optional risk branch</td><td>Price drop → LTV breach → liquidation</td></tr>
+    <tr><td>Optional risk branch</td><td>Price drop -> LTV breach -> liquidation</td></tr>
   </tbody>
 </table>
 </div>
@@ -253,8 +253,8 @@ section.dark::after { color: rgba(255,255,255,.58); }
 
 <div class="grid2" style="margin-top: 30px;">
 <div class="cards" style="grid-template-columns: 1fr; margin-top:0;">
-  <div class="card"><h3>Daml model</h3><p><code>CashHolding</code>, <code>CollateralHolding</code>, <code>LoanOffer</code>, <code>Loan</code>, <code>LoanClosed</code>, <code>PriceFeed</code>.</p></div>
-  <div class="card"><h3>On-ledger flow</h3><p>Asset movement for acceptance/repayment and guarded liquidation using price/LTV.</p></div>
+  <div class="card"><h3>Daml architecture</h3><p><code>CashHolding</code>, <code>CollateralHolding</code>, <code>LoanOffer</code>, <code>Loan</code>, and <code>LoanClosed</code>.</p></div>
+  <div class="card"><h3>On-ledger flow</h3><p>Asset movement for acceptance/repayment and guarded liquidation using lender-submitted mark/LTV.</p></div>
   <div class="card"><h3>Role-based UI</h3><p>React/Vite UI over Canton JSON Ledger API v2 with raw ledger proof panel.</p></div>
 </div>
 <div class="ledger">
@@ -277,9 +277,9 @@ $ npm --prefix frontend run build<br/>
 
 <div class="cards" style="grid-template-columns: repeat(2, 1fr); margin-top: 32px;">
   <div class="card roadmap-card"><div class="badge">1</div><h3>Token standard integration</h3><p>Replace demo assets with Canton token standard / Canton Coin integrations.</p></div>
-  <div class="card roadmap-card"><div class="badge">2</div><h3>Production signing</h3><p>Add external signing, wallet flows, and production identity/auth.</p></div>
-  <div class="card roadmap-card"><div class="badge">3</div><h3>Multi-participant Canton</h3><p>Move from local sandbox to realistic participant topology.</p></div>
-  <div class="card roadmap-card"><div class="badge">4</div><h3>Professional workflows</h3><p>Add PQS reporting, richer credit terms, margin calls, and compliance flows.</p></div>
+  <div class="card roadmap-card"><div class="badge">2</div><h3>Marketplace extension</h3><p>Add <code>LoanProgram</code> and <code>BorrowRequest</code> for discovery before private execution.</p></div>
+  <div class="card roadmap-card"><div class="badge">3</div><h3>Production signing</h3><p>Add external signing, wallet flows, and production identity/auth.</p></div>
+  <div class="card roadmap-card"><div class="badge">4</div><h3>Professional workflows</h3><p>Add oracle-signed marks, PQS reporting, richer credit terms, margin calls, and compliance flows.</p></div>
 </div>
 
 <div class="callout">Hackathon scope: prove private institutional financing coordination — not production token infrastructure.</div>

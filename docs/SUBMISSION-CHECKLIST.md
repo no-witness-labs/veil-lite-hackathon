@@ -6,18 +6,18 @@ This document tracks the exact submission requirements for the Build on Canton H
 
 ### 1. Public repository
 
-**Status:** Planned / required before submission.
+**Status:** Public / final link pass pending.
 
 **Deliverable:** A public GitHub repository for `veil`.
 
 **Checklist:**
 
-- [ ] Create or publish repo publicly.
-- [ ] Include clear `README.md` with pitch, setup, demo flow, and honest scope.
-- [ ] Include `docs/PRD.md`, `docs/CONTEXT.md`, and `docs/adr/0001-hackathon-scope.md`.
-- [ ] Include build/test instructions.
+- [x] Create or publish repo publicly.
+- [x] Include clear `README.md` with pitch, setup, demo flow, and honest scope.
+- [x] Include `docs/PRD.md`, `docs/CONTEXT.md`, and `docs/adr/0001-hackathon-scope.md`.
+- [x] Include build/test instructions.
 - [ ] Include license if required.
-- [ ] Confirm no secrets, private env files, or local credentials are committed.
+- [x] Confirm no tracked secrets, private env files, or local credentials are committed.
 
 **Recommended repo description:**
 
@@ -27,11 +27,11 @@ This document tracks the exact submission requirements for the Build on Canton H
 
 ### 2. Presentation deck
 
-**Status:** Planned / required before submission.
+**Status:** Complete.
 
-**Deliverable:** 5–7 slide deck, exported as PDF.
+**Deliverable:** Concise 7–10 slide deck, exported as PDF.
 
-**Recommended slides:**
+**Recommended sections:**
 
 1. **Problem** — Institutional repo/private-credit workflows need shared coordination but cannot expose counterparties, terms, collateral, or liquidation state publicly.
 2. **Solution + Asset Logic** — Veil: private repo-style financing against tokenized collateral; 100 USDC-equivalent principal, 5 interest, 105 repayment, 150 tokenized T-Bill/MMF collateral units, 66.7% initial LTV.
@@ -43,10 +43,10 @@ This document tracks the exact submission requirements for the Build on Canton H
 
 **Deck acceptance criteria:**
 
-- [ ] Explains the problem in under 30 seconds.
-- [ ] Shows why Canton is necessary, not incidental.
-- [ ] Includes a screenshot or flow diagram from the live demo.
-- [ ] Clearly labels demo scope vs production roadmap.
+- [x] Explains the problem in under 30 seconds.
+- [x] Shows why Canton is necessary, not incidental.
+- [x] Includes a screenshot or flow diagram from the live demo.
+- [x] Clearly labels demo scope vs production roadmap.
 
 ---
 
@@ -131,17 +131,17 @@ Do not submit until all gates are true.
 
 ### Engineering gate
 
-- [ ] Daml build/test commands pass.
-- [ ] Tests include lifecycle and privacy checks.
-- [ ] Tests include the concrete asset/financing numbers or equivalent fixture.
-- [ ] Frontend can run locally or via hosted link.
+- [x] Daml build/test commands pass.
+- [x] Tests include lifecycle and privacy checks.
+- [x] Tests include the concrete asset/financing numbers or equivalent fixture.
+- [x] Frontend can run locally or via hosted link.
 - [ ] Demo script has been rehearsed end-to-end in under 3 minutes.
 
 ### Submission gate
 
-- [ ] Public repo URL exists.
-- [ ] Deck PDF exists.
+- [x] Public repo URL exists.
+- [x] Deck PDF exists.
 - [ ] 3-minute video URL exists.
 - [ ] Live product URL exists.
 - [ ] README includes all four links.
-- [ ] README is honest about MVP scope and non-goals.
+- [x] README is honest about MVP scope and non-goals.
