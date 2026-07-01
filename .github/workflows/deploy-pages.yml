@@ -38,6 +38,11 @@ jobs:
           VITE_DEMO_MODE: static
           VITE_BASE_PATH: /veil-lite-hackathon/
 
+      - name: Copy submission assets
+        run: |
+          cp docs/veil-pitch-video.mp4 frontend/dist/veil-pitch-video.mp4
+          cp docs/PRESENTATION.pdf frontend/dist/PRESENTATION.pdf
+
       - name: Configure Pages
         uses: actions/configure-pages@v5
 

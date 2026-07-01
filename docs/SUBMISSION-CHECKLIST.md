@@ -59,7 +59,7 @@ secret-pattern scan returned no matches.
 
 **Deliverable:** A video link, ideally 2:30–3:00 minutes.
 
-**Pitch video:** [`veil-pitch-video.mp4`](./veil-pitch-video.mp4)
+**Pitch video:** <https://no-witness-labs.github.io/veil-lite-hackathon/veil-pitch-video.mp4>
 
 **Recording script:** [`PITCH-VIDEO-SCRIPT.md`](./PITCH-VIDEO-SCRIPT.md)
 
