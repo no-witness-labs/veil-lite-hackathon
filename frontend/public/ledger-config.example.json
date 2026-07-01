@@ -1,11 +1,19 @@
 {
   "jsonApiUrl": "http://127.0.0.1:6864",
   "packageRef": "#veil",
+  "simpleTokenPackageRef": "#simple-token",
   "userId": "veil",
   "parties": {
     "lender": "Lender::<participant-fingerprint>",
     "borrower": "Borrower::<participant-fingerprint>",
     "regulator": "Regulator::<participant-fingerprint>",
-    "outsider": "Outsider::<participant-fingerprint>"
+    "outsider": "Outsider::<participant-fingerprint>",
+    "registry": "Registry::<participant-fingerprint>",
+    "operator": "Operator::<participant-fingerprint>"
+  },
+  "rulesCid": "<SimpleTokenRules-contract-id>",
+  "instruments": {
+    "usd": { "admin": "Registry::<participant-fingerprint>", "id": "USD" },
+    "tbill": { "admin": "Registry::<participant-fingerprint>", "id": "TBILL" }
   }
 }

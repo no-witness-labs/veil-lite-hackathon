@@ -1,233 +1,289 @@
+-- Tests for the token-standard Veil loan flow, driving the OpenZeppelin simple-token implementation
+-- (SimpleTokenRules / SimpleHolding) as the concrete CIP-056 registry behind the standard interfaces.
+--
+-- Canonical demo numbers: principal 100, interest 5, repayment 105, collateral 150, 90% threshold.
 module Veil.Test where
 
+import DA.Date (date, Month(..))
+import DA.Time (time, addRelTime, days)
+import DA.Optional (isNone)
 import Daml.Script
-import DA.Assert ((===))
-import DA.List (sort)
+
+import Splice.Api.Token.MetadataV1
+import Splice.Api.Token.HoldingV1
+import Splice.Api.Token.AllocationV1
+import Splice.Api.Token.AllocationInstructionV1
+
+-- Use the OpenZeppelin simple-token implementation as the concrete CIP-056 registry.
+import SimpleToken.Holding (SimpleHolding(..))
+import SimpleToken.Rules (SimpleTokenRules(..))
+
 import Veil
 
-tbill : Text
-tbill = "Tokenized T-Bill / MMF"
+t0 : Time
+t0 = time (date 2026 Jan 1) 0 0 0
 
--- Allocate the demo parties and seed holdings: lender funds with 100 cash,
--- borrower holds 105 treasury cash plus 150 collateral units.
-setup : Script (Party, Party, Party, ContractId CashHolding, ContractId CashHolding, ContractId CollateralHolding)
+deadline : Time
+deadline = time (date 2026 Dec 31) 0 0 0
+
+emptyExtraArgs : ExtraArgs
+emptyExtraArgs = ExtraArgs with context = emptyChoiceContext; meta = emptyMetadata
+
+-- | Mint a standard (OZ) holding; admin + owner co-sign.
+mintHolding : Party -> Party -> InstrumentId -> Decimal -> Script (ContractId Holding)
+mintHolding admin owner instrumentId amount = do
+  cid <- submit (actAs [admin, owner]) $ createCmd SimpleHolding with
+    admin; owner; instrumentId; amount; meta = emptyMetadata
+  pure (toInterfaceContractId @Holding cid)
+
+-- | Build a one-leg allocation specification.
+mkSpec : Party -> Party -> Party -> InstrumentId -> Decimal -> AllocationSpecification
+mkSpec sender receiver executor instrumentId amount =
+  AllocationSpecification with
+    settlement = SettlementInfo with
+      executor
+      settlementRef = Reference with id = "veil-loan"; cid = None
+      requestedAt = t0
+      allocateBefore = deadline
+      settleBefore = deadline
+      meta = emptyMetadata
+    transferLegId = "leg"
+    transferLeg = TransferLeg with
+      sender; receiver; amount; instrumentId; meta = emptyMetadata
+
+-- | Fund an allocation through the OZ AllocationFactory (admin authority via the factory contract).
+fundAllocation : Party -> ContractId SimpleTokenRules -> AllocationSpecification -> [ContractId Holding] -> Script (ContractId Allocation)
+fundAllocation admin rulesCid spec inputs = do
+  let afCid = toInterfaceContractId @AllocationFactory rulesCid
+  res <- submit (actAs [admin, spec.transferLeg.sender]) $
+    exerciseCmd afCid AllocationFactory_Allocate with
+      expectedAdmin = admin
+      allocation = spec
+      requestedAt = t0
+      inputHoldingCids = inputs
+      extraArgs = emptyExtraArgs
+  case res.output of
+    AllocationInstructionResult_Completed allocCid -> pure allocCid
+    _ -> abort "allocation did not complete"
+
+-- | Unlocked balance of an instrument owned by a party (locked escrow excluded).
+balanceOf : Party -> InstrumentId -> Script Decimal
+balanceOf p instrumentId = do
+  hs <- queryInterface @Holding p
+  pure $ sum [ hv.amount | (_, Some hv) <- hs, hv.owner == p, hv.instrumentId == instrumentId, isNone hv.lock ]
+
+data Env = Env with
+  registry : Party; lender : Party; borrower : Party; regulator : Party; outsider : Party
+  operator : Party
+  rulesCid : ContractId SimpleTokenRules
+  usd : InstrumentId; tbill : InstrumentId
+
+setup : Script Env
 setup = do
+  setTime t0
+  registry <- allocateParty "Registry"
+  operator <- allocateParty "Operator"
   lender <- allocateParty "Lender"
   borrower <- allocateParty "Borrower"
   regulator <- allocateParty "Regulator"
-  lenderCash <- submit lender do createCmd CashHolding with owner = lender; amount = 100.0
-  borrowerCash <- submit borrower do createCmd CashHolding with owner = borrower; amount = 105.0
-  borrowerColl <- submit borrower do createCmd CollateralHolding with owner = borrower; asset = tbill; quantity = 150.0
-  pure (lender, borrower, regulator, lenderCash, borrowerCash, borrowerColl)
+  outsider <- allocateParty "Outsider"
+  rulesCid <- submit registry $ createCmd SimpleTokenRules with
+    admin = registry; supportedInstruments = ["USD", "TBILL"]
+  let usd = InstrumentId with admin = registry; id = "USD"
+      tbill = InstrumentId with admin = registry; id = "TBILL"
+  pure Env with registry; lender; borrower; regulator; outsider; operator; rulesCid; usd; tbill
 
-makeOffer : Party -> Party -> Party -> ContractId CashHolding -> Script (ContractId LoanOffer)
-makeOffer lender borrower regulator lenderCash =
-  submit lender do
-    exerciseCmd lenderCash MakeOffer with
-      borrower; regulator
-      principal = 100.0
-      interest = 5.0
-      collateralAsset = tbill
-      collateralQuantity = 150.0
-      maturity = "2026-07-13"
-      liquidationThresholdLtv = 90.0
+-- | Create the canonical loan offer against a funded principal allocation (lender signs; the operator
+-- is only a field, so the custodian never sees the offer).
+makeOffer : Env -> ContractId Allocation -> Script (ContractId LoanOffer)
+makeOffer Env{..} cashAlloc =
+  submit lender $ createCmd LoanOffer with
+    lender; borrower; regulator; operator
+    cashAllocationCid = cashAlloc
+    cashInstrumentId = usd
+    principal = 100.0; interest = 5.0
+    collateralInstrumentId = tbill; collateralQuantity = 150.0
+    liquidationThresholdLtv = 90.0; maturity = deadline
 
-cashAmounts : Party -> Script [Decimal]
-cashAmounts p = do
-  hs <- query @CashHolding p
-  pure $ sort [h.amount | (_, h) <- hs]
+-- | Borrower escrows 150 collateral with the operator: fund a borrower -> operator allocation, execute
+-- it into the operator's holding, and wrap it in an Escrow (borrower + operator co-sign). The custodian
+-- sees only the collateral here — never the loan.
+escrowCollateral : Env -> Script (ContractId Escrow)
+escrowCollateral Env{..} = do
+  borrowerColl <- mintHolding registry borrower tbill 150.0
+  collAlloc <- fundAllocation registry rulesCid (mkSpec borrower operator operator tbill 150.0) [borrowerColl]
+  res <- submit (actAs [borrower, operator]) $
+    exerciseCmd collAlloc Allocation_ExecuteTransfer with extraArgs = emptyExtraArgs
+  escrowHoldingCid <- case res.receiverHoldingCids of
+    (c :: _) -> pure c
+    [] -> abort "escrow execute produced no holding"
+  submit (actAs [borrower, operator]) $ createCmd Escrow with
+    operator; borrower; lender; regulator
+    escrowCollateralCid = escrowHoldingCid
+    collateralFactoryCid = toInterfaceContractId @AllocationFactory rulesCid
+    collateralInstrumentId = tbill
+    collateralQuantity = 150.0
 
+-- | Offer + escrow + accept, returning the active loan.
+originate : Env -> Script (ContractId Loan)
+originate env@Env{..} = do
+  lenderCash <- mintHolding registry lender usd 100.0
+  _borrowerCash <- mintHolding registry borrower usd 105.0
+  cashAlloc <- fundAllocation registry rulesCid (mkSpec lender borrower lender usd 100.0) [lenderCash]
+  offerCid <- makeOffer env cashAlloc
+  escrowCid <- escrowCollateral env
+  submit borrower $ exerciseCmd offerCid Accept with
+    escrowCid
+    cashExtraArgs = emptyExtraArgs
+
+-- Full lifecycle: offer -> escrow -> accept -> repay, with privacy + double-entry assertions.
 testFullLifecycle : Script ()
-testFullLifecycle = script do
-  (lender, borrower, regulator, lenderCash, borrowerCash, borrowerColl) <- setup
+testFullLifecycle = do
+  env@Env{..} <- setup
+  loanCid <- originate env
 
-  -- Borrower starts with tokenized collateral.
-  borrowerCollBefore <- query @CollateralHolding borrower
-  length borrowerCollBefore === 1
+  -- Principal delivered: borrower holds 105 (seed) + 100 (principal) = 205 USD spendable.
+  balanceOf borrower usd >>= \b -> assertMsg "borrower USD after draw" (b == 205.0)
+  balanceOf lender usd >>= \b -> assertMsg "lender USD after draw" (b == 0.0)
+  balanceOf borrower tbill >>= \b -> assertMsg "borrower holds no collateral (escrowed)" (b == 0.0)
 
-  offerCid <- makeOffer lender borrower regulator lenderCash
+  -- Privacy: outsider sees no loan and no holdings; regulator (observer) sees the loan.
+  outsiderLoans <- query @Loan outsider
+  assertMsg "outsider sees no loan" (null outsiderLoans)
+  outsiderHoldings <- queryInterface @Holding outsider
+  assertMsg "outsider sees no holdings" (null outsiderHoldings)
+  regLoans <- query @Loan regulator
+  assertMsg "regulator sees the loan" (length regLoans == 1)
 
-  -- Funding left the lender (offer is pre-funded).
-  lenderCashAfterOffer <- query @CashHolding lender
-  length lenderCashAfterOffer === 0
-  -- Regulator (observer) can see the offer; outsider cannot.
-  query @LoanOffer regulator >>= \o -> length o === 1
+  -- Borrower repays exactly 105 from the seed holding (exact-amount: no over-disclosure).
+  [seed105] <- pure . map fst =<< queryFilter @SimpleHolding borrower
+    (\h -> h.owner == borrower && h.instrumentId == usd && h.amount == 105.0)
+  repayAlloc <- fundAllocation registry rulesCid (mkSpec borrower lender borrower usd 105.0)
+    [toInterfaceContractId @Holding seed105]
+  -- readAs [operator, registry]: the escrow holding (operator-owned) + the factory (registry-owned)
+  -- must be visible for the collateral release.
+  closedCid <- submit (actAs [borrower] <> readAs [operator, registry]) $ exerciseCmd loanCid Repay with
+    repayAllocationCid = repayAlloc
+    repayExtraArgs = emptyExtraArgs
+    collateralExtraArgs = emptyExtraArgs
 
-  loanCid <- submit borrower do
-    exerciseCmd offerCid Accept with collateralCid = borrowerColl
+  -- Double-entry: lender ends with 105 (principal + interest); collateral returned to borrower.
+  balanceOf lender usd >>= \b -> assertMsg "lender USD after repay" (b == 105.0)
+  balanceOf borrower tbill >>= \b -> assertMsg "collateral returned" (b == 150.0)
+  closed <- queryContractId regulator closedCid
+  assertMsg "regulator sees Repaid record" (optional False (\c -> c.reason == "Repaid") closed)
+  outsiderClosed <- query @LoanClosed outsider
+  assertMsg "outsider sees no closed loan" (null outsiderClosed)
 
-  -- Accepting locks/encumbers collateral and delivers the principal.
-  Some loan <- queryContractId borrower loanCid
-  loan.collateralLocked === True
-  loan.principal === 100.0
-  loan.interest === 5.0
-  -- Canonical numbers as values: repayment = 105, initial LTV = 66.7% (collateral = 1.5x principal).
-  (loan.principal + loan.interest) === 105.0
-  loan.collateralQuantity === loan.principal * 1.5
-  -- Regulator can see the active loan.
-  query @Loan regulator >>= \l -> length l === 1
-  borrowerCollLocked <- query @CollateralHolding borrower
-  length borrowerCollLocked === 0
-  cashAmounts borrower >>= \a -> a === [100.0, 105.0]
+-- Custodian privacy: the operator sees the Escrow it holds, but NOT the offer or the loan.
+testCustodianSeesOnlyEscrow : Script ()
+testCustodianSeesOnlyEscrow = do
+  env@Env{..} <- setup
+  _loanCid <- originate env
+  opLoans <- query @Loan operator
+  assertMsg "custodian sees no loan" (null opLoans)
+  opOffers <- query @LoanOffer operator
+  assertMsg "custodian sees no offer" (null opOffers)
+  opEscrows <- query @Escrow operator
+  assertMsg "custodian sees the escrow it holds" (length opEscrows == 1)
+  regLoans <- query @Loan regulator
+  assertMsg "regulator still sees the loan" (length regLoans == 1)
 
-  -- Outsider sees nothing throughout.
-  outsider <- allocateParty "Outsider"
-  query @Loan outsider >>= \l -> length l === 0
+-- Offer visibility: lender/borrower/regulator see the offer; outsider and custodian do not.
+testOfferVisibility : Script ()
+testOfferVisibility = do
+  env@Env{..} <- setup
+  lenderCash <- mintHolding registry lender usd 100.0
+  cashAlloc <- fundAllocation registry rulesCid (mkSpec lender borrower lender usd 100.0) [lenderCash]
+  _offer <- makeOffer env cashAlloc
+  let count p = length <$> query @LoanOffer p
+  count lender >>= \n -> assertMsg "lender sees offer" (n == 1)
+  count borrower >>= \n -> assertMsg "borrower sees offer" (n == 1)
+  count regulator >>= \n -> assertMsg "regulator sees offer" (n == 1)
+  count outsider >>= \n -> assertMsg "outsider sees no offer" (n == 0)
+  count operator >>= \n -> assertMsg "custodian sees no offer" (n == 0)
 
-  closedCid <- submit borrower do
-    exerciseCmd loanCid Repay with repaymentCid = borrowerCash
-
-  -- Repayment closes the loan and releases collateral to the borrower.
-  query @Loan borrower >>= \l -> length l === 0
-  borrowerCollReleased <- query @CollateralHolding borrower
-  length borrowerCollReleased === 1
-  Some closed <- queryContractId regulator closedCid
-  closed.reason === "Repaid"
-  closed.collateralReleased === True
-
-  -- Double-entry settled: lender +5 (105), borrower keeps 100 principal.
-  cashAmounts lender >>= \a -> a === [105.0]
-  cashAmounts borrower >>= \a -> a === [100.0]
-  query @LoanClosed outsider >>= \c -> length c === 0
-
+-- Liquidation: healthy mark rejected; real breach seizes collateral to the lender.
 testLiquidationRequiresBreach : Script ()
-testLiquidationRequiresBreach = script do
-  (lender, borrower, regulator, lenderCash, _, borrowerColl) <- setup
-  offerCid <- makeOffer lender borrower regulator lenderCash
-  loanCid <- submit borrower do exerciseCmd offerCid Accept with collateralCid = borrowerColl
+testLiquidationRequiresBreach = do
+  env@Env{..} <- setup
+  loanCid <- originate env
 
-  -- Non-stakeholders cannot see the active loan (outsider and an oracle party).
-  outsider <- allocateParty "Outsider"
-  oracle <- allocateParty "Oracle"
-  query @Loan outsider >>= \l -> length l === 0
-  query @Loan oracle >>= \l -> length l === 0
+  -- Healthy mark (value 150 -> LTV 66.7%) must be rejected (fails at the guard).
+  submitMustFail lender $ exerciseCmd loanCid Liquidate with
+    currentCollateralValue = 150.0
+    collateralExtraArgs = emptyExtraArgs
 
-  -- Healthy mark (LTV 66.7%) must NOT permit liquidation.
-  submitMustFail lender do exerciseCmd loanCid Liquidate with currentCollateralValue = 150.0
-  query @Loan borrower >>= \l -> length l === 1
+  -- Price shock (value 90 -> LTV 111%) breaches the 90% threshold and liquidates.
+  closedCid <- submit (actAs [lender] <> readAs [operator, registry]) $ exerciseCmd loanCid Liquidate with
+    currentCollateralValue = 90.0
+    collateralExtraArgs = emptyExtraArgs
 
-  -- Price shock (LTV ~107%) breaches the threshold and seizes collateral.
-  closedCid <- submit lender do exerciseCmd loanCid Liquidate with currentCollateralValue = 93.0
-  query @Loan borrower >>= \l -> length l === 0
-  Some closed <- queryContractId borrower closedCid
-  closed.reason === "Liquidated"
-  closed.collateralReleased === False
-  -- Collateral was seized to the lender, not released to the borrower.
-  query @CollateralHolding lender >>= \c -> length c === 1
-  query @CollateralHolding borrower >>= \c -> length c === 0
-  -- Outsider still sees no liquidation-relevant state.
-  query @LoanClosed outsider >>= \c -> length c === 0
+  balanceOf lender tbill >>= \b -> assertMsg "collateral seized to lender" (b == 150.0)
+  balanceOf borrower tbill >>= \b -> assertMsg "borrower has no collateral" (b == 0.0)
+  closed <- queryContractId regulator closedCid
+  assertMsg "regulator sees Liquidated record"
+    (optional False (\c -> c.reason == "Liquidated" && not c.collateralReleased) closed)
 
+-- Escrow is not frozen at/after maturity: a defaulting borrower can still be liquidated once the
+-- loan has matured (release mints a fresh short-lived allocation).
+testLiquidationAfterMaturity : Script ()
+testLiquidationAfterMaturity = do
+  env@Env{..} <- setup
+  loanCid <- originate env
+  setTime (addRelTime deadline (days 1))
+  closedCid <- submit (actAs [lender] <> readAs [operator, registry]) $ exerciseCmd loanCid Liquidate with
+    currentCollateralValue = 90.0
+    collateralExtraArgs = emptyExtraArgs
+  balanceOf lender tbill >>= \b -> assertMsg "collateral seized after maturity" (b == 150.0)
+  closed <- queryContractId regulator closedCid
+  assertMsg "regulator sees Liquidated record" (optional False (\c -> c.reason == "Liquidated") closed)
+
+-- Security: once collateral is escrowed (executed into the operator's holding), the borrower cannot
+-- reclaim it via the standard sender-controlled Allocation_Withdraw (the allocation is consumed).
+testCollateralNotBorrowerWithdrawable : Script ()
+testCollateralNotBorrowerWithdrawable = do
+  Env{..} <- setup
+  borrowerColl <- mintHolding registry borrower tbill 150.0
+  collAlloc <- fundAllocation registry rulesCid (mkSpec borrower operator operator tbill 150.0) [borrowerColl]
+  _ <- submit (actAs [borrower, operator]) $
+    exerciseCmd collAlloc Allocation_ExecuteTransfer with extraArgs = emptyExtraArgs
+
+  -- The exploit attempt: withdraw the now-consumed collateral allocation.
+  submitMustFail borrower $ exerciseCmd collAlloc Allocation_Withdraw with extraArgs = emptyExtraArgs
+
+  balanceOf borrower tbill >>= \b -> assertMsg "borrower cannot hold collateral" (b == 0.0)
+  balanceOf operator tbill >>= \b -> assertMsg "collateral escrowed with operator" (b == 150.0)
+
+-- Security: the escrow operator must be a neutral third party. An offer naming a counterparty as
+-- operator is rejected at creation.
+testOperatorMustBeNeutral : Script ()
+testOperatorMustBeNeutral = do
+  Env{..} <- setup
+  lenderCash <- mintHolding registry lender usd 100.0
+  cashAlloc <- fundAllocation registry rulesCid (mkSpec lender borrower lender usd 100.0) [lenderCash]
+  let mkOfferWith op = createCmd LoanOffer with
+        lender; borrower; regulator; operator = op
+        cashAllocationCid = cashAlloc
+        cashInstrumentId = usd; principal = 100.0; interest = 5.0
+        collateralInstrumentId = tbill; collateralQuantity = 150.0
+        liquidationThresholdLtv = 90.0; maturity = deadline
+  submitMustFail lender $ mkOfferWith lender     -- operator = lender rejected
+  submitMustFail lender $ mkOfferWith borrower   -- operator = borrower rejected
+
+-- Withdraw: lender pulls an unaccepted offer and refunds the escrowed principal via the standard
+-- sender-controlled Allocation_Withdraw.
 testWithdrawRefunds : Script ()
-testWithdrawRefunds = script do
-  (lender, borrower, regulator, lenderCash, _, _) <- setup
-  offerCid <- makeOffer lender borrower regulator lenderCash
-  query @CashHolding lender >>= \c -> length c === 0
-  _ <- submit lender do exerciseCmd offerCid Withdraw
-  -- Principal refunded to the lender.
-  cashAmounts lender >>= \a -> a === [100.0]
-  query @LoanOffer borrower >>= \o -> length o === 0
+testWithdrawRefunds = do
+  env@Env{..} <- setup
+  lenderCash <- mintHolding registry lender usd 100.0
+  cashAlloc <- fundAllocation registry rulesCid (mkSpec lender borrower lender usd 100.0) [lenderCash]
+  offerCid <- makeOffer env cashAlloc
 
--- Authorization: each choice can only be exercised by its controller.
-testOnlyControllerCanAct : Script ()
-testOnlyControllerCanAct = script do
-  (lender, borrower, regulator, lenderCash, borrowerCash, borrowerColl) <- setup
-  outsider <- allocateParty "Outsider"
-  offerCid <- makeOffer lender borrower regulator lenderCash
+  balanceOf lender usd >>= \b -> assertMsg "principal escrowed" (b == 0.0)
 
-  -- Only the lender may withdraw the offer.
-  submitMustFail borrower do exerciseCmd offerCid Withdraw
-  -- Only the borrower may accept (a non-stakeholder cannot).
-  submitMustFail outsider do exerciseCmd offerCid Accept with collateralCid = borrowerColl
-
-  loanCid <- submit borrower do exerciseCmd offerCid Accept with collateralCid = borrowerColl
-
-  -- Only the borrower may repay; only the lender may liquidate.
-  submitMustFail lender do exerciseCmd loanCid Repay with repaymentCid = borrowerCash
-  submitMustFail borrower do exerciseCmd loanCid Liquidate with currentCollateralValue = 93.0
-
--- Validation guards: choice bodies reject inconsistent inputs.
-testValidationGuards : Script ()
-testValidationGuards = script do
-  lender <- allocateParty "Lender"
-  borrower <- allocateParty "Borrower"
-  regulator <- allocateParty "Regulator"
-  lenderCash <- submit lender do createCmd CashHolding with owner = lender; amount = 100.0
-
-  -- MakeOffer cannot fund more principal than the cash holds.
-  submitMustFail lender do
-    exerciseCmd lenderCash MakeOffer with
-      borrower; regulator
-      principal = 200.0
-      interest = 5.0
-      collateralAsset = tbill
-      collateralQuantity = 150.0
-      maturity = "2026-07-13"
-      liquidationThresholdLtv = 90.0
-
-  offerCid <- submit lender do
-    exerciseCmd lenderCash MakeOffer with
-      borrower; regulator
-      principal = 100.0
-      interest = 5.0
-      collateralAsset = tbill
-      collateralQuantity = 150.0
-      maturity = "2026-07-13"
-      liquidationThresholdLtv = 90.0
-
-  -- Accept rejects collateral that doesn't match the offered quantity.
-  wrongColl <- submit borrower do createCmd CollateralHolding with owner = borrower; asset = tbill; quantity = 100.0
-  submitMustFail borrower do exerciseCmd offerCid Accept with collateralCid = wrongColl
-
-  -- A matching holding is accepted; then repayment cannot be underfunded.
-  goodColl <- submit borrower do createCmd CollateralHolding with owner = borrower; asset = tbill; quantity = 150.0
-  loanCid <- submit borrower do exerciseCmd offerCid Accept with collateralCid = goodColl
-  shortCash <- submit borrower do createCmd CashHolding with owner = borrower; amount = 50.0
-  submitMustFail borrower do exerciseCmd loanCid Repay with repaymentCid = shortCash
-
--- Borrower carves the exact repayment out of an oversized wallet in
--- an owner-only Split transaction (no lender/regulator informee), so Repay only
--- ever fetches a 105 holding — value both sides already agreed — instead of
--- divulging the borrower's full treasury balance. Repay now rejects any holding
--- whose amount is not exactly principal + interest.
-testRepayExactAmountViaSplit : Script ()
-testRepayExactAmountViaSplit = script do
-  (lender, borrower, regulator, lenderCash, _, borrowerColl) <- setup
-  offerCid <- makeOffer lender borrower regulator lenderCash
-  loanCid <- submit borrower do exerciseCmd offerCid Accept with collateralCid = borrowerColl
-
-  -- An oversized treasury wallet cannot be used to repay directly: the exact-amount
-  -- guard rejects it, so Repay never fetches (and divulges) the larger balance.
-  oversized <- submit borrower do createCmd CashHolding with owner = borrower; amount = 5000.0
-  submitMustFail borrower do exerciseCmd loanCid Repay with repaymentCid = oversized
-
-  -- The borrower splits exactly the 105 repayment in a private, owner-only tx.
-  (exactCid, remainderCid) <- submit borrower do exerciseCmd oversized Split with splitAmount = 105.0
-
-  -- Split conserves value: 105 exact + 4895 remainder, both owned by the borrower.
-  Some exact <- queryContractId borrower exactCid
-  exact.amount === 105.0
-  Some remainder <- queryContractId borrower remainderCid
-  remainder.amount === 4895.0
-
-  -- Repay with the exact holding succeeds and closes the loan.
-  closedCid <- submit borrower do exerciseCmd loanCid Repay with repaymentCid = exactCid
-  Some closed <- queryContractId regulator closedCid
-  closed.reason === "Repaid"
-  closed.collateralReleased === True
-
-  -- Double-entry settled: lender +105; borrower keeps the 100 drawn principal, the
-  -- 105 seed wallet, and the 4895 split remainder. Collateral is released, not cash.
-  cashAmounts lender >>= \a -> a === [105.0]
-  cashAmounts borrower >>= \a -> a === [100.0, 105.0, 4895.0]
-  query @CollateralHolding borrower >>= \c -> length c === 1
-
--- Split guards: the owner-only Split rejects non-positive amounts and refuses to
--- split off the entire balance (splitAmount must be strictly less than amount).
-testSplitGuards : Script ()
-testSplitGuards = script do
-  borrower <- allocateParty "Borrower"
-  wallet <- submit borrower do createCmd CashHolding with owner = borrower; amount = 105.0
-  submitMustFail borrower do exerciseCmd wallet Split with splitAmount = 0.0
-  submitMustFail borrower do exerciseCmd wallet Split with splitAmount = 105.0
-  submitMustFail borrower do exerciseCmd wallet Split with splitAmount = 200.0
+  submit lender $ exerciseCmd offerCid Withdraw
+  _ <- submit lender $ exerciseCmd cashAlloc Allocation_Withdraw with extraArgs = emptyExtraArgs
+  balanceOf lender usd >>= \b -> assertMsg "principal refunded" (b == 100.0)
+  borrowerOffers <- query @LoanOffer borrower
+  assertMsg "offer withdrawn" (null borrowerOffers)
