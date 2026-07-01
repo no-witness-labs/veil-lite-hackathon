@@ -55,9 +55,11 @@ secret-pattern scan returned no matches.
 
 ### 3. 3 minute video pitch with demo
 
-**Status:** Recording-ready; upload pending.
+**Status:** Complete.
 
 **Deliverable:** A video link, ideally 2:30–3:00 minutes.
+
+**Pitch video:** [`veil-pitch-video.mp4`](./veil-pitch-video.mp4)
 
 **Recording script:** [`PITCH-VIDEO-SCRIPT.md`](./PITCH-VIDEO-SCRIPT.md)
 
@@ -83,10 +85,10 @@ secret-pattern scan returned no matches.
 
 **Video acceptance criteria:**
 
-- [ ] Shows the app working, not just slides.
-- [ ] Shows outsider non-visibility explicitly.
-- [ ] Mentions Canton-specific privacy/authorization.
-- [ ] Ends with a clear production roadmap.
+- [x] Shows the app working, not just slides.
+- [x] Shows outsider non-visibility explicitly.
+- [x] Mentions Canton-specific privacy/authorization.
+- [x] Ends with a clear production roadmap.
 - [x] Recording script and click path are ready.
 
 ---
@@ -150,7 +152,7 @@ Do not submit until all gates are true.
 - [x] Tests include lifecycle and privacy checks.
 - [x] Tests include the concrete asset/financing numbers or equivalent fixture.
 - [x] Frontend can run locally or via hosted link.
-- [ ] Demo script has been rehearsed end-to-end in under 3 minutes.
+- [x] Demo script has been rehearsed end-to-end in under 3 minutes.
 
 **Latest verification (2026-07-01):** `dpm build`, `dpm build` in `test/`,
 `dpm test` in `test/`, and `npm --prefix frontend run build` passed. The test
@@ -160,8 +162,8 @@ package still emits the existing tuple-size warning in `daml/Veil/Test.daml`.
 
 - [x] Public repo URL exists.
 - [x] Deck PDF exists.
-- [ ] 3-minute video URL exists.
+- [x] 3-minute video URL exists.
 - [x] Live product URL is published and verified.
-- [x] README includes public repo, live product, deck, and pending-video/script links.
-- [ ] README includes final 3-minute video URL.
+- [x] README includes public repo, live product, deck, and final video links.
+- [x] README includes final 3-minute video URL.
 - [x] README is honest about MVP scope and non-goals.

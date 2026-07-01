@@ -9,7 +9,7 @@
 - **Repository:** <https://github.com/no-witness-labs/veil-lite-hackathon>
 - **Live product:** <https://no-witness-labs.github.io/veil-lite-hackathon/>
 - **Presentation deck:** [`docs/PRESENTATION.pdf`](./docs/PRESENTATION.pdf)
-- **Pitch video:** pending upload; recording script is [`docs/PITCH-VIDEO-SCRIPT.md`](./docs/PITCH-VIDEO-SCRIPT.md)
+- **Pitch video:** [`docs/veil-pitch-video.mp4`](./docs/veil-pitch-video.mp4)
 
 Veil is a deliberately small proof-of-concept for **private repo-style financing against tokenized collateral** on Canton.
 A known borrower pledges tokenized collateral, such as tokenized Treasury bills or money-market fund units, to receive short-term financing from a known lender. The lender privately offers terms, the borrower accepts, collateral is locked, and only the lender, borrower, and optional regulator can see the resulting position.
