@@ -1,5 +1,17 @@
 module Veil where
 
+import qualified DA.Text as Text
+
+-- Demo field bounds (static analysis / DoS hygiene).
+maxAssetLen : Int
+maxAssetLen = 256
+
+maxMaturityLen : Int
+maxMaturityLen = 64
+
+maxReasonLen : Int
+maxReasonLen = 16
+
 -- | Demo cash-like principal asset (e.g. USDC). A "bearer" holding: the owner
 -- is the sole signatory, so it can be spent with only the owner's authority.
 template CashHolding
@@ -63,6 +75,7 @@ template CollateralHolding
   where
     signatory owner
     ensure quantity > 0.0
+      && Text.length asset > 0 && Text.length asset <= maxAssetLen
 
 -- | Borrower-specific loan offer for a known-counterparty lending flow.
 --
@@ -86,6 +99,8 @@ template LoanOffer
 
     ensure principal > 0.0 && interest >= 0.0 && collateralQuantity > 0.0
       && liquidationThresholdLtv > 0.0
+      && Text.length collateralAsset > 0 && Text.length collateralAsset <= maxAssetLen
+      && Text.length maturity > 0 && Text.length maturity <= maxMaturityLen
 
     -- | Borrower locks matching collateral and draws the principal. The
     -- borrower's CollateralHolding is consumed (encumbered in the loan) and a
@@ -142,6 +157,8 @@ template Loan
 
     ensure principal > 0.0 && interest >= 0.0 && collateralQuantity > 0.0
       && liquidationThresholdLtv > 0.0
+      && Text.length collateralAsset > 0 && Text.length collateralAsset <= maxAssetLen
+      && Text.length maturity > 0 && Text.length maturity <= maxMaturityLen
 
     -- | Borrower repays principal + interest in cash and gets collateral back.
     -- The repayment cash moves to the lender (any surplus is returned as
@@ -183,9 +200,9 @@ template Loan
         currentCollateralValue : Decimal
       controller lender
       do
+        assertMsg "collateral value must be positive" (currentCollateralValue > 0.0)
         assertMsg "liquidation requires the collateral value to breach the LTV threshold"
-          (currentCollateralValue > 0.0
-            && (principal / currentCollateralValue) * 100.0 >= liquidationThresholdLtv)
+          ((principal / currentCollateralValue) * 100.0 >= liquidationThresholdLtv)
         _ <- create CollateralHolding with owner = lender; asset = collateralAsset; quantity = collateralQuantity
         create LoanClosed with
           lender
@@ -220,6 +237,12 @@ template LoanClosed
   where
     signatory lender, borrower
     observer regulator
+
+    ensure principal > 0.0 && interest >= 0.0 && collateralQuantity > 0.0
+      && Text.length collateralAsset > 0 && Text.length collateralAsset <= maxAssetLen
+      && Text.length maturity > 0 && Text.length maturity <= maxMaturityLen
+      && Text.length reason > 0 && Text.length reason <= maxReasonLen
+      && (reason == "Repaid" || reason == "Liquidated")
 
     -- | Archive the settlement record. Used to clear ledger state when the
     -- demo is reset; the closed loan has already settled.
