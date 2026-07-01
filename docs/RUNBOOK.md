@@ -42,6 +42,10 @@ Open <http://localhost:5173>.
 Use this path when you need a reliable live-product URL or a video-recording
 target without operating a hosted Canton sandbox.
 
+Hosted demo:
+
+<https://no-witness-labs.github.io/veil-lite-hackathon/>
+
 ```bash
 npm --prefix frontend install      # first time only
 VITE_DEMO_MODE=static npm --prefix frontend run dev
@@ -54,8 +58,11 @@ activity panel and raw view are labeled as demo data in this mode.
 For production hosting:
 
 ```bash
-npm --prefix frontend run build
+VITE_DEMO_MODE=static VITE_BASE_PATH=/veil-lite-hackathon/ npm --prefix frontend run build
 ```
+
+The `Deploy static demo` GitHub Actions workflow builds this static mode from
+`main` and publishes `frontend/dist` to GitHub Pages.
 
 If the production deployment does not include `frontend/public/ledger-config.json`,
 the app automatically falls back to static demo mode. A live ledger deployment

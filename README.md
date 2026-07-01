@@ -2,6 +2,8 @@
 
 > Hackathon-scoped Canton app for the Encode Build on Canton Hackathon.
 
+**Live product:** <https://no-witness-labs.github.io/veil-lite-hackathon/>
+
 Veil is a deliberately small proof-of-concept for **private repo-style financing against tokenized collateral** on Canton.
 A known borrower pledges tokenized collateral, such as tokenized Treasury bills or money-market fund units, to receive short-term financing from a known lender. The lender privately offers terms, the borrower accepts, collateral is locked, and only the lender, borrower, and optional regulator can see the resulting position.
 
@@ -148,9 +150,13 @@ For the hosted/static path:
 # Force deterministic demo mode locally.
 VITE_DEMO_MODE=static npm --prefix frontend run dev
 
-# Production builds automatically fall back to static mode if no ledger-config.json is deployed.
-npm --prefix frontend run build
+# Production build for GitHub Pages.
+VITE_DEMO_MODE=static VITE_BASE_PATH=/veil-lite-hackathon/ npm --prefix frontend run build
 ```
+
+The hosted static demo is deployed from `main` by GitHub Actions to
+<https://no-witness-labs.github.io/veil-lite-hackathon/>.
+Production builds also fall back to static mode if no `ledger-config.json` is deployed.
 
 3-minute click path: **Lender** create offer → **Borrower** sees it → **Outsider** sees nothing →
 **Borrower** accept (collateral LOCKED) → **Regulator** observes read-only → **Borrower** repay (collateral
