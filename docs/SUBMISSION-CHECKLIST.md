@@ -83,7 +83,7 @@ This document tracks the exact submission requirements for the Build on Canton H
 
 ### 4. Link to live product
 
-**Status:** GitHub Pages deployment configured; first published run pending after merge.
+**Status:** Published and verified on GitHub Pages.
 
 **Deliverable:** Public URL where judges can open the demo.
 
@@ -102,7 +102,7 @@ This document tracks the exact submission requirements for the Build on Canton H
 
 **Live product acceptance criteria:**
 
-- [ ] URL opens without auth after the first GitHub Pages publish from `main`.
+- [x] URL opens without auth.
 - [x] Demo can be completed in under 3 minutes.
 - [x] Reset button works.
 - [x] Role switching is obvious.
@@ -144,6 +144,6 @@ Do not submit until all gates are true.
 - [x] Public repo URL exists.
 - [x] Deck PDF exists.
 - [ ] 3-minute video URL exists.
-- [ ] Live product URL is published and verified.
+- [x] Live product URL is published and verified.
 - [ ] README includes all four links.
 - [x] README is honest about MVP scope and non-goals.
