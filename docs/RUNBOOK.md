@@ -18,6 +18,8 @@ Operational guide for running the Veil demo (Canton sandbox + React UI) and the
 
 ## 2. One-command start
 
+Use this path when you want the on-ledger Canton proof.
+
 From the repo root:
 
 ```bash
@@ -35,6 +37,30 @@ npm --prefix frontend run dev      # http://localhost:5173
 
 Open <http://localhost:5173>.
 
+## 3. Static hosted/demo mode
+
+Use this path when you need a reliable live-product URL or a video-recording
+target without operating a hosted Canton sandbox.
+
+```bash
+npm --prefix frontend install      # first time only
+VITE_DEMO_MODE=static npm --prefix frontend run dev
+```
+
+Open <http://localhost:5173>. The app follows the same role-based click path and
+reset behavior, but all state is deterministic in-browser demo state. The
+activity panel and raw view are labeled as demo data in this mode.
+
+For production hosting:
+
+```bash
+npm --prefix frontend run build
+```
+
+If the production deployment does not include `frontend/public/ledger-config.json`,
+the app automatically falls back to static demo mode. A live ledger deployment
+can still provide `ledger-config.json` and use the Canton-backed path.
+
 ### Ports
 
 | Port | Service |
@@ -49,7 +75,7 @@ Open <http://localhost:5173>.
 - Start script: `/tmp/veil-start.log`
 - Vite: terminal, or `/tmp/veil-vite.log` if backgrounded
 
-## 3. What start-sandbox.sh does
+## 4. What start-sandbox.sh does
 
 1. Pins `JAVA_HOME` to OpenJDK 17 and builds the DAR if missing.
 2. Launches `dpm sandbox` (single-process Canton) in the background.
@@ -61,7 +87,7 @@ Open <http://localhost:5173>.
 
 To re-bootstrap against an already-running sandbox: `./scripts/bootstrap.sh`.
 
-## 4. Demo walkthrough (~3 minutes)
+## 5. Demo walkthrough (~3 minutes)
 
 | Step | Role | Action | What to point at |
 | --- | --- | --- | --- |
@@ -76,7 +102,9 @@ To re-bootstrap against an already-running sandbox: `./scripts/bootstrap.sh`.
 
 **Strongest moment:** view the active deal as Lender, expand **Raw ledger view**,
 then switch to **Outsider** — the same query returns `[]`. The privacy is enforced
-by Canton, not by the UI.
+by Canton, not by the UI. In static mode, the same view demonstrates the intended
+role experience for judges, but the live ledger proof comes from the sandbox mode
+and Daml tests.
 
 The activity feed and the deal card show the real `updateId`, ledger `offset`,
 `synchronizerId`, and contract ids, so every action is verifiably on-ledger.
@@ -88,7 +116,7 @@ locks the collateral and delivers 100 principal to the borrower; repaying return
 collateral and the lender ends with 105 (principal + 5 interest). "Reset demo" burns and
 re-seeds the canonical holdings so the run is repeatable.
 
-## 5. Stopping
+## 6. Stopping
 
 ```bash
 pkill -f canton-open-source     # stop the Canton sandbox
@@ -97,7 +125,7 @@ pkill -f vite                   # stop the dev server
 
 Sandbox state is in-memory, so a restart is always a clean ledger.
 
-## 6. Verifying the build (CI-style)
+## 7. Verifying the build (CI-style)
 
 ```bash
 export PATH="$HOME/.dpm/bin:$PATH"
@@ -106,7 +134,7 @@ dpm build
 npm --prefix frontend run build           # succeeds without a running sandbox
 ```
 
-## 7. Troubleshooting
+## 8. Troubleshooting
 
 ### `JCE cannot authenticate the provider BC`
 Canton is running on the wrong JDK (e.g. Oracle JDK 20). Use OpenJDK 17/21:
@@ -119,7 +147,8 @@ script already waits for `/readyz`; if you run `bootstrap.sh` by hand, just re-r
 ### UI shows "Sandbox not ready"
 `frontend/public/ledger-config.json` is missing — the sandbox hasn't been
 bootstrapped. Run `./scripts/start-sandbox.sh` (or `./scripts/bootstrap.sh` if the
-sandbox is already up), then reload the page.
+sandbox is already up), then reload the page. For deterministic demo mode, reload
+with `?mode=static` or start Vite with `VITE_DEMO_MODE=static`.
 
 ### A role shows nothing / Outsider is empty
 Expected. Each tab queries the ledger **as that party**; the Outsider is not a

@@ -3,7 +3,7 @@ import type { ActivityEntry, Contract, Draft, Role, TxResult } from './types'
 import {
   acceptOffer,
   createOffer,
-  getParties,
+  getMode,
   liquidateLoan,
   listActive,
   loadConfig,
@@ -11,7 +11,8 @@ import {
   repayLoan,
   resetDemo,
   withdrawOffer,
-} from './ledger'
+  type RuntimeMode,
+} from './runtime'
 import {
   ACCENT,
   DEFAULT_DRAFT,
@@ -43,11 +44,12 @@ export default function App() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [configOk, setConfigOk] = useState<boolean | null>(null)
+  const [mode, setMode] = useState<RuntimeMode>('ledger')
 
   const refresh = useCallback(async (forRole: Role) => {
     setLoading(true)
     try {
-      const state = await listActive(getParties()[forRole])
+      const state = await listActive(forRole)
       setContracts(state.contracts)
       setRaw(state.raw)
       setOffset(state.offset)
@@ -59,14 +61,17 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    void loadConfig().then(setConfigOk)
+    void loadConfig().then((ok) => {
+      setMode(getMode())
+      setConfigOk(ok)
+    })
   }, [])
 
   useEffect(() => {
     if (configOk) void refresh(role)
   }, [role, configOk, refresh])
 
-  // Run a ledger action, record the committed transaction in the activity feed.
+  // Run a runtime action and record its committed transaction/demo event.
   const act = async (label: string, actor: string, fn: () => Promise<TxResult>) => {
     setBusy(true)
     setError(null)
@@ -117,7 +122,7 @@ export default function App() {
             <div style={{ width: 14, height: 14, background: ACCENT, borderRadius: 3, transform: 'rotate(45deg)' }} />
             <div style={{ fontSize: 21, fontWeight: 600, letterSpacing: '-0.01em', color: '#14171f' }}>Veil</div>
             <div style={{ marginLeft: 6, fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#9aa1ad', border: '1px solid #e6e8ec', borderRadius: 999, padding: '4px 9px' }}>
-              Canton · Confidential
+              {mode === 'static' ? 'Static demo' : 'Canton · Confidential'}
             </div>
           </div>
 
@@ -140,7 +145,7 @@ export default function App() {
             </button>
           </div>
         </div>
-        {configOk === true && <PartyBar active={role} />}
+        {configOk === true && <PartyBar active={role} mode={mode} />}
       </div>
 
       {/* BODY */}
@@ -159,6 +164,7 @@ export default function App() {
                   <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 13, color: '#14171f', background: '#f7f8fa', borderRadius: 8, padding: '10px 14px', marginTop: 14 }}>
                     ./scripts/start-sandbox.sh
                   </div>
+                  or open with <span style={{ fontFamily: "'IBM Plex Mono',monospace" }}>?mode=static</span> for the deterministic demo.
                   then reload this page.
                 </>
               )}
@@ -203,8 +209,8 @@ export default function App() {
               )}
 
               {!isOutsider && <HoldingsPanel role={role} holdings={holdings} />}
-              {!isOutsider && <ActivityFeed entries={activity} />}
-              <RawInspector role={role} raw={raw} offset={offset} />
+              {!isOutsider && <ActivityFeed entries={activity} mode={mode} />}
+              <RawInspector role={role} raw={raw} offset={offset} mode={mode} />
             </div>
 
             {/* RIGHT */}
@@ -216,7 +222,7 @@ export default function App() {
 
       {/* a tiny footer note so judges know the privacy is real */}
       <div style={{ maxWidth: 1200, margin: '8px auto 0', padding: '0 32px', fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#bcc2cb' }}>
-        Viewing as {PARTY_NAMES[role]} · live Canton sandbox · {contracts.length} visible contract{contracts.length === 1 ? '' : 's'}
+        Viewing as {PARTY_NAMES[role]} · {mode === 'static' ? 'deterministic static demo' : 'live Canton sandbox'} · {contracts.length} visible contract{contracts.length === 1 ? '' : 's'}
       </div>
     </div>
   )
