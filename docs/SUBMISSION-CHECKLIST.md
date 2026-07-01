@@ -52,9 +52,11 @@ This document tracks the exact submission requirements for the Build on Canton H
 
 ### 3. 3 minute video pitch with demo
 
-**Status:** Planned / required before submission.
+**Status:** Script ready; recording/upload pending.
 
 **Deliverable:** A video link, ideally 2:30–3:00 minutes.
+
+**Recording script:** [`PITCH-VIDEO-SCRIPT.md`](./PITCH-VIDEO-SCRIPT.md)
 
 **Suggested timing:**
 
@@ -78,6 +80,7 @@ This document tracks the exact submission requirements for the Build on Canton H
 - [ ] Shows outsider non-visibility explicitly.
 - [ ] Mentions Canton-specific privacy/authorization.
 - [ ] Ends with a clear production roadmap.
+- [x] Recording script and click path are ready.
 
 ---
 
