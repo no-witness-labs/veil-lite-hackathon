@@ -26,14 +26,28 @@ Recording target: <https://no-witness-labs.github.io/veil-lite-hackathon/>
 | 2:30-2:50 | Activity/raw/holdings panels | "The hackathon build includes Daml templates, lifecycle and privacy tests, a live Canton local mode, and a reliable hosted static demo for judges." |
 | 2:50-3:00 | App footer or README/deck links | "Next steps are Token Standard integration, wallet signing, PQS indexing, and production oracle/compliance workflows. Veil shows why Canton privacy and authorization matter for real institutional credit." |
 
-## Click path
+## Recording take flow
+
+Use this exact flow for the submitted take:
+
+1. Open <https://no-witness-labs.github.io/veil-lite-hackathon/>.
+2. Click **Reset demo**.
+3. Start on **Lender**.
+4. Click **Create offer**.
+5. Switch **Borrower** -> click **Accept offer**.
+6. Switch **Regulator** -> show the read-only observer view.
+7. Switch **Outsider** -> expand the raw view and show the empty `[]` result.
+8. Switch **Borrower** -> click **Repay 105 USDC**.
+9. Close with roadmap: Token Standard, wallet signing, PQS, and production compliance/oracle workflows.
+
+## Click path detail
 
 1. **Lender**: keep default terms and click **Create offer**.
 2. **Borrower**: verify the offer is visible, then click **Accept offer**.
 3. **Regulator**: show active loan and read-only observer badge.
-4. **Outsider**: show empty state, expand **Raw demo view**, and say the live Canton mode returns `[]` for the same stakeholder-visibility reason.
+4. **Outsider**: show empty state, expand the raw view, and say the live Canton mode returns `[]` for the same stakeholder-visibility reason.
 5. **Borrower**: click **Repay 105 USDC**.
-6. Optional if under time: **Lender** -> **Reset demo**, or mention **Simulate price drop** -> **Liquidate collateral** without clicking it.
+6. Optional if under time: mention **Simulate price drop** -> **Liquidate collateral** without clicking it.
 
 ## Phrases to avoid
 

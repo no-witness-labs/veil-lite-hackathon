@@ -55,11 +55,15 @@ secret-pattern scan returned no matches.
 
 ### 3. 3 minute video pitch with demo
 
-**Status:** Script ready; recording/upload pending.
+**Status:** Recording-ready; upload pending.
 
 **Deliverable:** A video link, ideally 2:30–3:00 minutes.
 
 **Recording script:** [`PITCH-VIDEO-SCRIPT.md`](./PITCH-VIDEO-SCRIPT.md)
+
+**Live product opened for recording:** <https://no-witness-labs.github.io/veil-lite-hackathon/>
+
+**Exact take flow:** Reset demo → Lender creates offer → Borrower accepts → Regulator shows read-only observer → Outsider expands raw view and shows `[]` → Borrower repays 105 USDC → close with roadmap.
 
 **Suggested timing:**
 
