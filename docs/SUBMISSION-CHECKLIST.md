@@ -6,7 +6,7 @@ This document tracks the exact submission requirements for the Build on Canton H
 
 ### 1. Public repository
 
-**Status:** Public; final video link pending.
+**Status:** Public; final submission links complete.
 
 **Deliverable:** A public GitHub repository for `veil`.
 
@@ -23,8 +23,8 @@ This document tracks the exact submission requirements for the Build on Canton H
 
 > Veil — confidential bilateral secured lending on Canton, built for the Encode Build on Canton Hackathon.
 
-**Latest verification (2026-07-01):** repository is public; tracked-file
-secret-pattern scan returned no matches.
+**Latest verification (2026-07-02):** repository is public; tracked-file
+secret-pattern scan returned no matches; final submission links are present.
 
 ---
 
@@ -60,6 +60,9 @@ secret-pattern scan returned no matches.
 **Deliverable:** A video link, ideally 2:30–3:00 minutes.
 
 **Pitch video:** <https://no-witness-labs.github.io/veil-lite-hackathon/veil-pitch-video.mp4>
+
+**Latest verification (2026-07-02):** hosted MP4 returned HTTP 200 as
+`video/mp4`; local duration is 152.8 seconds.
 
 **Recording script:** [`PITCH-VIDEO-SCRIPT.md`](./PITCH-VIDEO-SCRIPT.md)
 

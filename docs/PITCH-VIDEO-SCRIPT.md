@@ -60,4 +60,4 @@ Use this exact flow for the submitted take:
 - Repository: <https://github.com/no-witness-labs/veil-lite-hackathon>
 - Live product: <https://no-witness-labs.github.io/veil-lite-hackathon/>
 - Deck: [`docs/PRESENTATION.pdf`](./PRESENTATION.pdf)
-- Video: pending recording/upload
+- Video: <https://no-witness-labs.github.io/veil-lite-hackathon/veil-pitch-video.mp4>
