@@ -66,7 +66,7 @@ secret-pattern scan returned no matches; final submission links are present.
 
 **Recording script:** [`PITCH-VIDEO-SCRIPT.md`](./PITCH-VIDEO-SCRIPT.md)
 
-**Live product opened for recording:** Vercel DevNet deployment URL once published.
+**Live product opened for recording:** <https://veil-lite-hackathon-muki5588v-hadelives-projects.vercel.app/>
 
 **Exact take flow:** Reset demo → Lender creates offer → Borrower accepts → Regulator shows read-only observer → Outsider expands raw view and shows `[]` → Borrower repays 105 USDC → close with roadmap.
 
@@ -102,7 +102,7 @@ secret-pattern scan returned no matches; final submission links are present.
 
 **Deliverable:** Public URL where judges can open the demo.
 
-**Live product URL:** Vercel DevNet deployment pending URL.
+**Live product URL:** <https://veil-lite-hackathon-muki5588v-hadelives-projects.vercel.app/>
 
 **Selected deployment:**
 
@@ -124,8 +124,8 @@ secret-pattern scan returned no matches; final submission links are present.
 **Latest verification (2026-07-03):** DevNet package `veil-lite-0.1.0.dar`
 deployed, parties bootstrapped, `CanActAs` granted to user `6`, seeded holdings
 created, local DevNet proxy returned HTTP 200 for `/v2/state/ledger-end` and a
-borrower active-contracts query. Vercel production URL still needs to be created
-and pasted into this checklist/README.
+borrower active-contracts query. Vercel production URL has been added; deployment
+protection must be disabled before final public verification.
 
 ---
 
