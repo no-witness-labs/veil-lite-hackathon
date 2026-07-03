@@ -14,7 +14,7 @@ action does on and off the ledger. For the contract visibility/lifecycle diagram
  3. JSON Ledger API v2  HTTP :6864   (gRPC Ledger API :6865)  the on/off-chain boundary
  2. Canton sandbox      participant + sequencer + mediator +  runs contracts, enforces
        synchronizer (dpm sandbox, in-memory, auth off)        privacy + authorization
- 1. Contracts           daml/Veil.daml → veil-0.1.0.dar       the rules (on-ledger)
+ 1. Contracts           daml/Veil.daml → veil-lite-0.1.0.dar  the rules (on-ledger)
 ```
 
 ## 1. Contracts (on-ledger)
@@ -38,13 +38,13 @@ Two properties are enforced by Canton, not the app:
 ## 2. Build & package
 
 ```bash
-dpm build                       # daml/Veil.daml → .daml/dist/veil-0.1.0.dar
+dpm build                       # daml/Veil.daml → .daml/dist/veil-lite-0.1.0.dar
 (cd test && dpm build && dpm test)
 ```
 
-A **DAR** bundles the compiled templates (Daml-LF target `2.1`). Its package id
-(`94cc3562…`) identifies this exact code; the app references templates by package *name*
-(`#veil:Veil:LoanOffer`) so references survive recompiles. (`dpm codegen-js` could generate
+A **DAR** bundles the compiled templates (Daml-LF target `2.2`). Its package id
+identifies this exact code; the app references templates by package *name*
+(`#veil-lite:Veil:LoanOffer`) so references survive recompiles. (`dpm codegen-js` could generate
 TypeScript bindings; we hand-rolled a small client instead — see layer 4.)
 
 ## 3. Run & deploy
@@ -88,7 +88,7 @@ liquidation threshold 90%.
 ### Create offer — `CashHolding.MakeOffer`
 - **Trigger:** lender submits the Create-offer form → `createOffer(draft)`.
 - **Off-chain:** read the lender's `CashHolding` with `amount ≥ principal` (`findCash`), then
-  `ExerciseCommand` `#veil:Veil:CashHolding` · `MakeOffer` (terms), `actAs: [Lender]`.
+  `ExerciseCommand` `#veil-lite:Veil:CashHolding` · `MakeOffer` (terms), `actAs: [Lender]`.
 - **On-ledger** (authority: cash owner = lender): assert `amount ≥ principal`; **archive** the
   `CashHolding`; create change if any; **create `LoanOffer`** (sig lender, obs borrower+regulator).
 - **After:** principal is escrowed (lender cash consumed). Status **Offered**. Borrower/regulator
@@ -97,7 +97,7 @@ liquidation threshold 90%.
 ### Accept — `LoanOffer.Accept` (the atomic, two-party one)
 - **Trigger:** borrower clicks Accept → `acceptOffer(offerCid)`.
 - **Off-chain:** read the borrower's `CollateralHolding` (`findCollateral`), then `ExerciseCommand`
-  `#veil:Veil:LoanOffer` · `Accept {collateralCid}`, `actAs: [Borrower]`.
+  `#veil-lite:Veil:LoanOffer` · `Accept {collateralCid}`, `actAs: [Borrower]`.
 - **On-ledger** (authority: controller **borrower** + offer signatory **lender**):
   fetch & validate the collateral (owner/asset/quantity); **archive `CollateralHolding`** (collateral
   LOCKED); **create borrower `CashHolding(principal)`** (principal delivered from escrow); **create
@@ -111,7 +111,7 @@ liquidation threshold 90%.
 ### Repay — `Loan.Repay`
 - **Trigger:** borrower clicks Repay → `repayLoan(loanCid, principal+interest)`.
 - **Off-chain:** read the borrower's `CashHolding` with `amount ≥ 105` (`findCash`), then
-  `ExerciseCommand` `#veil:Veil:Loan` · `Repay {repaymentCid}`, `actAs: [Borrower]`.
+  `ExerciseCommand` `#veil-lite:Veil:Loan` · `Repay {repaymentCid}`, `actAs: [Borrower]`.
 - **On-ledger** (authority: controller borrower + signatories lender+borrower): validate cash ≥ 105;
   **archive** the repayment `CashHolding`; **create lender `CashHolding(105)`**; create borrower change
   if surplus; **create borrower `CollateralHolding(150)`** (released); **create `LoanClosed`**
@@ -122,7 +122,7 @@ liquidation threshold 90%.
 ### Liquidate — `Loan.Liquidate`
 - **Trigger:** lender clicks Liquidate (enabled in the UI only after "simulate price drop") →
   `liquidateLoan(loanCid, currentCollateralValue)`.
-- **Off-chain:** `ExerciseCommand` `#veil:Veil:Loan` · `Liquidate {currentCollateralValue}`,
+- **Off-chain:** `ExerciseCommand` `#veil-lite:Veil:Loan` · `Liquidate {currentCollateralValue}`,
   `actAs: [Lender]`.
 - **On-ledger** (authority: controller lender): **assert breach** —
   `currentCollateralValue > 0 && principal / value × 100 ≥ liquidationThresholdLtv` (so a healthy

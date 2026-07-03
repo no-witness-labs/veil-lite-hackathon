@@ -3,7 +3,6 @@ import type { ActivityEntry, Contract, Draft, Role, TxResult } from './types'
 import {
   acceptOffer,
   createOffer,
-  getMode,
   liquidateLoan,
   listActive,
   loadConfig,
@@ -11,7 +10,6 @@ import {
   repayLoan,
   resetDemo,
   withdrawOffer,
-  type RuntimeMode,
 } from './runtime'
 import {
   ACCENT,
@@ -44,7 +42,6 @@ export default function App() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [configOk, setConfigOk] = useState<boolean | null>(null)
-  const [mode, setMode] = useState<RuntimeMode>('ledger')
 
   const refresh = useCallback(async (forRole: Role) => {
     setLoading(true)
@@ -62,7 +59,6 @@ export default function App() {
 
   useEffect(() => {
     void loadConfig().then((ok) => {
-      setMode(getMode())
       setConfigOk(ok)
     })
   }, [])
@@ -71,7 +67,7 @@ export default function App() {
     if (configOk) void refresh(role)
   }, [role, configOk, refresh])
 
-  // Run a runtime action and record its committed transaction/demo event.
+  // Run a ledger action and record its committed transaction.
   const act = async (label: string, actor: string, fn: () => Promise<TxResult>) => {
     setBusy(true)
     setError(null)
@@ -122,7 +118,7 @@ export default function App() {
             <div style={{ width: 14, height: 14, background: ACCENT, borderRadius: 3, transform: 'rotate(45deg)' }} />
             <div style={{ fontSize: 21, fontWeight: 600, letterSpacing: '-0.01em', color: '#14171f' }}>Veil</div>
             <div style={{ marginLeft: 6, fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#9aa1ad', border: '1px solid #e6e8ec', borderRadius: 999, padding: '4px 9px' }}>
-              {mode === 'static' ? 'Static demo' : 'Canton · Confidential'}
+              Canton · DevNet
             </div>
           </div>
 
@@ -145,7 +141,7 @@ export default function App() {
             </button>
           </div>
         </div>
-        {configOk === true && <PartyBar active={role} mode={mode} />}
+        {configOk === true && <PartyBar active={role} />}
       </div>
 
       {/* BODY */}
@@ -153,19 +149,18 @@ export default function App() {
         {configOk !== true ? (
           <div style={{ background: '#fff', border: '1px solid #e6e8ec', borderRadius: 14, padding: '56px 40px', textAlign: 'center', boxShadow: '0 1px 2px rgba(20,23,31,0.04)' }}>
             <div style={{ fontSize: 18, fontWeight: 600, color: '#14171f', marginBottom: 10 }}>
-              {configOk === null ? 'Connecting to the Canton sandbox…' : 'Sandbox not ready'}
+              {configOk === null ? 'Connecting to Canton…' : 'Ledger not ready'}
             </div>
             <div style={{ fontSize: 14, color: '#5b6472', lineHeight: 1.6, maxWidth: 460, margin: '0 auto' }}>
               {configOk === null ? (
                 'Loading ledger configuration.'
               ) : (
                 <>
-                  No ledger configuration found. Start the sandbox first:
+                  No ledger configuration found. Start the sandbox or configure the DevNet deployment first:
                   <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 13, color: '#14171f', background: '#f7f8fa', borderRadius: 8, padding: '10px 14px', marginTop: 14 }}>
                     ./scripts/start-sandbox.sh
                   </div>
-                  or open with <span style={{ fontFamily: "'IBM Plex Mono',monospace" }}>?mode=static</span> for the deterministic demo.
-                  then reload this page.
+                  For DevNet/Vercel, see <span style={{ fontFamily: "'IBM Plex Mono',monospace" }}>docs/DEVNET.md</span>.
                 </>
               )}
             </div>
@@ -209,8 +204,8 @@ export default function App() {
               )}
 
               {!isOutsider && <HoldingsPanel role={role} holdings={holdings} />}
-              {!isOutsider && <ActivityFeed entries={activity} mode={mode} />}
-              <RawInspector role={role} raw={raw} offset={offset} mode={mode} />
+              {!isOutsider && <ActivityFeed entries={activity} />}
+              <RawInspector role={role} raw={raw} offset={offset} />
             </div>
 
             {/* RIGHT */}
@@ -222,7 +217,7 @@ export default function App() {
 
       {/* a tiny footer note so judges know the privacy is real */}
       <div style={{ maxWidth: 1200, margin: '8px auto 0', padding: '0 32px', fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#bcc2cb' }}>
-        Viewing as {PARTY_NAMES[role]} · {mode === 'static' ? 'deterministic static demo' : 'live Canton sandbox'} · {contracts.length} visible contract{contracts.length === 1 ? '' : 's'}
+        Viewing as {PARTY_NAMES[role]} · live Canton ledger · {contracts.length} visible contract{contracts.length === 1 ? '' : 's'}
       </div>
     </div>
   )

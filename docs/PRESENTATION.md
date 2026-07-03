@@ -259,7 +259,7 @@ section.dark::after { color: rgba(255,255,255,.58); }
 </div>
 <div class="ledger">
 $ dpm build<br/>
-<span class="green">✓ veil-0.1.0.dar</span><br/><br/>
+<span class="green">✓ veil-lite-0.1.0.dar</span><br/><br/>
 $ (cd test && dpm build && dpm test)<br/>
 <span class="green">✓ lifecycle + privacy tests</span><br/><br/>
 $ npm --prefix frontend run build<br/>

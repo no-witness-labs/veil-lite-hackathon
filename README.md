@@ -2,12 +2,12 @@
 
 > Hackathon-scoped Canton app for the Encode Build on Canton Hackathon.
 
-**Live product:** <https://no-witness-labs.github.io/veil-lite-hackathon/>
+**Live product:** Vercel DevNet deployment pending URL.
 
 ## Submission links
 
 - **Repository:** <https://github.com/no-witness-labs/veil-lite-hackathon>
-- **Live product:** <https://no-witness-labs.github.io/veil-lite-hackathon/>
+- **Live product:** Vercel DevNet deployment pending URL.
 - **Presentation deck:** [`docs/PRESENTATION.pdf`](./docs/PRESENTATION.pdf)
 - **Pitch video:** <https://no-witness-labs.github.io/veil-lite-hackathon/veil-pitch-video.mp4>
 
@@ -109,11 +109,11 @@ This project explicitly tracks the Encode submission requirements in [`docs/SUBM
 - **Public repository** — publish this directory as a public GitHub repo with setup/demo docs.
 - **Presentation deck** — create a concise 7–10 slide deck covering problem, solution, why Canton, demo flow, architecture, current status, and roadmap.
 - **3 minute video pitch with demo** — record known-counterparty lender offer → borrower accept → regulator observes → outsider sees nothing → repay/release.
-- **Link to live product** — host a judge-friendly role-based demo URL, preferably static and reliable.
+- **Link to live product** — host the live DevNet-backed role-based app on Vercel.
 
 ## Daml development
 
-This repo uses Daml SDK `3.5.1` and Daml-LF target `2.1` for Canton-oriented development.
+This repo uses Daml SDK `3.5.1` and Daml-LF target `2.2` for Canton-oriented development.
 
 ```bash
 export PATH="$HOME/.dpm/bin:$PATH"
@@ -125,13 +125,10 @@ The root package contains deployable templates only. The `test/` package depends
 
 ## Run the role-based demo
 
-The demo is a React UI that can run in two modes:
-
-- **Live Canton mode** — wired to a local Canton sandbox over the JSON Ledger API v2. Each role queries the
-  ledger as its own party, so the **Outsider tab genuinely returns nothing** — the privacy claim is proven
-  on-ledger, not mocked.
-- **Static demo mode** — deterministic in-browser state for a reliable hosted live-product link and video
-  recording. It follows the same judge click path without requiring a hosted Canton sandbox.
+The demo is a React UI wired to Canton over the JSON Ledger API v2. It can target
+the local sandbox during development or the shared Seaport / Five North DevNet in
+production. Each role queries the ledger as its own party, so the **Outsider tab
+genuinely returns nothing** — the privacy claim is proven on-ledger, not mocked.
 
 > Quick start below. For full operational detail, the demo walkthrough, and troubleshooting, see the
 > **[Runbook](./docs/RUNBOOK.md)**.
@@ -143,7 +140,7 @@ The demo is a React UI that can run in two modes:
 
 ```bash
 # 1. Start the sandbox on JDK 17, upload the DAR, allocate the four demo parties,
-#    and write frontend/src/ledger-config.json.
+#    and write frontend/public/ledger-config.json.
 ./scripts/start-sandbox.sh
 
 # 2. In a second terminal, run the UI (Vite dev server proxies /v2 to the sandbox).
@@ -151,19 +148,19 @@ npm --prefix frontend install
 npm --prefix frontend run dev   # http://localhost:5173
 ```
 
-For the hosted/static path:
+For Canton DevNet / Seaport:
 
 ```bash
-# Force deterministic demo mode locally.
-VITE_DEMO_MODE=static npm --prefix frontend run dev
-
-# Production build for GitHub Pages.
-VITE_DEMO_MODE=static VITE_BASE_PATH=/veil-lite-hackathon/ npm --prefix frontend run build
+dpm build
+cp frontend/.env.local.example frontend/.env.local   # add the Seaport client secret locally
+set -a; . frontend/.env.local; set +a
+python3 scripts/bootstrap-devnet.py
+npm --prefix frontend run dev
 ```
 
-The hosted static demo is deployed from `main` by GitHub Actions to
-<https://no-witness-labs.github.io/veil-lite-hackathon/>.
-Production builds also fall back to static mode if no `ledger-config.json` is deployed.
+See **[docs/DEVNET.md](./docs/DEVNET.md)** for the full DevNet setup. The DevNet package name is
+`veil-lite` and the deployable DAR is `.daml/dist/veil-lite-0.1.0.dar`.
+See **[docs/VERCEL.md](./docs/VERCEL.md)** for the Vercel deployment environment variables and smoke checks.
 
 3-minute click path: **Lender** create offer → **Borrower** sees it → **Outsider** sees nothing →
 **Borrower** accept (collateral LOCKED) → **Regulator** observes read-only → **Borrower** repay (collateral
@@ -208,12 +205,12 @@ Spring Boot backend, PQS, Keycloak OAuth2, and the Splice token-standard apps (i
 
 | | **Veil (this repo)** | **LocalNet / cn-quickstart** |
 | --- | --- | --- |
-| Runtime | single-process `dpm sandbox`, in-memory | Docker Compose LocalNet |
+| Runtime | local `dpm sandbox` or shared Seaport DevNet | Docker Compose LocalNet |
 | Participants | one (privacy shown per-party on one node) | three (privacy across separate nodes) |
 | Assets | demo `CashHolding` / `CollateralHolding` (on-ledger double-entry) | test Canton Coin / token standard |
-| Auth | none (sandbox, dev only) | Keycloak OAuth2 / shared-secret |
-| Extras | hand-rolled JSON Ledger API v2 client | backend, PQS, wallet, Scan, observability |
-| Start | `./scripts/start-sandbox.sh` | `make setup && make build && make start` |
+| Auth | none locally; OIDC client-credentials proxy on DevNet/Vercel | Keycloak OAuth2 / shared-secret |
+| Extras | hand-rolled JSON Ledger API v2 client + Vercel `/v2` proxy | backend, PQS, wallet, Scan, observability |
+| Start | `./scripts/start-sandbox.sh` or Vercel deployment | `make setup && make build && make start` |
 
 Trade-off: the sandbox proves the **privacy model and financing lifecycle** with almost no setup, but privacy is
 demonstrated on a single participant rather than across nodes, and there are no real tokenized assets or production
@@ -237,6 +234,8 @@ veil/
 │   └── daml/
 │       └── Veil/
 │           └── Test.daml
+├── api/                  # Vercel functions: /v2 proxy + ledger config
+├── vercel.json           # Vercel build/output/rewrites
 ├── scripts/
 │   ├── start-sandbox.sh   # start Canton on JDK 17 + bootstrap
 │   └── bootstrap.sh       # upload DAR, allocate parties, write config
@@ -255,6 +254,8 @@ veil/
 │   ├── CONTEXT.md
 │   ├── GRILL.md
 │   ├── SUBMISSION-CHECKLIST.md
+│   ├── DEVNET.md
+│   ├── VERCEL.md
 │   └── adr/
 │       └── 0001-hackathon-scope.md
 └── .hermes/

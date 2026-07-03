@@ -1,5 +1,5 @@
 import type { Role } from '../types'
-import { getParties, type RuntimeMode } from '../runtime'
+import { getParties } from '../runtime'
 import { ROLE_DOT, ROLE_LABELS } from '../state'
 
 const mono: React.CSSProperties = { fontFamily: "'IBM Plex Mono',monospace" }
@@ -10,12 +10,11 @@ function shortParty(p: string): string {
   return fp ? `${hint}::${fp.slice(0, 8)}…${fp.slice(-4)}` : hint
 }
 
-/** Slim strip exposing the active party identifiers. In ledger mode these are
- * Canton parties; in static mode they are deterministic demo identities. */
-export function PartyBar({ active, mode }: { active: Role; mode: RuntimeMode }) {
+/** Slim strip exposing the active Canton party identifiers. */
+export function PartyBar({ active }: { active: Role }) {
   const parties = getParties()
   const fingerprint = (parties.lender.split('::')[1] ?? '').slice(0, 10)
-  const label = mode === 'static' ? 'Static demo parties' : `Canton parties · participant sandbox::${fingerprint}…`
+  const label = `Canton parties · participant ${fingerprint}…`
   return (
     <div style={{ borderBottom: '1px solid #eef0f3', background: '#fbfbfc' }}>
       <div style={{ maxWidth: 1200, margin: '0 auto', padding: '8px 32px', display: 'flex', alignItems: 'center', gap: 18, flexWrap: 'wrap' }}>

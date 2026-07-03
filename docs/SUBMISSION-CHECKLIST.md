@@ -66,7 +66,7 @@ secret-pattern scan returned no matches; final submission links are present.
 
 **Recording script:** [`PITCH-VIDEO-SCRIPT.md`](./PITCH-VIDEO-SCRIPT.md)
 
-**Live product opened for recording:** <https://no-witness-labs.github.io/veil-lite-hackathon/>
+**Live product opened for recording:** Vercel DevNet deployment URL once published.
 
 **Exact take flow:** Reset demo → Lender creates offer → Borrower accepts → Regulator shows read-only observer → Outsider expands raw view and shows `[]` → Borrower repays 105 USDC → close with roadmap.
 
@@ -98,33 +98,34 @@ secret-pattern scan returned no matches; final submission links are present.
 
 ### 4. Link to live product
 
-**Status:** Published and verified on GitHub Pages.
+**Status:** Vercel DevNet deployment prepared; production URL pending.
 
 **Deliverable:** Public URL where judges can open the demo.
 
-**Live product URL:** <https://no-witness-labs.github.io/veil-lite-hackathon/>
+**Live product URL:** Vercel DevNet deployment pending URL.
 
-**Recommended options:**
+**Selected deployment:**
 
-1. **Static UI + deterministic demo state** hosted on Vercel/Netlify/GitHub Pages.
-   - Best for reliability.
-   - The UI can simulate the role views while linking to real Daml tests and repo proof.
-2. **Hosted backend demo** on Render/Fly/Railway plus static frontend.
-   - Better if the backend is stable.
-   - More operational risk during judging.
-3. **Local-first live product link** with a hosted frontend and clear local-run instructions.
-   - Acceptable only if live backend is not feasible.
+- **Vercel live DevNet app** — Vite frontend plus serverless `/v2` proxy to the
+  Seaport/Five North DevNet Ledger API.
+- The proxy injects OIDC client-credentials auth server-side; secrets stay in
+  Vercel environment variables.
+- `/ledger-config.json` is served from Vercel env vars and points the app at the
+  `veil-lite` package and bootstrapped DevNet parties.
 
 **Live product acceptance criteria:**
 
-- [x] URL opens without auth.
+- [ ] Vercel URL opens without auth.
 - [x] Demo can be completed in under 3 minutes.
-- [x] Reset button works.
+- [x] Reset button works against the configured ledger parties.
 - [x] Role switching is obvious.
-- [x] The app does not depend on private keys, local credentials, or fragile external infrastructure.
+- [x] Browser does not receive private keys, client secrets, or bearer tokens.
 
-**Latest verification (2026-07-01):** the GitHub Pages URL and deployed JS/CSS
-assets returned HTTP 200 after the `Deploy static demo` workflow completed.
+**Latest verification (2026-07-03):** DevNet package `veil-lite-0.1.0.dar`
+deployed, parties bootstrapped, `CanActAs` granted to user `6`, seeded holdings
+created, local DevNet proxy returned HTTP 200 for `/v2/state/ledger-end` and a
+borrower active-contracts query. Vercel production URL still needs to be created
+and pasted into this checklist/README.
 
 ---
 
@@ -166,7 +167,7 @@ package still emits the existing tuple-size warning in `daml/Veil/Test.daml`.
 - [x] Public repo URL exists.
 - [x] Deck PDF exists.
 - [x] 3-minute video URL exists.
-- [x] Live product URL is published and verified.
+- [ ] Live product URL is published and verified.
 - [x] README includes public repo, live product, deck, and final video links.
 - [x] README includes final 3-minute video URL.
 - [x] README is honest about MVP scope and non-goals.

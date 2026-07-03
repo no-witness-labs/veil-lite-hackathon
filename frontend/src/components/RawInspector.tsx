@@ -1,20 +1,14 @@
 import { useState } from 'react'
 import type { Role } from '../types'
 import { PARTY_NAMES } from '../state'
-import type { RuntimeMode } from '../runtime'
 
 const mono: React.CSSProperties = { fontFamily: "'IBM Plex Mono',monospace" }
 
-/** Shows the exact JSON the active party gets back from the ledger or the
- * deterministic demo state. The Outsider view remains literally []. */
-export function RawInspector({ role, raw, offset, mode }: { role: Role; raw: unknown[]; offset: number; mode: RuntimeMode }) {
+/** Shows the exact JSON the active party gets back from the ledger. */
+export function RawInspector({ role, raw, offset }: { role: Role; raw: unknown[]; offset: number }) {
   const [open, setOpen] = useState(false)
   const isEmpty = raw.length === 0
   const json = JSON.stringify(raw, null, 2)
-  const title = mode === 'static' ? 'Raw demo view' : 'Raw ledger view'
-  const subtitle = mode === 'static'
-    ? `deterministic active-contracts as ${PARTY_NAMES[role]} · offset ${offset}`
-    : `active-contracts as ${PARTY_NAMES[role]} · offset ${offset}`
 
   return (
     <div style={{ background: '#fff', border: '1px solid #e6e8ec', borderRadius: 14, boxShadow: '0 1px 2px rgba(20,23,31,0.04)', overflow: 'hidden' }}>
@@ -23,9 +17,9 @@ export function RawInspector({ role, raw, offset, mode }: { role: Role; raw: unk
         style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', padding: '18px 24px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}
       >
         <div>
-          <div style={{ fontSize: 15, fontWeight: 600, color: '#14171f' }}>{title}</div>
+          <div style={{ fontSize: 15, fontWeight: 600, color: '#14171f' }}>Raw ledger view</div>
           <div style={{ fontSize: 12, color: '#8a929e', marginTop: 2 }}>
-            {subtitle}
+            active-contracts as {PARTY_NAMES[role]} · offset {offset}
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>

@@ -1,6 +1,10 @@
+.DS_Store
+__pycache__/
 .daml/
 .vscode/
 log/
 frontend/node_modules/
 frontend/dist/
+frontend/.env.local
+frontend/.env.*.local
 frontend/public/ledger-config.json

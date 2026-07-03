@@ -2,7 +2,7 @@
 
 Target length: 2:45-3:00.
 
-Recording target: <https://no-witness-labs.github.io/veil-lite-hackathon/>
+Recording target: Vercel DevNet deployment URL once published.
 
 ## Pre-recording setup
 
@@ -23,14 +23,14 @@ Recording target: <https://no-witness-labs.github.io/veil-lite-hackathon/>
 | 1:25-1:45 | Switch to Regulator | "The regulator has selective disclosure. They can observe the active loan and lifecycle state, but the UI shows they are read-only and cannot act." |
 | 1:45-2:10 | Switch to Outsider, expand raw view | "This is the privacy moment. The outsider is not a stakeholder, so their active-contracts view is empty. In live Canton mode, this is enforced by stakeholder visibility, not by frontend filtering." |
 | 2:10-2:30 | Switch to Borrower, click **Repay** | "The borrower repays 105, principal plus interest. The loan closes and collateral is released. The app also includes an optional liquidation branch when loan-to-value breaches the threshold." |
-| 2:30-2:50 | Activity/raw/holdings panels | "The hackathon build includes Daml templates, lifecycle and privacy tests, a live Canton local mode, and a reliable hosted static demo for judges." |
+| 2:30-2:50 | Activity/raw/holdings panels | "The hackathon build includes Daml templates, lifecycle and privacy tests, and a live DevNet app deployed through a server-side Vercel proxy." |
 | 2:50-3:00 | App footer or README/deck links | "Next steps are Token Standard integration, wallet signing, PQS indexing, and production oracle/compliance workflows. Veil shows why Canton privacy and authorization matter for real institutional credit." |
 
 ## Recording take flow
 
 Use this exact flow for the submitted take:
 
-1. Open <https://no-witness-labs.github.io/veil-lite-hackathon/>.
+1. Open the Vercel DevNet deployment URL.
 2. Click **Reset demo**.
 3. Start on **Lender**.
 4. Click **Create offer**.
@@ -51,13 +51,13 @@ Use this exact flow for the submitted take:
 
 ## Phrases to avoid
 
-- Do not say static mode is the privacy proof.
+- Describe the live product as a DevNet-backed app; the browser-only demo path has been removed.
 - Do not imply this is production-ready custody, oracle, wallet, or Token Standard integration.
 - Do not call it an anonymous lending marketplace. This MVP is known-counterparty private credit.
 
 ## Required closing links
 
 - Repository: <https://github.com/no-witness-labs/veil-lite-hackathon>
-- Live product: <https://no-witness-labs.github.io/veil-lite-hackathon/>
+- Live product: Vercel DevNet deployment URL once published.
 - Deck: [`docs/PRESENTATION.pdf`](./PRESENTATION.pdf)
 - Video: <https://no-witness-labs.github.io/veil-lite-hackathon/veil-pitch-video.mp4>

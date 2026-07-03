@@ -9,7 +9,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BASE="${1:-http://127.0.0.1:6864}"
-DAR="$ROOT/.daml/dist/veil-0.1.0.dar"
+DAR="$ROOT/.daml/dist/veil-lite-0.1.0.dar"
 CONFIG="$ROOT/frontend/public/ledger-config.json"
 USER_ID="veil"
 
@@ -57,7 +57,7 @@ mkdir -p "$(dirname "$CONFIG")"
 cat > "$CONFIG" <<JSON
 {
   "jsonApiUrl": "$BASE",
-  "packageRef": "#veil",
+  "packageRef": "#veil-lite",
   "userId": "$USER_ID",
   "parties": {
     "lender": "$LENDER",
@@ -79,7 +79,7 @@ create_holding() {
   # $1 = acting party, $2 = JSON createArguments, $3 = template entity
   curl -s -o /dev/null -X POST "$BASE/v2/commands/submit-and-wait-for-transaction" \
     -H "Content-Type: application/json" \
-    -d "{\"commands\":{\"commands\":[{\"CreateCommand\":{\"templateId\":\"#veil:Veil:$3\",\"createArguments\":$2}}],\"commandId\":\"seed-$3-$RANDOM\",\"actAs\":[\"$1\"],\"userId\":\"$USER_ID\"}}"
+    -d "{\"commands\":{\"commands\":[{\"CreateCommand\":{\"templateId\":\"#veil-lite:Veil:$3\",\"createArguments\":$2}}],\"commandId\":\"seed-$3-$RANDOM\",\"actAs\":[\"$1\"],\"userId\":\"$USER_ID\"}}"
 }
 
 already_seeded="$(curl -s -X POST "$BASE/v2/state/active-contracts" \

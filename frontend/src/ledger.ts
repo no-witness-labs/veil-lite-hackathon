@@ -19,7 +19,7 @@ interface LedgerConfig {
 
 const DEFAULTS: LedgerConfig = {
   jsonApiUrl: 'http://127.0.0.1:6864',
-  packageRef: '#veil',
+  packageRef: '#veil-lite',
   userId: 'veil',
   parties: { lender: '', borrower: '', regulator: '', outsider: '' },
 }
