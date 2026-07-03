@@ -69,8 +69,61 @@ function ledgerConfig() {
   }
 }
 
+async function proxyLedgerRequest(req, res, path) {
+  if (req.method === 'OPTIONS') {
+    res.statusCode = 204
+    res.end()
+    return
+  }
+
+  try {
+    const upstream = await fetch(`${ledgerTarget()}${pathWithQuery(req, path)}`, {
+      method: req.method,
+      headers: await upstreamHeaders(req),
+      body: req.method === 'GET' || req.method === 'HEAD' ? undefined : await requestBody(req),
+    })
+    const body = Buffer.from(await upstream.arrayBuffer())
+    res.statusCode = upstream.status
+    res.setHeader('Content-Type', upstream.headers.get('content-type') || 'application/json')
+    res.setHeader('Cache-Control', 'no-store')
+    res.end(body)
+  } catch (error) {
+    res.statusCode = 502
+    res.setHeader('Content-Type', 'application/json')
+    res.end(JSON.stringify({ code: 'PROXY_ERROR', cause: String(error) }))
+  }
+}
+
+async function upstreamHeaders(req) {
+  const headers = {}
+  if (req.headers['content-type']) headers['Content-Type'] = req.headers['content-type']
+  if (req.headers.accept) headers.Accept = req.headers.accept
+  headers.Authorization = `Bearer ${await getAccessToken()}`
+  return headers
+}
+
+function pathWithQuery(req, path) {
+  const url = new URL(req.url || '', 'https://veil.local')
+  return `${path}${url.search}`
+}
+
+function requestBody(req) {
+  if (req.body !== undefined) {
+    if (Buffer.isBuffer(req.body) || typeof req.body === 'string') return req.body
+    return JSON.stringify(req.body)
+  }
+
+  return new Promise((resolve, reject) => {
+    const chunks = []
+    req.on('data', (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)))
+    req.on('end', () => resolve(Buffer.concat(chunks)))
+    req.on('error', reject)
+  })
+}
+
 module.exports = {
   getAccessToken,
   ledgerConfig,
   ledgerTarget,
+  proxyLedgerRequest,
 }

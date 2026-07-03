@@ -1,0 +1,5 @@
+const { proxyLedgerRequest } = require('../../_ledger')
+
+module.exports = async function handler(req, res) {
+  return proxyLedgerRequest(req, res, '/v2/state/ledger-end')
+}

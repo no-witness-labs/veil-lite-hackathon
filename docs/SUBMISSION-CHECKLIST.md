@@ -66,7 +66,7 @@ secret-pattern scan returned no matches; final submission links are present.
 
 **Recording script:** [`PITCH-VIDEO-SCRIPT.md`](./PITCH-VIDEO-SCRIPT.md)
 
-**Live product opened for recording:** <https://veil-lite-hackathon-muki5588v-hadelives-projects.vercel.app/>
+**Live product opened for recording:** <https://veil-lite-hackathon.vercel.app/>
 
 **Exact take flow:** Reset demo → Lender creates offer → Borrower accepts → Regulator shows read-only observer → Outsider expands raw view and shows `[]` → Borrower repays 105 USDC → close with roadmap.
 
@@ -102,7 +102,7 @@ secret-pattern scan returned no matches; final submission links are present.
 
 **Deliverable:** Public URL where judges can open the demo.
 
-**Live product URL:** <https://veil-lite-hackathon-muki5588v-hadelives-projects.vercel.app/>
+**Live product URL:** <https://veil-lite-hackathon.vercel.app/>
 
 **Selected deployment:**
 

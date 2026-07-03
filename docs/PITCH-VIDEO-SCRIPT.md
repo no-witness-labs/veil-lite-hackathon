@@ -2,7 +2,7 @@
 
 Target length: 2:45-3:00.
 
-Recording target: <https://veil-lite-hackathon-muki5588v-hadelives-projects.vercel.app/>
+Recording target: <https://veil-lite-hackathon.vercel.app/>
 
 ## Pre-recording setup
 
@@ -58,6 +58,6 @@ Use this exact flow for the submitted take:
 ## Required closing links
 
 - Repository: <https://github.com/no-witness-labs/veil-lite-hackathon>
-- Live product: <https://veil-lite-hackathon-muki5588v-hadelives-projects.vercel.app/>
+- Live product: <https://veil-lite-hackathon.vercel.app/>
 - Deck: [`docs/PRESENTATION.pdf`](./PRESENTATION.pdf)
 - Video: <https://no-witness-labs.github.io/veil-lite-hackathon/veil-pitch-video.mp4>

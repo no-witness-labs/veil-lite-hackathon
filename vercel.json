@@ -5,6 +5,18 @@
   "outputDirectory": "frontend/dist",
   "rewrites": [
     {
+      "source": "/v2/state/ledger-end",
+      "destination": "/api/v2/state/ledger-end"
+    },
+    {
+      "source": "/v2/state/active-contracts",
+      "destination": "/api/v2/state/active-contracts"
+    },
+    {
+      "source": "/v2/commands/submit-and-wait-for-transaction",
+      "destination": "/api/v2/commands/submit-and-wait-for-transaction"
+    },
+    {
       "source": "/v2/(.*)",
       "destination": "/api/v2/$1"
     },

@@ -2,12 +2,12 @@
 
 > Hackathon-scoped Canton app for the Encode Build on Canton Hackathon.
 
-**Live product:** <https://veil-lite-hackathon-muki5588v-hadelives-projects.vercel.app/>
+**Live product:** <https://veil-lite-hackathon.vercel.app/>
 
 ## Submission links
 
 - **Repository:** <https://github.com/no-witness-labs/veil-lite-hackathon>
-- **Live product:** <https://veil-lite-hackathon-muki5588v-hadelives-projects.vercel.app/>
+- **Live product:** <https://veil-lite-hackathon.vercel.app/>
 - **Presentation deck:** [`docs/PRESENTATION.pdf`](./docs/PRESENTATION.pdf)
 - **Pitch video:** <https://no-witness-labs.github.io/veil-lite-hackathon/veil-pitch-video.mp4>
 
