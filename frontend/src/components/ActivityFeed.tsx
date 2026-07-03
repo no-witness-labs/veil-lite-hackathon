@@ -1,7 +1,6 @@
 import type { ActivityEntry } from '../types'
 
 const mono: React.CSSProperties = { fontFamily: "'IBM Plex Mono',monospace" }
-const short = (id: string) => (id.length > 14 ? `${id.slice(0, 10)}…${id.slice(-4)}` : id)
 
 const monoLabel: React.CSSProperties = {
   ...mono,
@@ -34,10 +33,10 @@ export function ActivityFeed({ entries }: { entries: ActivityEntry[] }) {
               </div>
               <div style={{ fontSize: 12, color: '#8a929e', marginTop: 2 }}>by {e.actor}</div>
 
-              <div style={{ ...mono, fontSize: 11, color: '#5b6472', marginTop: 8, background: '#f7f8fa', borderRadius: 8, padding: '8px 10px', wordBreak: 'break-all' }}>
-                <div>tx {short(e.result.updateId)}</div>
+              <div style={{ ...mono, fontSize: 11, color: '#5b6472', marginTop: 8, background: '#f7f8fa', borderRadius: 8, padding: '8px 10px', overflowWrap: 'anywhere', lineHeight: 1.45 }}>
+                <div>tx {e.result.updateId}</div>
                 {e.result.synchronizerId && (
-                  <div style={{ color: '#9aa1ad', marginTop: 3 }}>sync {short(e.result.synchronizerId)}</div>
+                  <div style={{ color: '#9aa1ad', marginTop: 3 }}>sync {e.result.synchronizerId}</div>
                 )}
               </div>
 
@@ -61,7 +60,7 @@ function Chip({ tone, label, cid }: { tone: 'created' | 'archived'; label: strin
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
       <span style={{ ...mono, fontSize: 10, fontWeight: 600, color, background: bg, padding: '2px 7px', borderRadius: 6, flex: 'none' }}>{label}</span>
-      <span style={{ ...mono, fontSize: 11, color: '#9aa1ad', wordBreak: 'break-all' }}>{short(cid)}</span>
+      <span style={{ ...mono, fontSize: 11, color: '#9aa1ad', overflowWrap: 'anywhere', minWidth: 0 }}>{cid}</span>
     </div>
   )
 }
