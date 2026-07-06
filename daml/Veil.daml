@@ -21,7 +21,7 @@ template CashHolding
         interest : Decimal
         collateralAsset : Text
         collateralQuantity : Decimal
-        maturity : Text
+        maturity : Time
         liquidationThresholdLtv : Decimal
       controller owner
       do
@@ -78,7 +78,7 @@ template LoanOffer
     interest : Decimal
     collateralAsset : Text
     collateralQuantity : Decimal
-    maturity : Text
+    maturity : Time
     liquidationThresholdLtv : Decimal
   where
     signatory lender
@@ -133,7 +133,7 @@ template Loan
     interest : Decimal
     collateralAsset : Text
     collateralQuantity : Decimal
-    maturity : Text
+    maturity : Time
     liquidationThresholdLtv : Decimal
     collateralLocked : Bool
   where
@@ -175,17 +175,24 @@ template Loan
           reason = "Repaid"
           collateralReleased = True
 
-    -- | The lender supplies the current off-ledger collateral mark.
-    -- Liquidation is only authorized when that value puts the loan at or above
-    -- its LTV threshold; the collateral is then seized to the lender.
+    -- | The lender supplies the current off-ledger collateral mark. Liquidation
+    -- is authorized on either default trigger: the loan is past its maturity, or
+    -- the supplied value puts the loan at or above its LTV threshold. The
+    -- collateral is then seized to the lender.
     choice Liquidate : ContractId LoanClosed
       with
         currentCollateralValue : Decimal
       controller lender
       do
-        assertMsg "liquidation requires the collateral value to breach the LTV threshold"
-          (currentCollateralValue > 0.0
-            && (principal / currentCollateralValue) * 100.0 >= liquidationThresholdLtv)
+        assertMsg "collateral value must be positive" (currentCollateralValue > 0.0)
+        -- getTime is ledger time (submitter-shiftable within
+        -- ledgerTimeRecordTimeTolerance, ~60s) — negligible against a day-scale
+        -- maturity, so it is a sound default trigger here.
+        now <- getTime
+        let matured = now > maturity
+        let ltvBreached = (principal / currentCollateralValue) * 100.0 >= liquidationThresholdLtv
+        assertMsg "liquidation requires the loan to be past maturity or the collateral value to breach the LTV threshold"
+          (matured || ltvBreached)
         _ <- create CollateralHolding with owner = lender; asset = collateralAsset; quantity = collateralQuantity
         create LoanClosed with
           lender
@@ -214,7 +221,7 @@ template LoanClosed
     interest : Decimal
     collateralAsset : Text
     collateralQuantity : Decimal
-    maturity : Text
+    maturity : Time
     reason : Text
     collateralReleased : Bool
   where
@@ -223,6 +230,7 @@ template LoanClosed
 
     -- | Archive the settlement record. Used to clear ledger state when the
     -- demo is reset; the closed loan has already settled.
+    --  Use for demo hygiene only; in a real system, closed loans would be retained for audit.
     choice Dismiss : ()
       controller lender
       do

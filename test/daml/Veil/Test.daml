@@ -2,11 +2,17 @@ module Veil.Test where
 
 import Daml.Script
 import DA.Assert ((===))
+import DA.Date (Month(..), date)
 import DA.List (sort)
+import DA.Time (time)
 import Veil
 
 tbill : Text
 tbill = "Tokenized T-Bill / MMF"
+
+-- Canonical demo maturity as a ledger Time (midnight UTC on the due date).
+maturityTime : Time
+maturityTime = time (date 2026 Jul 13) 0 0 0
 
 -- Allocate the demo parties and seed holdings: lender funds with 100 cash,
 -- borrower holds 105 treasury cash plus 150 collateral units.
@@ -29,7 +35,7 @@ makeOffer lender borrower regulator lenderCash =
       interest = 5.0
       collateralAsset = tbill
       collateralQuantity = 150.0
-      maturity = "2026-07-13"
+      maturity = maturityTime
       liquidationThresholdLtv = 90.0
 
 cashAmounts : Party -> Script [Decimal]
@@ -118,6 +124,26 @@ testLiquidationRequiresBreach = script do
   -- Outsider still sees no liquidation-relevant state.
   query @LoanClosed outsider >>= \c -> length c === 0
 
+-- A loan past its maturity is in default: the lender may liquidate even when the
+-- collateral value is healthy (well within the LTV threshold).
+testLiquidationOnMaturity : Script ()
+testLiquidationOnMaturity = script do
+  (lender, borrower, regulator, lenderCash, _, borrowerColl) <- setup
+  offerCid <- makeOffer lender borrower regulator lenderCash
+  loanCid <- submit borrower do exerciseCmd offerCid Accept with collateralCid = borrowerColl
+
+  -- Before maturity, a healthy mark (LTV 66.7%) cannot liquidate.
+  submitMustFail lender do exerciseCmd loanCid Liquidate with currentCollateralValue = 150.0
+
+  -- Advance ledger time past maturity; the same healthy mark now liquidates on default.
+  setTime (time (date 2026 Jul 14) 0 0 0)
+  closedCid <- submit lender do exerciseCmd loanCid Liquidate with currentCollateralValue = 150.0
+  Some closed <- queryContractId borrower closedCid
+  closed.reason === "Liquidated"
+  closed.collateralReleased === False
+  query @CollateralHolding lender >>= \c -> length c === 1
+  query @CollateralHolding borrower >>= \c -> length c === 0
+
 testWithdrawRefunds : Script ()
 testWithdrawRefunds = script do
   (lender, borrower, regulator, lenderCash, _, _) <- setup
@@ -162,7 +188,7 @@ testValidationGuards = script do
       interest = 5.0
       collateralAsset = tbill
       collateralQuantity = 150.0
-      maturity = "2026-07-13"
+      maturity = maturityTime
       liquidationThresholdLtv = 90.0
 
   offerCid <- submit lender do
@@ -172,7 +198,7 @@ testValidationGuards = script do
       interest = 5.0
       collateralAsset = tbill
       collateralQuantity = 150.0
-      maturity = "2026-07-13"
+      maturity = maturityTime
       liquidationThresholdLtv = 90.0
 
   -- Accept rejects collateral that doesn't match the offered quantity.

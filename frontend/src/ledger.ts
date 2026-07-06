@@ -200,7 +200,9 @@ export async function createOffer(draft: Draft): Promise<TxResult> {
       interest: String(draft.interest),
       collateralAsset: COLLATERAL_ASSET,
       collateralQuantity: String(draft.collateral),
-      maturity: draft.maturity,
+      // maturity is a Daml `Time`; the JSON API expects an RFC3339 timestamp,
+      // so normalize the date-only form to midnight UTC.
+      maturity: new Date(draft.maturity).toISOString(),
       liquidationThresholdLtv: String(LIQUIDATION_THRESHOLD_LTV),
     }),
     'offer',
