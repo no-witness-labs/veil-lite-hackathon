@@ -1,5 +1,8 @@
 import type { ActivityEntry } from '../types'
 
+// Hackathon deployment targets the Five North Canton DevNet.
+const LIGHTHOUSE_TX_BASE = 'https://lighthouse.devnet.cantonloop.com/transactions'
+
 const mono: React.CSSProperties = { fontFamily: "'IBM Plex Mono',monospace" }
 
 const monoLabel: React.CSSProperties = {
@@ -37,6 +40,17 @@ export function ActivityFeed({ entries }: { entries: ActivityEntry[] }) {
                 <div>tx {e.result.updateId}</div>
                 {e.result.synchronizerId && (
                   <div style={{ color: '#9aa1ad', marginTop: 3 }}>sync {e.result.synchronizerId}</div>
+                )}
+                {e.result.updateId && (
+                  <a
+                    href={`${LIGHTHOUSE_TX_BASE}/${encodeURIComponent(e.result.updateId)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label={`View transaction ${e.result.updateId} on Lighthouse`}
+                    style={{ display: 'inline-block', color: '#2748d8', fontWeight: 600, marginTop: 7, textDecoration: 'none' }}
+                  >
+                    View on Lighthouse ↗
+                  </a>
                 )}
               </div>
 
