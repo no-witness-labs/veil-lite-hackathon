@@ -40,6 +40,17 @@ For a short manual test you can also export `VEIL_DEVNET_ACCESS_TOKEN` instead
 of the OIDC client secret. Prefer the client-credentials setup above for normal
 runs because the proxy can refresh the token automatically.
 
+Before uploading a package or allocating parties, check authentication and a ledger read:
+
+```bash
+set -a; . frontend/.env.local; set +a
+python3 scripts/bootstrap-devnet.py --check
+```
+
+This mode needs no built DAR, performs no bootstrap writes, and prints no access token. Success proves token issuance and ledger-end access; it does not prove upload, party-allocation, or command-submission privileges. On token rejection, it reports the server's request ID for the validator operator.
+
+The September 22 follow-up verified that both secret copies in the access PDF match the local configuration. The request's client ID, audience and scope also match the PDF. Seaport's [OIDC discovery document](https://auth.sandbox.fivenorth.io/application/o/validator-devnet-m2m/.well-known/openid-configuration) advertises `client_credentials`, `daml_ledger_api`, and both `client_secret_post` and `client_secret_basic`; both authentication methods returned HTTP 400 `invalid_grant` with the supplied credentials. This does not establish whether the cause is credential state, service-account state, or another provider setting. The operator can find the detailed cause by request ID in [authentik's server logs](https://docs.goauthentik.io/add-secure-apps/providers/oauth2/machine_to_machine#more-detailed-error-information).
+
 ## 2. Build the DAR
 
 ```bash
@@ -162,7 +173,7 @@ and serves `frontend/dist`.
 - No visible holdings: rerun `python3 scripts/bootstrap-devnet.py <newtag>` and
   hard-refresh the app so it uses the new generated config.
 - Missing `VEIL_PARTY_VALUER`: bootstrap a fresh five-party environment, set all five `VEIL_PARTY_*` values in Vercel from the generated config, and redeploy. Do not substitute the lender or borrower for the valuer.
-- OIDC `invalid_grant`: obtain working Seaport credentials and verify token exchange before allocating parties or changing the deployed party configuration.
+- OIDC `invalid_grant`: send the reported request ID to the Seaport operator for server-side diagnosis, confirm working credentials, and rerun `--check` before allocating parties or changing the deployed party configuration.
 - DAR upload failure: the script stops without allocating parties. Resolve package/permission errors with the validator operator; it no longer assumes that an older package is usable.
 - Do not upload `veil-0.1.0.dar`; that package name collides with an existing
   DevNet package. Use `veil-lite-0.3.0.dar` for this branch.

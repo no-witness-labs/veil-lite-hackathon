@@ -12,6 +12,7 @@ Usage:
 Use a new suffix for each run on DevNet's persistent ledger:
   python3 scripts/bootstrap-devnet.py run2
 """
+import argparse
 import json
 import os
 import re
@@ -74,7 +75,24 @@ def get_token():
         headers={"Content-Type": "application/x-www-form-urlencoded"},
         method="POST",
     )
-    return json.load(urllib.request.urlopen(req, timeout=30))["access_token"]
+    try:
+        with urllib.request.urlopen(req, timeout=30) as response:
+            result = json.load(response)
+    except urllib.error.HTTPError as error:
+        with error:
+            try:
+                details = json.load(error)
+            except json.JSONDecodeError:
+                details = {}
+        if not isinstance(details, dict):
+            details = {}
+        diagnostic = f"error={details.get('error', 'unknown')}; request_id={details.get('request_id', 'unavailable')}"
+        diagnostic = diagnostic.replace(CLIENT_SECRET, "[REDACTED]")
+        sys.exit(f"OIDC token exchange failed (HTTP {error.code}): {diagnostic}. Ask the validator operator to check this request ID.")
+    token = result.get("access_token") if isinstance(result, dict) else None
+    if not isinstance(token, str) or not token:
+        sys.exit("OIDC response did not include a non-empty access_token.")
+    return token
 
 
 def api(token, method, path, data=None, content_type="application/json"):
@@ -253,10 +271,22 @@ def seed_valuation(token, parties):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("tag", nargs="?", help="Fresh suffix for the five demo parties")
+    parser.add_argument("--check", action="store_true", help="Check authentication and ledger reads only; do not bootstrap")
+    args = parser.parse_args()
+    if args.check:
+        if args.tag is not None:
+            parser.error("--check cannot be combined with a party suffix")
+        token = get_token()
+        offset = ledger_end(token)
+        print(f"✓ authentication and ledger-end read passed (offset {offset}); no bootstrap writes performed")
+        return
+
     if not os.path.exists(DAR):
         sys.exit(f"DAR not found: {DAR}\n  build it first: dpm build")
 
-    tag = (sys.argv[1] if len(sys.argv) > 1 else os.environ.get("VEIL_PARTY_SUFFIX", "")).strip()
+    tag = (args.tag if args.tag is not None else os.environ.get("VEIL_PARTY_SUFFIX", "")).strip()
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", tag):
         sys.exit("A fresh run suffix is required (1–64 letters, digits, underscores or hyphens). Example: python3 scripts/bootstrap-devnet.py season3-20260922")
     suffix = f"-{tag}"

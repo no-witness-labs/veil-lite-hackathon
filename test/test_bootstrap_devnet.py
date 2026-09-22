@@ -1,9 +1,11 @@
 import contextlib
 import importlib.util
 import io
+import json
 from pathlib import Path
 import tempfile
 import unittest
+import urllib.error
 from unittest.mock import patch
 
 
@@ -119,6 +121,52 @@ class BootstrapDevNetTests(unittest.TestCase):
         holdings.assert_called_once_with("test-token", self.parties)
         valuation.assert_called_once_with("test-token", self.parties)
         config.assert_called_once_with(self.parties)
+
+    def test_read_only_check_needs_no_dar_and_only_reads_ledger(self):
+        with patch.object(bootstrap.sys, "argv", [str(SCRIPT), "--check"]), \
+             patch.object(bootstrap, "DAR", "/nonexistent/unused.dar"), \
+             patch.object(bootstrap, "get_token", return_value="test-token"), \
+             patch.object(bootstrap, "api", return_value=(200, {"offset": 42})) as api, \
+             patch.object(bootstrap, "allocate_parties") as allocate, \
+             patch.object(bootstrap, "write_config") as config:
+            bootstrap.main()
+            api.assert_called_once_with("test-token", "GET", "/v2/state/ledger-end")
+            allocate.assert_not_called()
+            config.assert_not_called()
+
+    def test_read_only_check_reports_ledger_permission_failure(self):
+        with patch.object(bootstrap.sys, "argv", [str(SCRIPT), "--check"]), \
+             patch.object(bootstrap, "get_token", return_value="test-token"), \
+             patch.object(bootstrap, "api", return_value=(403, {"error": "denied"})) as api, \
+             patch.object(bootstrap, "allocate_parties") as allocate:
+            with self.assertRaisesRegex(SystemExit, "Failed to read ledger end"):
+                bootstrap.main()
+            api.assert_called_once_with("test-token", "GET", "/v2/state/ledger-end")
+            allocate.assert_not_called()
+
+    def test_token_failure_keeps_request_id_and_hides_secret(self):
+        secret = "test-secret-never-log"
+        for body in [json.dumps({"error": "invalid_grant", "request_id": "support-123", "debug": secret}),
+                     json.dumps({"error": secret, "request_id": "support-123"}), "not JSON"]:
+            error = urllib.error.HTTPError("https://auth.example/token", 400, "Bad Request", {}, io.BytesIO(body.encode()))
+            with self.subTest(body_kind="JSON" if body.startswith("{") else "text"), \
+                 patch.multiple(bootstrap, ACCESS_TOKEN=None, TOKEN_URL="https://auth.example/token", CLIENT_ID="test-client", CLIENT_SECRET=secret), \
+                 patch.object(bootstrap.urllib.request, "urlopen", side_effect=error):
+                with self.assertRaises(SystemExit) as raised:
+                    bootstrap.get_token()
+                message = str(raised.exception)
+                self.assertIn("HTTP 400", message)
+                self.assertNotIn(secret, message)
+                if body.startswith("{"):
+                    self.assertIn("support-123", message)
+
+    def test_success_response_without_token_fails_explicitly(self):
+        for payload in [{}, {"access_token": ""}, {"access_token": None}]:
+            with self.subTest(payload=payload), \
+                 patch.multiple(bootstrap, ACCESS_TOKEN=None, TOKEN_URL="https://auth.example/token", CLIENT_ID="test-client", CLIENT_SECRET="test-secret"), \
+                 patch.object(bootstrap.urllib.request, "urlopen", return_value=io.BytesIO(json.dumps(payload).encode())):
+                with self.assertRaisesRegex(SystemExit, "non-empty access_token"):
+                    bootstrap.get_token()
 
 
 if __name__ == "__main__":
