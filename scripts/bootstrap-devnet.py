@@ -7,13 +7,14 @@ writes frontend/public/ledger-config.json.
 
 Usage:
   set -a; . frontend/.env.local; set +a
-  python3 scripts/bootstrap-devnet.py
+  python3 scripts/bootstrap-devnet.py season3-20260922
 
-Optional fresh party suffix for DevNet's persistent ledger:
+Use a new suffix for each run on DevNet's persistent ledger:
   python3 scripts/bootstrap-devnet.py run2
 """
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.parse
@@ -95,37 +96,26 @@ def api(token, method, path, data=None, content_type="application/json"):
 
 def allocate_parties(token, suffix):
     parties = {}
-    pending = []
     namespace = None
     for role, base_hint in ROLES.items():
         hint = base_hint + suffix
         code, resp = api(token, "POST", "/v2/parties", json.dumps({"partyIdHint": hint}).encode())
         party = (resp.get("partyDetails") or {}).get("party")
-        if party and "::" in party:
-            namespace = party.split("::", 1)[1]
+        if code != 200 or not isinstance(party, str) or "::" not in party or not all(party.split("::", 1)):
+            sys.exit(f"Failed to allocate {role} (HTTP {code}): {json.dumps(resp)}. Use a new run suffix; no party ID was inferred.")
+        if party in parties.values():
+            sys.exit("The participant returned the same party for multiple roles; no rights or assets were created.")
+        party_namespace = party.split("::", 1)[1]
+        if namespace is not None and party_namespace != namespace:
+            sys.exit("Allocated parties have different participant namespaces; no rights or assets were created.")
+        namespace = party_namespace
         parties[role] = party
-        pending.append((role, hint, party, code))
-
-    if any(party is None for _, _, party, _ in pending):
-        if namespace is None:
-            _, party_list = api(token, "GET", "/v2/parties")
-            namespace = next(
-                (
-                    p["party"].split("::", 1)[1]
-                    for p in party_list.get("partyDetails", [])
-                    if p.get("isLocal") and "::" in p.get("party", "")
-                ),
-                None,
-            )
-        for role, hint, party, _ in pending:
-            if party is None and namespace:
-                parties[role] = f"{hint}::{namespace}"
 
     return parties
 
 
 def grant_rights(token, parties):
-    rights = [{"kind": {"CanActAs": {"value": {"party": party}}}} for party in parties.values() if party]
+    rights = [{"kind": {"CanActAs": {"value": {"party": party}}}} for party in parties.values()]
     return api(
         token,
         "POST",
@@ -267,19 +257,19 @@ def main():
         sys.exit(f"DAR not found: {DAR}\n  build it first: dpm build")
 
     tag = (sys.argv[1] if len(sys.argv) > 1 else os.environ.get("VEIL_PARTY_SUFFIX", "")).strip()
-    suffix = f"-{tag}" if tag else ""
-    if tag:
-        print(f"run tag: {tag} -> parties suffixed with {suffix}")
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", tag):
+        sys.exit("A fresh run suffix is required (1–64 letters, digits, underscores or hyphens). Example: python3 scripts/bootstrap-devnet.py season3-20260922")
+    suffix = f"-{tag}"
+    print(f"run tag: {tag} -> parties suffixed with {suffix}")
 
     token = get_token()
     print("✓ token acquired")
 
-    code, resp = api(token, "POST", "/v2/packages", open(DAR, "rb").read(), "application/octet-stream")
-    if code == 200:
-        print("✓ DAR uploaded")
-    else:
-        print(f"! DAR upload returned HTTP {code}: {json.dumps(resp)[:300]}")
-        print("  continuing; the package may already be deployed/vetted")
+    with open(DAR, "rb") as dar_file:
+        code, resp = api(token, "POST", "/v2/packages", dar_file.read(), "application/octet-stream")
+    if code != 200:
+        sys.exit(f"DAR upload failed (HTTP {code}): {json.dumps(resp)}. No parties or assets were created.")
+    print("✓ DAR uploaded")
 
     parties = allocate_parties(token, suffix)
     for role in ROLES:
@@ -289,6 +279,12 @@ def main():
     if code != 200:
         sys.exit(f"Failed to grant CanActAs to user {USER_ID} (HTTP {code}): {json.dumps(resp)}")
     print(f"✓ granted CanActAs x{len(parties)} to user {USER_ID}")
+
+    # Query only after rights are granted. Never treat a partially seeded or
+    # prior loan environment as a new Season 3 demo.
+    for role, party in parties.items():
+        if active_contracts(token, party):
+            sys.exit(f"The {role} party already has active contracts; use a fresh run suffix. No assets were seeded.")
 
     seed_holdings(token, parties)
     seed_valuation(token, parties)

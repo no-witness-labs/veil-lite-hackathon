@@ -162,7 +162,7 @@ For Canton DevNet / Seaport:
 dpm build
 cp frontend/.env.local.example frontend/.env.local   # add the Seaport client secret locally
 set -a; . frontend/.env.local; set +a
-python3 scripts/bootstrap-devnet.py
+python3 scripts/bootstrap-devnet.py season3-20260922
 npm --prefix frontend run dev
 ```
 

@@ -6,6 +6,8 @@ remote participant, persistent parties, and a server-side proxy for the browser.
 
 Season 3 package 0.3.0 requires a fresh local or DevNet environment. Use fresh suffixed parties for any future DevNet validation; this change does not migrate prior loans or deploy the new application. The proxy is a shared demo operator, not independent end-user authentication.
 
+Deployment check on September 22, 2026: the public app's `/ledger-config.json` reports missing `VEIL_PARTY_VALUER`, and `/v2/state/ledger-end` reports an OIDC `invalid_grant`. The Season 3 DevNet workflow is not validated. Restore working credentials, bootstrap fresh parties, then update all five Vercel party variables before redeploying and testing the app.
+
 This follows the same pattern as the CloakRFQ DevNet guide:
 <https://github.com/no-witness-labs/canton-hackathon-cloakRFQ/blob/main/docs/DEVNET.md>.
 
@@ -62,21 +64,22 @@ Package/template references use:
 
 ```bash
 set -a; . frontend/.env.local; set +a
-python3 scripts/bootstrap-devnet.py season3
+python3 scripts/bootstrap-devnet.py season3-20260922
 ```
 
 The script:
 
 1. Exchanges the OIDC client credentials for a bearer token.
-2. Uploads the DAR if needed.
+2. Uploads the DAR and stops on any upload failure before allocating parties.
 3. Allocates five demo parties:
    `veilLiteLender`, `veilLiteBorrower`, `veilLiteRegulator`, `veilLiteValuer`, `veilLiteOutsider` (with the chosen suffix).
-4. Grants `CanActAs` for those parties to `VEIL_LEDGER_USER_ID` (default: `6`).
-5. Seeds the canonical holdings: lender 100 cash, borrower 105 cash + 150 collateral + a separate 50-unit reserve.
-6. Writes `frontend/public/ledger-config.json`.
+4. Verifies allocation returned five distinct party IDs on the same participant, then grants `CanActAs` to `VEIL_LEDGER_USER_ID` (default: `6`). Failed allocation stops the run; the script never constructs an assumed party ID.
+5. Queries each party after rights are granted and stops if any already has active contracts.
+6. Seeds the canonical holdings: lender 100 cash, borrower 105 cash + 150 collateral + a separate 50-unit reserve.
 7. Initializes one jointly authorized valuation stream and price 1. The demo operator supplies lender, borrower, and valuer authority in one transaction; independent signing is not implemented.
+8. Writes `frontend/public/ledger-config.json` only after successful seeding.
 
-DevNet is persistent. To get fresh parties for another clean run, pass a suffix:
+DevNet is persistent. A suffix is required: 1–64 letters, digits, underscores or hyphens. Use a new suffix for every run, including after a partially completed bootstrap:
 
 ```bash
 python3 scripts/bootstrap-devnet.py run2
@@ -84,6 +87,8 @@ python3 scripts/bootstrap-devnet.py run2
 
 That writes a new `ledger-config.json` using suffixed party hints like
 `veilLiteLender-run2`.
+
+Allocation, rights and seeding are separate transactions. A failure can leave allocated parties or partial demo holdings behind; the script does not erase them or resume that run. Use a new suffix after fixing the error. Repeated runs must not be used to reset an existing loan.
 
 ## 4. Run the app
 
@@ -156,5 +161,14 @@ and serves `frontend/dist`.
   the reference guide defaults to `6`.
 - No visible holdings: rerun `python3 scripts/bootstrap-devnet.py <newtag>` and
   hard-refresh the app so it uses the new generated config.
+- Missing `VEIL_PARTY_VALUER`: bootstrap a fresh five-party environment, set all five `VEIL_PARTY_*` values in Vercel from the generated config, and redeploy. Do not substitute the lender or borrower for the valuer.
+- OIDC `invalid_grant`: obtain working Seaport credentials and verify token exchange before allocating parties or changing the deployed party configuration.
+- DAR upload failure: the script stops without allocating parties. Resolve package/permission errors with the validator operator; it no longer assumes that an older package is usable.
 - Do not upload `veil-0.1.0.dar`; that package name collides with an existing
   DevNet package. Use `veil-lite-0.3.0.dar` for this branch.
+
+Bootstrap failure-path tests run locally without credentials or network access:
+
+```bash
+python3 -m unittest discover -s test -p 'test_*.py' -v
+```
