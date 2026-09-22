@@ -74,6 +74,8 @@ The GitHub `CI` workflow builds the frontend and Daml packages and runs the Daml
 
 The [first GitHub CI run](https://github.com/no-witness-labs/veil-lite-hackathon/actions/runs/35696187576) on September 22 could not start either job: GitHub reported an account billing lock. Remote CI remains unverified until the account owner resolves that lock and reruns the workflow. This is separate from the passing local checks above.
 
+The project owner authorized proceeding without CI and merged PR #36 with an admin bypass on September 22. CI is deferred and is not a gate for the current DevNet preparation; the recorded local checks remain the validation evidence.
+
 These are local demo checks, not independent audit results or DevNet validation.
 
 ## Review handoff for the invited team
