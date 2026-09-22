@@ -63,7 +63,7 @@ npm --prefix frontend run build
 Version 0.3.0 verification on September 22, 2026:
 
 - Production DAR build and frontend TypeScript/Vite build pass.
-- All 22 named Daml regression scripts pass (the runner also executes the shared setup, reporting 23 declarations). Coverage includes consuming publication, superseded-price rejection across margin actions, parallel streams, unauthorized forks, freshness, exact maturity boundaries, cure/repayment, authorization, rollback, and scoped visibility. The SDK reports three `submitMulti` deprecation warnings in test setup.
+- All 22 named Daml regression scripts pass (the runner also executes the shared setup, reporting 23 declarations). Coverage includes consuming publication, superseded-price rejection across margin actions, parallel streams, unauthorized forks, freshness, exact maturity boundaries, cure/repayment, authorization, rollback, and scoped visibility. Test setup uses the current `actAs`/`submit` API.
 - Local Chrome walkthrough against Canton: offer → acceptance → replacement 0.62 price → margin call → 50-unit top-up → repayment. The ledger returned all 200 collateral units and paid 105 to the lender; valuer could not query the loan, and outsider queried no contracts. Publication left exactly one active price with the original stream ID and archived its predecessor.
 - A short-maturity loan with its price cooperatively archived unlocked the lender's overdue action without a refresh or role switch. Canton closed it as `LiquidatedAtMaturity`, transferred 150 locked units, and preserved the borrower's 50-unit reserve. No margin call or valuation was needed.
 - An unaccepted offer expired in the borrower view without a refresh; acceptance disappeared while the offer remained available for lender withdrawal.
@@ -71,6 +71,8 @@ Version 0.3.0 verification on September 22, 2026:
 - These browser flows completed without JavaScript errors or failing Ledger API responses. Shell/Python bootstrap syntax and `git diff --check` also pass.
 
 The GitHub `CI` workflow builds the frontend and Daml packages and runs the Daml test package without deployment credentials. Review the PR checks for results on the exact submitted commit.
+
+The [first GitHub CI run](https://github.com/no-witness-labs/veil-lite-hackathon/actions/runs/35696187576) on September 22 could not start either job: GitHub reported an account billing lock. Remote CI remains unverified until the account owner resolves that lock and reruns the workflow. This is separate from the passing local checks above.
 
 These are local demo checks, not independent audit results or DevNet validation.
 
