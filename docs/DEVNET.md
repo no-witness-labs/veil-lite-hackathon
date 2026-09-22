@@ -4,7 +4,7 @@ Run Veil against the shared Seaport / Five North Canton DevNet instead of the
 local sandbox. The contracts and UI are the same; DevNet adds OIDC auth, a
 remote participant, persistent parties, and a server-side proxy for the browser.
 
-Season 3 package 0.3.0 requires a fresh local or DevNet environment. Use fresh suffixed parties for any future DevNet validation; this change does not migrate prior loans or deploy the new application. The proxy is a shared demo operator, not independent end-user authentication.
+DevNet work is deferred while implementation continues in the local sandbox. Season 3 package 0.4.0 requires a fresh environment and updated client. Use fresh suffixed parties for any future DevNet validation; this change does not migrate prior loans or deploy the new application. The proxy is a shared demo operator, not independent end-user authentication.
 
 This follows the same pattern as the CloakRFQ DevNet guide:
 <https://github.com/no-witness-labs/canton-hackathon-cloakRFQ/blob/main/docs/DEVNET.md>.
@@ -17,7 +17,7 @@ This follows the same pattern as the CloakRFQ DevNet guide:
   - Token URL: `https://auth.sandbox.fivenorth.io/application/o/token/`
   - Client ID: `validator-devnet-m2m`
   - Client secret: keep this local; never commit it.
-- The `veil-lite-0.3.0.dar` package deployed/vetted on the validator for a new test environment.
+- The `veil-lite-0.4.0.dar` package deployed/vetted on the validator for a new test environment.
 
 ## 1. Configure DevNet credentials
 
@@ -48,7 +48,7 @@ dpm build
 The deployable DAR is:
 
 ```text
-.daml/dist/veil-lite-0.3.0.dar
+.daml/dist/veil-lite-0.4.0.dar
 ```
 
 Package/template references use:
@@ -157,4 +157,4 @@ and serves `frontend/dist`.
 - No visible holdings: rerun `python3 scripts/bootstrap-devnet.py <newtag>` and
   hard-refresh the app so it uses the new generated config.
 - Do not upload `veil-0.1.0.dar`; that package name collides with an existing
-  DevNet package. Use `veil-lite-0.3.0.dar` for this branch.
+  DevNet package. Use `veil-lite-0.4.0.dar` for this branch.

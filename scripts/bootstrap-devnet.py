@@ -29,7 +29,7 @@ USER_ID = os.environ.get("VEIL_LEDGER_USER_ID", "6")
 ACCESS_TOKEN = os.environ.get("VEIL_DEVNET_ACCESS_TOKEN")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DAR = os.path.join(ROOT, ".daml", "dist", "veil-lite-0.3.0.dar")
+DAR = os.path.join(ROOT, ".daml", "dist", "veil-lite-0.4.0.dar")
 CONFIG = os.path.join(ROOT, "frontend", "public", "ledger-config.json")
 PACKAGE_REF = "#veil-lite"
 COLLATERAL_ASSET = "Tokenized T-Bill / MMF"
@@ -234,7 +234,7 @@ def seed_valuation(token, parties):
     events = [e.get("contractEntry", {}).get("JsActiveContract", {}).get("createdEvent", {}) for e in entries]
     marks = [e for e in events if e.get("templateId", "").endswith(":Veil:CollateralValuation")]
     if any("streamId" not in e["createArgument"] for e in marks):
-        sys.exit("Legacy valuations found; use a fresh party suffix for version 0.3.0.")
+        sys.exit("Legacy valuations found; use a fresh party suffix for version 0.4.0.")
     if len(marks) > 1 or any(e.get("templateId", "").endswith(":Veil:ValuationStream") for e in events):
         sys.exit("Ambiguous or unpublished valuation streams; use a fresh party suffix.")
     if marks:

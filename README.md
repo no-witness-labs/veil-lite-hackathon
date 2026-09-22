@@ -34,8 +34,8 @@ Concrete demo framing: **private repo-style financing**. The borrower pledges 15
 Build the flow:
 
 1. Lender and borrower already know each other from an off-ledger private credit relationship.
-2. Lender creates a private borrower-specific `LoanOffer`, binding it to the jointly authorized valuation stream and a future repayment timestamp.
-3. Borrower accepts and opens a loan.
+2. Lender creates a private borrower-specific `LoanOffer`, binding it to the jointly authorized valuation stream and a future repayment timestamp. A fresh current price must show LTV below the agreed liquidation threshold.
+3. Borrower accepts and opens a loan only while a fresh current price from that same stream still shows LTV below the agreed liquidation threshold.
 4. Borrower's collateral becomes locked/escrowed in the loan state.
 5. Regulator can observe the offer and loan.
 6. Outsider cannot see either offer or loan.
@@ -167,7 +167,7 @@ npm --prefix frontend run dev
 ```
 
 See **[docs/DEVNET.md](./docs/DEVNET.md)** for the full DevNet setup. The DevNet package name is
-`veil-lite` and the deployable DAR is `.daml/dist/veil-lite-0.3.0.dar`.
+`veil-lite` and the deployable DAR is `.daml/dist/veil-lite-0.4.0.dar`.
 See **[docs/VERCEL.md](./docs/VERCEL.md)** for the Vercel deployment environment variables and smoke checks.
 
 3-minute click path: **Lender** create offer → **Borrower** sees it → **Outsider** sees nothing →

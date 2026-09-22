@@ -18,7 +18,7 @@ Operational guide for running the Veil demo (Canton ledger + React UI) and the
 
 ## 2. One-command start
 
-Use this path when you want the on-ledger Canton proof.
+Use this path for ongoing implementation and the on-ledger Canton proof. It needs no Seaport credentials or Vercel access. Keep DevNet settings out of `frontend/.env.local` in this checkout so Vite uses the local sandbox.
 
 From the repo root:
 
@@ -42,7 +42,7 @@ Open <http://localhost:5173>.
 The prior app runs on Vercel and
 talks to the shared Seaport / Five North DevNet through a server-side `/v2`
 proxy. The OIDC client secret stays in Vercel environment variables and never
-reaches the browser. Version 0.3.0 has not been validated on DevNet or deployed by this increment. Use a fresh local sandbox for Season 3 and review [SEASON3.md](SEASON3.md) before planning deployment.
+reaches the browser. Version 0.4.0 has not been validated on DevNet or deployed by this increment. DevNet work is deferred; use a fresh local sandbox for Season 3 and review [SEASON3.md](SEASON3.md) before planning deployment.
 
 Local DevNet setup:
 
@@ -81,7 +81,7 @@ Vercel deployment setup:
 2. Launches `dpm sandbox` (single-process Canton) in the background.
 3. Waits for `HTTP JSON API Server started`, then for `/readyz` = 200.
 4. Runs `scripts/bootstrap.sh`, which is idempotent:
-   - uploads `.daml/dist/veil-lite-0.3.0.dar`,
+   - uploads `.daml/dist/veil-lite-0.4.0.dar`,
    - allocates `Lender` / `Borrower` / `Regulator` / `Valuer` / `Outsider` (reuses existing),
    - writes `frontend/public/ledger-config.json` (gitignored; the UI fetches it at runtime).
    - initializes the agreed valuation stream with price 1 using simulated lender/borrower/valuer consent.
@@ -106,6 +106,8 @@ To re-bootstrap against an already-running sandbox: `./scripts/bootstrap.sh`.
 The maturity date means midnight at the start of that date in UTC. New offers and acceptance require a future maturity; the UI shows the enforced deadline. Past maturity, **Liquidate after maturity** is available without a price or margin call. Repayment remains available until the loan closes. This is separate from the margin-call liquidation path.
 
 The first price is seeded at bootstrap. If it is more than five minutes old, switch to Valuer and publish a fresh price before creating an offer. Each publication archives the old price; old contract IDs are rejected even inside the freshness window. A publication racing another action can reject that action safely; refresh the role view and retry using the new current price.
+
+Origination check: create an offer at price 1, publish 0.62 as Valuer before the borrower accepts, then switch to Borrower. Acceptance is blocked because LTV is above 90%; the offer and collateral remain intact. Publish a fresh price of 1 on the same stream and acceptance becomes available again. The create-offer preview uses the actual current mark rather than assuming one unit equals one dollar.
 
 **Strongest moment:** view the active deal as Lender, expand **Raw ledger view**,
 then switch to **Outsider** — the same query returns `[]`. The privacy is enforced
@@ -134,7 +136,7 @@ Sandbox state is in-memory, so a restart is always a clean ledger.
 
 For the shared Seaport / Five North DevNet path, use
 [`DEVNET.md`](./DEVNET.md). DevNet uses the `veil-lite` DAML package
-(`.daml/dist/veil-lite-0.3.0.dar` for the new local code), OIDC client-credentials auth, and a Vite
+(`.daml/dist/veil-lite-0.4.0.dar` for the new local code), OIDC client-credentials auth, and a Vite
 server-side `/v2` proxy so the bearer token and client secret never reach the
 browser.
 
@@ -150,7 +152,7 @@ npm --prefix frontend run build           # succeeds without a running sandbox
 ## 8. Troubleshooting
 
 ### Old package or multiple valuation streams
-Version 0.3.0 is a fresh-environment change, not an upgrade of existing loans. Restart the local sandbox or use new DevNet party suffixes. The UI rejects an ambiguous price-stream selection rather than guessing which one counterparties agreed to.
+Version 0.4.0 requires a fresh environment and updated client; `Accept` now includes a valuation contract ID. Restart the local sandbox. The UI rejects an ambiguous price-stream selection rather than guessing which one counterparties agreed to.
 
 ### `JCE cannot authenticate the provider BC`
 Canton is running on the wrong JDK (e.g. Oracle JDK 20). Use OpenJDK 17/21:

@@ -291,12 +291,33 @@ export async function createOffer(draft: Draft): Promise<TxResult> {
 export async function acceptOffer(offerCid: string): Promise<TxResult> {
   const { contracts } = await listActive(cfg.parties.borrower)
   const offer = contracts.find((c) => c.contractId === offerCid && c.template === 'LoanOffer')
+  if (!offer) throw new Error('Offer is not visible to the borrower or is no longer active; refresh before accepting.')
   const requestedQuantity = Number(offer?.args.collateralQuantity)
   if (!Number.isFinite(requestedQuantity) || requestedQuantity <= 0) {
     throw new Error('Offer collateral quantity is missing or invalid; refresh the lender offer before accepting.')
   }
+  const streamId = offer.args.valuationStreamId
+  if (typeof streamId !== 'string') {
+    throw new Error('Offer has no agreed valuation stream; refresh the lender offer before accepting.')
+  }
+  const marks = contracts.filter((contract) =>
+    contract.template === 'CollateralValuation'
+      && contract.args.streamId === streamId
+      && contract.args.valuationAgent === offer.args.valuationAgent
+      && contract.args.lender === offer.args.lender
+      && contract.args.borrower === offer.args.borrower
+      && contract.args.regulator === offer.args.regulator
+      && contract.args.collateralAsset === offer.args.collateralAsset
+  )
+  if (marks.length !== 1) {
+    throw new Error(`Expected exactly one current valuation for the offer's agreed stream; found ${marks.length}. Refresh or publish the agreed stream mark before accepting.`)
+  }
   const collateralCid = await findCollateral(cfg.parties.borrower, COLLATERAL_ASSET, requestedQuantity)
-  return submit(cfg.parties.borrower, exercise(template('LoanOffer'), offerCid, 'Accept', { collateralCid }), 'accept')
+  return submit(
+    cfg.parties.borrower,
+    exercise(template('LoanOffer'), offerCid, 'Accept', { collateralCid, valuationCid: marks[0].contractId }),
+    'accept',
+  )
 }
 
 export const withdrawOffer = (cid: string) =>

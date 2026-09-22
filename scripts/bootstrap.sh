@@ -9,7 +9,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BASE="${1:-http://127.0.0.1:6864}"
-DAR="$ROOT/.daml/dist/veil-lite-0.3.0.dar"
+DAR="$ROOT/.daml/dist/veil-lite-0.4.0.dar"
 CONFIG="$ROOT/frontend/public/ledger-config.json"
 USER_ID="veil"
 
@@ -112,7 +112,7 @@ mark_count="$(curl --fail-with-body -sS -X POST "$BASE/v2/state/active-contracts
 events=[e.get("contractEntry",{}).get("JsActiveContract",{}).get("createdEvent",{}) for e in json.load(sys.stdin)]
 marks=[e for e in events if e.get("templateId", "").endswith(":Veil:CollateralValuation")]
 if any("streamId" not in e["createArgument"] for e in marks):
-    sys.exit("Legacy valuations found; restart with a fresh 0.3.0 sandbox.")
+    sys.exit("Legacy valuations found; restart with a fresh 0.4.0 sandbox.")
 if any(e.get("templateId", "").endswith(":Veil:ValuationStream") for e in events):
     sys.exit("Unpublished stream found; initialize it before re-running bootstrap.")
 print(len(marks))')"
