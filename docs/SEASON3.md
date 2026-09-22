@@ -3,17 +3,19 @@
 ## Starting point and ownership
 
 Baseline: [`2455470f2521b1ce295252178f11507f8c881321`](https://github.com/no-witness-labs/veil-lite-hackathon/commit/2455470f2521b1ce295252178f11507f8c881321), prior to the September 18 delivery window.
-Development began September 22, 2026. The margin-call increment was merged in PR #36; the current sandbox follow-up is `feat/season3-origination-guards`.
+Development began September 22, 2026. The margin-call increment merged in PR #36 and origination guards in PR #38. The current sandbox follow-up is `feat/season3-funded-escrow`.
 
 The baseline already contained private offers, demo cash/collateral holdings, acceptance, repayment, lender-supplied liquidation prices, a role UI, and an earlier deployment/video. Those are prior work. PRs #24 (token standard), #32 (validation), and #34 (maturity) also predate this season. This branch adapts #34's ledger-time maturity policy to the new margin workflow; it does not claim that original idea or PR as new work or merge those PRs wholesale.
 
-New scope: a jointly authorized valuation stream with consuming price updates, origination risk checks, timed margin calls, exact collateral top-ups, recovery resolution, maturity integration, UI integration, automated PR checks, and regression evidence. Track proposal: **Track 2 — Financial Applications**.
+New scope: a jointly authorized valuation stream with consuming price updates, controlled demo issuance and funded offers, origination risk checks, timed margin calls, exact collateral top-ups, recovery resolution, maturity integration, UI integration, automated PR checks, and regression evidence. Track proposal: **Track 2 — Financial Applications**.
 
 Proposed user: operations staff at a lender financing a known treasury counterparty against tokenized collateral. This is a product hypothesis; no institutional pilot or external user validation is claimed.
 
 ## End-to-end demo
 
-Run a **fresh local sandbox** using [RUNBOOK.md](RUNBOOK.md). Version 0.4.0 adds a required valuation to offer acceptance and needs the matching client; existing demos are not migrated. Seaport/DevNet and hosted deployment are deferred and do not block implementation. The prior public deployment and pitch remain prior-work artifacts until a separate deployment is validated.
+Run a **fresh local sandbox** using [RUNBOOK.md](RUNBOOK.md). Version 0.5.0 adds a demo issuer to holdings and deal records and needs the matching client and config; existing demos are not migrated. Seaport/DevNet and hosted deployment are deferred and do not block implementation. The prior public deployment and pitch remain prior-work artifacts until a separate deployment is validated.
+
+Bootstrap co-authorizes simulated cash and collateral using the distinct demo issuer and each owner. The funded offer itself is escrow: `MakeOffer` consumes cash, while `Accept` or `Withdraw` consumes the offer and releases its principal once. Ordinary actions submit only the user role's authority; issuer authority is inherited from the contract. The issuer is trusted to authorize supply and sees the associated inventory and loan records. See [ADR 0002](adr/0002-controlled-issuer-and-funded-offers.md).
 
 Bootstrap registers a valuation stream with lender, borrower, and valuer authority and publishes an initial unit price of 1. The demo operator supplies all three authorities, simulating consent. Independent onboarding/signing is outside this demo. If the price becomes stale, publish a fresh one as Valuer before creating an offer.
 
@@ -34,9 +36,12 @@ Maturity branch: a loan past its agreed repayment timestamp can be liquidated th
 
 | Policy | Contract behavior |
 | --- | --- |
+| Issuance | Cash, collateral, offers, loans, and settlements require the demo issuer's signature. Counterparties cannot create trusted records without its authority. The issuer can authorize privileged issuance, including direct offer creation; there is no claim of external backing or protection against issuer collusion. |
+| Escrow | The funded offer holds reserved principal. Creation consumes the funding cash, with exact change; acceptance and withdrawal consume the same offer. Neither reused cash nor a spent offer can release more principal. |
+| Asset identity | Acceptance and top-up collateral and repayment cash must match the position's issuer. Every output retains that issuer. The UI pins its configured issuer for holdings and deal selection; raw ledger inspection is preserved. |
 | Stream authorization | `ValuationStream` is signed by lender, borrower, and valuer. Its `PublishInitial` choice is consuming: it archives the stream and creates the first price carrying the stream contract ID, so a stream can root exactly one price lineage and is not queryable afterwards. Prices retain all three signatories; the valuer's `Publish` choice can replace a price but cannot change stream identity or counterparties. |
 | Source of value | Only the agreed valuer controls price publication. Agent must differ from lender, borrower, and regulator. The lender binds the offer to a fresh current price's stream; borrower accepts that binding. |
-| Privacy | Price records name both counterparties and are visible to them and the regulator. The agent is not an observer of offers, loans, or settlements. |
+| Privacy | Price records name both counterparties and are visible to them and the regulator. The agent is not an observer of offers, loans, or settlements. The demo issuer sees its holdings and all associated deal records. |
 | Price freshness | Publication stamps `observedAt` using ledger time. Every use requires `observedAt <= ledger time <= observedAt + 300 seconds`. |
 | Price semantics | Positive **unit price**; collateral value is actual locked quantity × unit price. Multiple loans may use the current price from the same agreed stream. |
 | Origination | `MakeOffer` and `Accept` each require a fresh scoped price and principal-only LTV strictly below the agreed liquidation threshold. Acceptance rechecks the offer's exact stream rather than relying on its creation-time price. At the threshold, origination is rejected. |
@@ -46,12 +51,12 @@ Maturity branch: a loan past its agreed repayment timestamp can be liquidated th
 | Grace period | Agreed in the offer: 60–86,400 seconds; demo uses 60. Ledger time, not a browser timer, controls permissions. |
 | Repeated calls | Cannot issue another call while one is open; its deadline cannot be extended by reissuing it. |
 | Top-up | Borrower only, before both the call deadline and maturity, positive exact holding of the agreed asset, with a fresh current price proving resulting LTV is strictly below threshold. Partial cures are rejected atomically. |
-| Deposit disclosure | `SplitCollateral` is an owner-only transaction. Only the exact deposit is fetched by the shared loan workflow; the remainder stays outside it. |
+| Deposit disclosure | `SplitCollateral` is controlled by the owner; its outputs are visible to the owner and issuer. Only the exact deposit is fetched by the shared loan workflow; the remainder stays outside the counterparty's view. |
 | Margin liquidation | Lender only, open call, ledger time >= deadline, and fresh current breached valuation. All currently locked units transfer. |
 | Maturity | Offers must be created and accepted strictly before maturity. New calls, top-ups, and recovery resolution also require ledger time < maturity; none extends it. After ledger time > maturity, lender may use `LiquidateOverdue` without a price or call. At exact maturity, repayment remains allowed; overdue liquidation begins strictly after. |
 | Recovery | Before maturity, borrower may resolve a call using a fresh healthy price, including after its call deadline. Healthy collateral does not excuse overdue repayment. |
 | Repayment | Available before or after a call and after maturity until closed; exact principal + interest; releases all currently locked collateral. Competing close actions consume the same loan, so only one succeeds. |
-| Reset | Demo-only cooperative archive using both loan signatories and all three price signatories, followed by reseeding demo assets and a new agreed stream. It is not a business cancellation. |
+| Reset | Demo-only cooperative archive using issuer/lender/borrower for loans and all three price signatories for prices, followed by issuer-authorized reseeding and a new agreed stream. It is not a business cancellation. |
 
 ## Verification
 
@@ -63,7 +68,15 @@ npm --prefix frontend ci
 npm --prefix frontend run build
 ```
 
-Version 0.4.0 verification on September 22, 2026:
+Version 0.5.0 verification on September 22, 2026:
+
+- Production DAR and frontend TypeScript/Vite builds pass. All 34 named Daml scripts pass, plus shared `setup`. The six new scripts cover issuer authorization and role substitution, exact/oversized funding conservation, one-shot acceptance/refunds, rollback followed by withdrawal, other-issuer deposits/payments, and issuer/valuer/outsider visibility. Existing lifecycle tests now seed assets with issuer and owner authority and check issuer preservation. The runner emits a non-fatal six-element fixture tuple warning.
+- Local Chrome rejected missing issuer config and disabled Reset until setup was valid. Direct lender attempts to mint trusted cash and an unfunded offer failed. Deliberately created foreign-issuer assets/offers stayed out of the operational UI and acceptance helper, while remaining in the raw ledger response.
+- The browser created a funded offer, showed its reserved principal, withdrew it once, and verified a repeated withdrawal failed. Across funding, refund, acceptance, margin call, top-up, and repayment, the issuer's available cash plus offer reserves stayed at 205; free plus loan-locked collateral stayed at 200. Repayment transferred 105 to the lender and returned all 200 collateral units to the borrower.
+- The same run exercised price-drop rejection with unchanged contracts, recovered acceptance, and stale-price UI timers. Captured ordinary browser commands did not include issuer `actAs`; issuance/reset commands explicitly did. The issuer could query the resulting settlement, the valuer could not, and the outsider returned no contracts. No JavaScript errors or unexpected failed browser Ledger API requests occurred; deliberate negative API requests failed as expected.
+- Shell/Python bootstrap syntax, issuer-selection checks with synthetic foreign/trusted holdings, hosted issuer config checks, and `git diff --check` pass. The browser layout was visually inspected.
+
+Earlier version 0.4.0 verification on September 22, 2026:
 
 - Production DAR and frontend TypeScript/Vite builds pass. All 28 named Daml scripts pass, plus the shared `setup` declaration. The six new scripts cover strict origination LTV, valuation guards, acceptance price-drop rollback and recovery, replaced/wrong-stream prices, the exact 300/301-second freshness boundary, and acceptance of directly constructed offers at the threshold. The insufficient-funding test uses healthy LTV so it still exercises the cash guard.
 - Local Chrome showed collateral value of 120 USDC and LTV of 83.3% at a unit price of 0.80. At 0.62, offer creation was disabled. Advancing only the browser clock by 301 seconds disabled creation and acceptance without switching roles; restoring the clock re-enabled them. Ledger-time freshness is separately covered by the Daml scripts.
@@ -85,7 +98,7 @@ The GitHub `CI` workflow builds the frontend and Daml packages and runs the Daml
 
 The [first GitHub CI run](https://github.com/no-witness-labs/veil-lite-hackathon/actions/runs/35696187576) on September 22 could not start either job: GitHub reported an account billing lock. Remote CI remains unverified until the account owner resolves that lock and reruns the workflow. This is separate from the passing local checks above.
 
-The project owner authorized proceeding without CI and merged PR #36 with an admin bypass. The current 0.4.0 increment uses local builds, contract regression tests, and browser checks against Canton sandbox; neither CI availability nor DevNet access is a prerequisite.
+The project owner authorized proceeding without CI; PRs #36 and #38 merged with an admin bypass. The current 0.5.0 increment uses local builds, contract regression tests, and browser checks against Canton sandbox; neither CI availability nor DevNet access is a prerequisite.
 
 These are local demo checks, not independent audit results or DevNet validation.
 
@@ -93,15 +106,15 @@ These are local demo checks, not independent audit results or DevNet validation.
 
 Our implementation work covers contracts, client integration, role UI, local demo, and evidence. Proposed independent review responsibilities:
 
-- Verify choice authorization and contract divulgence, including fetched valuations and collateral.
+- Verify issuance and inherited choice authorization, reserve conservation, issuer mismatch rejection, and contract divulgence, including fetched valuations and collateral.
 - Review stream authorization and replacement, time boundaries, arithmetic, collateral conservation, and races between publication, cure, repayment, and liquidation.
 - Challenge whether the proposed workflow matches a real lender's operating process and suggest a narrower or more useful scope if appropriate.
 
 ## Remaining boundaries
 
-- Demo holdings are self-issued, not backed by actual cash or Treasury/MMF assets. No real settlement, custody, or legal repo agreement is established.
-- Funding is checked through `CashHolding.MakeOffer`. The demo's lender-signed `LoanOffer` can also be created directly, bypassing funding; acceptance now validates the current price and agreed stream but still does not prove escrow provenance. This pre-existing constructor limitation must be addressed when integrating issuer-backed assets for a real pilot.
+- Demo holdings require a configured issuer's authority but are not backed by actual cash or Treasury/MMF assets. No real settlement, custody, or legal repo agreement is established.
+- Lender-only direct offer creation is blocked by the issuer signature. The trusted issuer can still co-authorize direct holdings/offers/loans, so this is an issuance trust boundary, not cryptographic proof of external funding. Cash-plus-reserve conservation applies to normal choices between issuance and reset; the issuer also sees the loan records.
 - Valuations are manually attested by a configured party, not an external oracle or proof of market value. One demo operator controls all role credentials.
-- The local sandbox has authentication disabled. The existing shared DevNet proxy is a demo operator, not production user authorization. No DevNet ledger deployment is performed by this increment; an automatic frontend preview is not evidence of a working 0.4.0 DevNet integration.
+- The local sandbox has authentication disabled. The existing shared DevNet proxy is a demo operator, not production user authorization. No DevNet ledger deployment is performed by this increment; an automatic frontend preview is not evidence of a working 0.5.0 DevNet integration.
 - Maturity and margin deadlines use ledger time, subject to the participant's configured time model. Independent signing, custody, and an external valuation source are still required for a real pilot.
 - Single-participant role visibility is distinct from validating privacy between independently operated participants. No security certification or completed external audit is claimed.

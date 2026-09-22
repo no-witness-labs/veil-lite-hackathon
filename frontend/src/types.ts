@@ -20,6 +20,7 @@ export interface MarginCall {
 
 /** The Daml record fields across the deal templates and the holdings. */
 export interface DealArgs {
+  issuer?: string
   // Deal templates
   lender?: string
   borrower?: string
@@ -53,6 +54,7 @@ export interface Holding {
   kind: 'cash' | 'collateral'
   amount: number
   asset?: string
+  issuer?: string
 }
 
 /** A normalized active contract as seen by the querying party. */

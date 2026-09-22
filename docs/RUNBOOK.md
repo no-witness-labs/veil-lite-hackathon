@@ -24,7 +24,7 @@ From the repo root:
 
 ```bash
 # Builds the current DAR, starts Canton on JDK 17, uploads the DAR, allocates
-# the five demo parties, and writes frontend/public/ledger-config.json.
+# the five user roles plus demo issuer, and writes frontend/public/ledger-config.json.
 ./scripts/start-sandbox.sh
 ```
 
@@ -42,7 +42,7 @@ Open <http://localhost:5173>.
 The prior app runs on Vercel and
 talks to the shared Seaport / Five North DevNet through a server-side `/v2`
 proxy. The OIDC client secret stays in Vercel environment variables and never
-reaches the browser. Version 0.4.0 has not been validated on DevNet or deployed by this increment. DevNet work is deferred; use a fresh local sandbox for Season 3 and review [SEASON3.md](SEASON3.md) before planning deployment.
+reaches the browser. Version 0.5.0 has not been validated on DevNet or deployed by this increment. DevNet work is deferred; use a fresh local sandbox for Season 3 and review [SEASON3.md](SEASON3.md) before planning deployment.
 
 Local DevNet setup:
 
@@ -81,8 +81,8 @@ Vercel deployment setup:
 2. Launches `dpm sandbox` (single-process Canton) in the background.
 3. Waits for `HTTP JSON API Server started`, then for `/readyz` = 200.
 4. Runs `scripts/bootstrap.sh`, which is idempotent:
-   - uploads `.daml/dist/veil-lite-0.4.0.dar`,
-   - allocates `Lender` / `Borrower` / `Regulator` / `Valuer` / `Outsider` (reuses existing),
+   - uploads `.daml/dist/veil-lite-0.5.0.dar`,
+   - allocates `Lender` / `Borrower` / `Regulator` / `Valuer` / `Outsider` / `DemoIssuer` (reuses existing),
    - writes `frontend/public/ledger-config.json` (gitignored; the UI fetches it at runtime).
    - initializes the agreed valuation stream with price 1 using simulated lender/borrower/valuer consent.
 
@@ -109,6 +109,8 @@ The first price is seeded at bootstrap. If it is more than five minutes old, swi
 
 Origination check: create an offer at price 1, publish 0.62 as Valuer before the borrower accepts, then switch to Borrower. Acceptance is blocked because LTV is above 90%; the offer and collateral remain intact. Publish a fresh price of 1 on the same stream and acceptance becomes available again. The create-offer preview uses the actual current mark rather than assuming one unit equals one dollar.
 
+Funding check: creating an offer moves the lender's 100 demo cash into the issuer-signed offer reserve. Withdraw it to restore exactly 100, or accept it to deliver exactly 100 to the borrower. The same offer cannot do both. Issuance and reset use demo issuer authority explicitly; normal user actions do not. The issuer is a disclosed stakeholder in the loan and asset records.
+
 **Strongest moment:** view the active deal as Lender, expand **Raw ledger view**,
 then switch to **Outsider** — the same query returns `[]`. The privacy is enforced
 by Canton, not by the UI.
@@ -117,7 +119,7 @@ The activity feed and the deal card show the real `updateId`, ledger `offset`,
 `synchronizerId`, and contract ids, so every action is verifiably on-ledger.
 
 **Holdings / double-entry:** the "Your holdings" panel shows each party's own wallet
-(holdings are owner-signatory with no observers, so a party sees only its own). The
+(holdings are signed by the owner and demo issuer, so the issuer also sees them). The
 borrower starts with 150 collateral + a 50-unit reserve + 105 cash and the lender with 100 cash; accepting
 locks the collateral and delivers 100 principal to the borrower; repaying returns the
 collateral and the lender ends with 105 (principal + 5 interest). "Reset demo" burns and
@@ -136,7 +138,7 @@ Sandbox state is in-memory, so a restart is always a clean ledger.
 
 For the shared Seaport / Five North DevNet path, use
 [`DEVNET.md`](./DEVNET.md). DevNet uses the `veil-lite` DAML package
-(`.daml/dist/veil-lite-0.4.0.dar` for the new local code), OIDC client-credentials auth, and a Vite
+(`.daml/dist/veil-lite-0.5.0.dar` for the new local code), OIDC client-credentials auth, and a Vite
 server-side `/v2` proxy so the bearer token and client secret never reach the
 browser.
 
@@ -152,7 +154,7 @@ npm --prefix frontend run build           # succeeds without a running sandbox
 ## 8. Troubleshooting
 
 ### Old package or multiple valuation streams
-Version 0.4.0 requires a fresh environment and updated client; `Accept` now includes a valuation contract ID. Restart the local sandbox. The UI rejects an ambiguous price-stream selection rather than guessing which one counterparties agreed to.
+Version 0.5.0 requires a fresh environment and updated client; holdings and deal contracts now require an issuer. Restart the local sandbox and run bootstrap to generate the top-level `issuer` config. The UI rejects incomplete config and excludes other issuers from operational views. It also rejects an ambiguous price-stream selection rather than guessing which one counterparties agreed to.
 
 ### `JCE cannot authenticate the provider BC`
 Canton is running on the wrong JDK (e.g. Oracle JDK 20). Use OpenJDK 17/21:
@@ -166,7 +168,7 @@ script already waits for `/readyz`; if you run `bootstrap.sh` by hand, just re-r
 `ledger-config.json` is missing or invalid. For local sandbox mode, run
 `./scripts/start-sandbox.sh` (or `./scripts/bootstrap.sh` if the sandbox is
 already up), then reload the page. For DevNet/Vercel, verify the environment
-variables in [`VERCEL.md`](./VERCEL.md), especially the five `VEIL_PARTY_*`
+variables in [`VERCEL.md`](./VERCEL.md), including `VEIL_PARTY_ISSUER` and the five role `VEIL_PARTY_*`
 values.
 
 ### A role shows nothing / Outsider is empty

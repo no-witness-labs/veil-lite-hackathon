@@ -75,20 +75,21 @@ checkedPrice valuationAgent lender borrower regulator collateralAsset valuationS
   assertMsg "valuation is stale" (now <= addRelTime mark.observedAt (seconds 300))
   pure mark.unitPrice
 
--- | Demo cash-like principal asset (e.g. USDC). A "bearer" holding: the owner
--- is the sole signatory, so it can be spent with only the owner's authority.
+-- The demo issuer authorizes issuance. Spending choices carry that authority
+-- forward without giving the owner permission to create arbitrary holdings.
 template CashHolding
   with
+    issuer : Party
     owner : Party
     amount : Decimal
   where
-    signatory owner
-    ensure amount > 0.0
+    signatory issuer, owner
+    ensure amount > 0.0 && issuer /= owner
 
     -- | Lender funds a borrower-specific offer directly from cash. The funded
     -- principal leaves the lender here and is delivered to the borrower on
-    -- Accept (or refunded on Withdraw). This choice pre-funds the offer;
-    -- self-issued demo templates do not prove external asset provenance.
+    -- Accept (or refunded on Withdraw). The issuer-signed offer is the escrow:
+    -- its consuming choices can release this reserved principal only once.
     choice MakeOffer : ContractId LoanOffer
       with
         borrower : Party
@@ -106,6 +107,7 @@ template CashHolding
       do
         now <- getTime
         assertMsg "offer maturity must be in the future" (now < maturity)
+        assertMsg "principal must be positive" (principal > 0.0)
         mark <- fetch valuationCid
         unitPrice <- checkedPrice valuationAgent owner borrower regulator collateralAsset mark.streamId valuationCid
         assertMsg "collateral quantity must be positive" (collateralQuantity > 0.0)
@@ -114,10 +116,11 @@ template CashHolding
         assertMsg "insufficient cash to fund offer" (amount >= principal)
         if amount > principal
           then do
-            _ <- create CashHolding with owner; amount = amount - principal
+            _ <- create CashHolding with issuer; owner; amount = amount - principal
             pure ()
           else pure ()
         create LoanOffer with
+          issuer
           lender = owner
           borrower
           regulator
@@ -138,20 +141,21 @@ template CashHolding
       do
         assertMsg "split amount must be positive and less than total amount" (splitAmount > 0.0 && splitAmount < amount)
         let remainingAmount = amount - splitAmount
-        cid1 <- create CashHolding with owner; amount = splitAmount
-        cid2 <- create CashHolding with owner; amount = remainingAmount
+        cid1 <- create CashHolding with issuer; owner; amount = splitAmount
+        cid2 <- create CashHolding with issuer; owner; amount = remainingAmount
         pure (cid1, cid2)
 
--- | Demo tokenized collateral (e.g. tokenized T-Bill / MMF units). Bearer
--- holding owned by the borrower until it is locked into a loan.
+-- Demo collateral uses the same controlled issuer. It is simulated inventory,
+-- not a claim that Treasury/MMF units are actually held by a custodian.
 template CollateralHolding
   with
-    owner : Party -- borrower until locked, then lender if liquidated?
+    issuer : Party
+    owner : Party
     asset : Text
     quantity : Decimal
   where
-    signatory owner
-    ensure quantity > 0.0
+    signatory issuer, owner
+    ensure quantity > 0.0 && asset /= "" && issuer /= owner
 
     -- Carve out the intended deposit privately before a Loan choice fetches it.
     choice SplitCollateral : (ContractId CollateralHolding, ContractId CollateralHolding)
@@ -161,17 +165,18 @@ template CollateralHolding
       do
         assertMsg "split quantity must be positive and less than total quantity"
           (splitQuantity > 0.0 && splitQuantity < quantity)
-        exact <- create CollateralHolding with owner; asset; quantity = splitQuantity
-        remainder <- create CollateralHolding with owner; asset; quantity = quantity - splitQuantity
+        exact <- create CollateralHolding with issuer; owner; asset; quantity = splitQuantity
+        remainder <- create CollateralHolding with issuer; owner; asset; quantity = quantity - splitQuantity
         pure (exact, remainder)
 
 -- | Borrower-specific loan offer for a known-counterparty lending flow.
 --
--- The lender is the signatory because they commit to (and pre-fund) the offered
--- terms. The borrower and regulator are observers so the offer is selectively
--- disclosed without becoming globally visible.
+-- The lender commits the terms; the issuer's signature carries the reserved
+-- principal from CashHolding.MakeOffer. A lender cannot construct trusted
+-- escrow directly. The trusted issuer can authorize issuance by definition.
 template LoanOffer
   with
+    issuer : Party
     lender : Party
     borrower : Party
     regulator : Party
@@ -185,7 +190,7 @@ template LoanOffer
     liquidationThresholdLtv : Decimal
     marginCallWindowSeconds : Int
   where
-    signatory lender
+    signatory issuer, lender
     observer borrower, regulator
 
     ensure principal > 0.0 && interest >= 0.0 && collateralQuantity > 0.0
@@ -193,6 +198,7 @@ template LoanOffer
       && marginCallWindowSeconds >= 60 && marginCallWindowSeconds <= 86400
       && lender /= borrower && collateralAsset /= ""
       && valuationAgent /= lender && valuationAgent /= borrower && valuationAgent /= regulator
+      && issuer /= lender && issuer /= borrower && issuer /= regulator && issuer /= valuationAgent
 
     -- | Borrower locks matching collateral and draws the principal. The
     -- borrower's CollateralHolding is consumed (encumbered in the loan) and a
@@ -209,12 +215,14 @@ template LoanOffer
         assertMsg "acceptance LTV must be below the liquidation threshold"
           ((principal / (collateralQuantity * unitPrice)) * 100.0 < liquidationThresholdLtv)
         collateral <- fetch collateralCid
+        assertMsg "collateral issuer mismatch" (collateral.issuer == issuer)
         assertMsg "collateral must be owned by the borrower" (collateral.owner == borrower)
         assertMsg "collateral asset mismatch" (collateral.asset == collateralAsset)
         assertMsg "collateral quantity mismatch" (collateral.quantity == collateralQuantity)
         archive collateralCid
-        _ <- create CashHolding with owner = borrower; amount = principal
+        _ <- create CashHolding with issuer; owner = borrower; amount = principal
         create Loan with
+          issuer
           lender
           borrower
           regulator
@@ -235,14 +243,15 @@ template LoanOffer
     choice Withdraw : ContractId CashHolding
       controller lender
       do
-        create CashHolding with owner = lender; amount = principal
+        create CashHolding with issuer; owner = lender; amount = principal
 
 -- | Active private bilateral loan created after the borrower accepts an offer.
 --
--- Both lender and borrower are signatories because the active loan records a
--- shared obligation. The regulator is read-only via observer visibility.
+-- The issuer carries the locked collateral's authority through the lifecycle.
+-- Lender and borrower authorize their shared obligation; regulator observes.
 template Loan
   with
+    issuer : Party
     lender : Party
     borrower : Party
     regulator : Party
@@ -258,7 +267,7 @@ template Loan
     marginCall : Optional MarginCallDetails
     collateralLocked : Bool
   where
-    signatory lender, borrower
+    signatory issuer, lender, borrower
     observer regulator
 
     ensure principal > 0.0 && interest >= 0.0 && collateralQuantity > 0.0
@@ -266,6 +275,7 @@ template Loan
       && marginCallWindowSeconds >= 60 && marginCallWindowSeconds <= 86400
       && lender /= borrower && collateralAsset /= "" && collateralLocked
       && valuationAgent /= lender && valuationAgent /= borrower && valuationAgent /= regulator
+      && issuer /= lender && issuer /= borrower && issuer /= regulator && issuer /= valuationAgent
 
     -- Consuming the Loan prevents a parallel call or a reset of its deadline.
     choice IssueMarginCall : ContractId Loan
@@ -300,6 +310,7 @@ template Loan
         assertMsg "margin call deadline has passed" (now < call.deadline)
         assertMsg "top-up quantity must be positive" (topUpQuantity > 0.0)
         collateral <- fetch collateralCid
+        assertMsg "top-up issuer mismatch" (collateral.issuer == issuer)
         assertMsg "top-up must be owned by the borrower" (collateral.owner == borrower)
         assertMsg "top-up asset mismatch" (collateral.asset == collateralAsset)
         assertMsg "top-up must use an exact holding; split privately first" (collateral.quantity == topUpQuantity)
@@ -333,12 +344,14 @@ template Loan
       do
         let repayment = principal + interest
         cash <- fetch repaymentCid
+        assertMsg "repayment issuer mismatch" (cash.issuer == issuer)
         assertMsg "repayment cash must be owned by the borrower" (cash.owner == borrower)
         assertMsg "repayment amount mismatch" (cash.amount == repayment)
         archive repaymentCid
-        _ <- create CashHolding with owner = lender; amount = repayment
-        _ <- create CollateralHolding with owner = borrower; asset = collateralAsset; quantity = collateralQuantity
+        _ <- create CashHolding with issuer; owner = lender; amount = repayment
+        _ <- create CollateralHolding with issuer; owner = borrower; asset = collateralAsset; quantity = collateralQuantity
         create LoanClosed with
+          issuer
           lender
           borrower
           regulator
@@ -367,8 +380,9 @@ template Loan
         unitPrice <- checkedPrice valuationAgent lender borrower regulator collateralAsset valuationStreamId valuationCid
         assertMsg "liquidation requires an LTV breach"
           ((principal / (collateralQuantity * unitPrice)) * 100.0 >= liquidationThresholdLtv)
-        _ <- create CollateralHolding with owner = lender; asset = collateralAsset; quantity = collateralQuantity
+        _ <- create CollateralHolding with issuer; owner = lender; asset = collateralAsset; quantity = collateralQuantity
         create LoanClosed with
+          issuer
           lender
           borrower
           regulator
@@ -389,9 +403,9 @@ template Loan
       do
         now <- getTime
         assertMsg "loan is not past maturity" (now > maturity)
-        _ <- create CollateralHolding with owner = lender; asset = collateralAsset; quantity = collateralQuantity
+        _ <- create CollateralHolding with issuer; owner = lender; asset = collateralAsset; quantity = collateralQuantity
         create LoanClosed with
-          lender; borrower; regulator; valuationAgent; valuationStreamId
+          issuer; lender; borrower; regulator; valuationAgent; valuationStreamId
           principal; interest; collateralAsset; collateralQuantity; maturity
           reason = "LiquidatedAtMaturity"
           collateralReleased = False
@@ -399,11 +413,11 @@ template Loan
 -- | Terminal settlement record created when a loan closes, either through
 -- borrower repayment or lender liquidation.
 --
--- Both lender and borrower remain signatories so the closed position is a
--- shared, auditable record. The regulator keeps observer visibility, while an
--- outsider still sees nothing.
+-- The issuer and counterparties retain a shared settlement record. The
+-- regulator keeps observer visibility, while an outsider still sees nothing.
 template LoanClosed
   with
+    issuer : Party
     lender : Party
     borrower : Party
     regulator : Party
@@ -417,8 +431,12 @@ template LoanClosed
     reason : Text
     collateralReleased : Bool
   where
-    signatory lender, borrower
+    signatory issuer, lender, borrower
     observer regulator
+
+    ensure principal > 0.0 && interest >= 0.0 && collateralQuantity > 0.0
+      && collateralAsset /= "" && lender /= borrower
+      && issuer /= lender && issuer /= borrower && issuer /= regulator && issuer /= valuationAgent
 
     -- | Archive the settlement record. Used to clear ledger state when the
     -- demo is reset; the closed loan has already settled.

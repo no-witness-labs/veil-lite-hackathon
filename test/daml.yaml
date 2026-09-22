@@ -1,12 +1,12 @@
 sdk-version: 3.5.1
 name: veil-lite-test
 source: daml
-version: 0.4.0
+version: 0.5.0
 dependencies:
   - daml-prim
   - daml-stdlib
   - daml-script
 data-dependencies:
-  - ../.daml/dist/veil-lite-0.4.0.dar
+  - ../.daml/dist/veil-lite-0.5.0.dar
 build-options:
   - --target=2.2

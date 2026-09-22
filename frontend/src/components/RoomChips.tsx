@@ -1,9 +1,11 @@
 import type { Role } from '../types'
+import { getIssuer } from '../runtime'
 import { ACCENT, PARTY_DEFS } from '../state'
 
 /** "In the room" — the parties who can see this contract, with the active
  * role highlighted. Everyone else is explicitly shown as seeing nothing. */
 export function RoomChips({ role }: { role: Role }) {
+  const issuer = getIssuer()
   return (
     <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
       {PARTY_DEFS.filter((p) => p.key !== 'valuer').map((p) => {
@@ -54,6 +56,14 @@ export function RoomChips({ role }: { role: Role }) {
           </div>
         )
       })}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 13px', border: '1px solid #f3dfb4', borderRadius: 10, background: '#fffaf0' }}>
+        <div style={{ width: 26, height: 26, borderRadius: 7, background: '#fdf3e0', color: '#b7791f', fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>DI</div>
+        <div style={{ fontSize: 11, color: '#815a17', lineHeight: 1.3 }}>
+          Demo issuer sees holdings
+          <br />
+          and loan lifecycle · {shortParty(issuer)}
+        </div>
+      </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 13px', border: '1px solid #eaf7f4', borderRadius: 10, background: '#f8fdfc' }}>
         <div style={{ width: 26, height: 26, borderRadius: 7, background: '#eaf7f4', color: '#197d69', fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>VA</div>
         <div style={{ fontSize: 11, color: '#197d69', lineHeight: 1.3 }}>
@@ -74,4 +84,9 @@ export function RoomChips({ role }: { role: Role }) {
       </div>
     </div>
   )
+}
+
+function shortParty(value: string): string {
+  const [hint, fingerprint = ''] = value.split('::')
+  return fingerprint ? `${hint}::${fingerprint.slice(0, 8)}…${fingerprint.slice(-4)}` : hint
 }

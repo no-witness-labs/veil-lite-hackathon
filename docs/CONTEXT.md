@@ -2,24 +2,28 @@
 
 ## Domain vocabulary
 
-- **Party**: Canton/Daml on-ledger identity. In this MVP: `lender`, `borrower`, `regulator`, and `outsider`.
+- **Party**: A participant's identity in Veil. The demo distinguishes lender, borrower, regulator, valuation agent, demo issuer, and outsider.
 - **Lender**: Party offering principal to the borrower.
 - **Borrower**: Party accepting credit and pledging collateral.
 - **Regulator**: Optional observer who can view sensitive contracts but cannot act.
+- **Demo Issuer**: Trusted authority for the demo's simulated cash and collateral. Its authorization establishes the asset's identity, not real-world backing; it sees the holdings and financing positions involving those assets.
+- **Valuation Agent**: Agreed source of timestamped collateral prices, with access to price records but not the private loan terms.
 - **Outsider**: Party used in tests/UI to prove non-stakeholders cannot see private contracts.
 - **Known Counterparty**: Lender and borrower already know each other before the on-ledger MVP flow starts. Discovery/relationship formation is out of scope.
 - **Repo-style Financing**: Short-term secured financing where a borrower receives cash-like principal and pledges high-quality tokenized collateral. Veil uses this as the clearest demo story.
 - **Principal Asset**: Cash-like asset the lender provides, for example USDC, Canton Coin, or a demo cash token.
 - **Collateral Asset**: Tokenized asset pledged by the borrower, for example tokenized T-Bills, money-market fund units, fund shares, invoices, or other RWA claims.
 - **Haircut / LTV**: Financing ratio between principal and collateral value. Demo target: 100 principal against 150 collateral value, or 66.7% LTV.
-- **Loan Offer**: Borrower-specific lender proposal containing loan terms for a known borrower.
+- **Loan Offer**: Borrower-specific financing proposal that reserves the offered principal until acceptance or withdrawal.
+- **Funding Escrow**: Principal reserved in an unaccepted loan offer. Acceptance delivers it to the borrower; withdrawal returns it to the lender, and only one can happen.
 - **Loan Program**: Future extension where a lender publishes lending policy for borrower discovery. Not MVP scope.
 - **Borrow Request**: Future extension where a borrower requests credit against a loan program. Not MVP scope.
 - **Loan**: Active bilateral credit position after borrower acceptance.
 - **Collateral Lock**: MVP representation of collateral being encumbered while the loan is active.
-- **Lender-submitted Mark**: Current collateral value supplied by the lender to exercise the MVP liquidation branch. The Daml contract enforces the LTV breach; oracle-signed marks are production roadmap.
+- **Attested Mark**: Timestamped unit price supplied by the agreed valuation agent. Its economic accuracy remains trusted.
+- **Margin Call**: Notice of a collateral shortfall with an agreed deadline to cure it through a top-up or price recovery.
 - **Repayment**: Borrower action that archives active loan and releases collateral.
-- **Liquidation**: Lender action enabled when the submitted collateral mark makes the loan undercollateralized.
+- **Liquidation**: Transfer of locked collateral to the lender after an unresolved margin deadline or overdue repayment.
 
 ## Canton mental model
 

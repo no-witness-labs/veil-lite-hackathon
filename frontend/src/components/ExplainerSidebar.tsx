@@ -67,8 +67,9 @@ export function ExplainerSidebar({ role }: { role: Role }) {
         <div style={label}>Why private on Canton</div>
         <div style={body}>
           Every Veil contract lives only on its stakeholders’ sub-ledgers. There is no public mempool or global
-          state to scan — so no competitor, bot, or onlooker can observe the position. On a public chain, every
-          transaction is visible to all.
+          state to scan — so no competitor, bot, or onlooker can observe the position. The demo issuer is an explicit
+          stakeholder and can see holdings and loans to authorize the simulated assets; the valuer still sees only
+          signed valuation records. On a public chain, every transaction is visible to all.
         </div>
       </div>
 

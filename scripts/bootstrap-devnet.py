@@ -29,12 +29,13 @@ USER_ID = os.environ.get("VEIL_LEDGER_USER_ID", "6")
 ACCESS_TOKEN = os.environ.get("VEIL_DEVNET_ACCESS_TOKEN")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DAR = os.path.join(ROOT, ".daml", "dist", "veil-lite-0.4.0.dar")
+DAR = os.path.join(ROOT, ".daml", "dist", "veil-lite-0.5.0.dar")
 CONFIG = os.path.join(ROOT, "frontend", "public", "ledger-config.json")
 PACKAGE_REF = "#veil-lite"
 COLLATERAL_ASSET = "Tokenized T-Bill / MMF"
 
 ROLES = {
+    "issuer": "veilLiteDemoIssuer",
     "lender": "veilLiteLender",
     "borrower": "veilLiteBorrower",
     "regulator": "veilLiteRegulator",
@@ -161,16 +162,19 @@ def active_contracts(token, party):
     return resp
 
 
-def already_seeded(token, borrower):
+def already_seeded(token, borrower, issuer):
     entries = active_contracts(token, borrower)
+    has_collateral = False
     for entry in entries:
         event = (entry.get("contractEntry", {}).get("JsActiveContract", {}).get("createdEvent") or {})
-        if "CollateralHolding" in str(event.get("templateId", "")):
-            return True
-    return False
+        if event.get("templateId", "").endswith((":Veil:CashHolding", ":Veil:CollateralHolding", ":Veil:LoanOffer", ":Veil:Loan", ":Veil:LoanClosed")) and not event.get("createArgument", {}).get("issuer"):
+            sys.exit("Legacy asset contracts found; use fresh parties for version 0.5.0.")
+        if event.get("templateId", "").endswith(":Veil:CollateralHolding") and event.get("createArgument", {}).get("issuer") == issuer:
+            has_collateral = True
+    return has_collateral
 
 
-def submit_create(token, party, template_name, create_arguments):
+def submit_create(token, party, issuer, template_name, create_arguments):
     command = {
         "commands": {
             "commands": [
@@ -182,7 +186,7 @@ def submit_create(token, party, template_name, create_arguments):
                 }
             ],
             "commandId": f"devnet-seed-{template_name}-{os.urandom(4).hex()}",
-            "actAs": [party],
+            "actAs": [issuer, party],
             "userId": USER_ID,
         }
     }
@@ -190,7 +194,7 @@ def submit_create(token, party, template_name, create_arguments):
 
 
 def seed_holdings(token, parties):
-    if already_seeded(token, parties["borrower"]):
+    if already_seeded(token, parties["borrower"], parties["issuer"]):
         print("✓ holdings already seeded")
         return
 
@@ -209,7 +213,8 @@ def seed_holdings(token, parties):
         ),
     ]
     for party, template_name, args in creates:
-        code, resp = submit_create(token, party, template_name, args)
+        args["issuer"] = parties["issuer"]
+        code, resp = submit_create(token, party, parties["issuer"], template_name, args)
         if code != 200:
             sys.exit(f"Failed to seed {template_name} (HTTP {code}): {json.dumps(resp)}")
     print("✓ seeded canonical holdings")
@@ -221,7 +226,8 @@ def write_config(parties):
         "jsonApiUrl": LEDGER,
         "packageRef": PACKAGE_REF,
         "userId": USER_ID,
-        "parties": parties,
+        "issuer": parties["issuer"],
+        "parties": {role: party for role, party in parties.items() if role != "issuer"},
     }
     with open(CONFIG, "w", encoding="utf-8") as file:
         json.dump(config, file, indent=2)
@@ -234,7 +240,7 @@ def seed_valuation(token, parties):
     events = [e.get("contractEntry", {}).get("JsActiveContract", {}).get("createdEvent", {}) for e in entries]
     marks = [e for e in events if e.get("templateId", "").endswith(":Veil:CollateralValuation")]
     if any("streamId" not in e["createArgument"] for e in marks):
-        sys.exit("Legacy valuations found; use a fresh party suffix for version 0.4.0.")
+        sys.exit("Legacy valuations found; use a fresh party suffix for version 0.5.0.")
     if len(marks) > 1 or any(e.get("templateId", "").endswith(":Veil:ValuationStream") for e in events):
         sys.exit("Ambiguous or unpublished valuation streams; use a fresh party suffix.")
     if marks:

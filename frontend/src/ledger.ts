@@ -4,7 +4,8 @@
 // v2 directly with fetch. The sandbox runs with auth disabled, so requests carry
 // no bearer token — the acting party is named explicitly in each command.
 //
-// Runtime config (party ids) is fetched from /ledger-config.json, which
+// Runtime config (party ids plus the configured issuer) is fetched from
+// /ledger-config.json, which
 // scripts/bootstrap.sh writes into frontend/public. Keeping it out of the source
 // import means `npm run build` succeeds on a clean checkout (CI / Vercel) before
 // any sandbox has run; the app shows a clear "run start-sandbox" message instead.
@@ -14,6 +15,7 @@ interface LedgerConfig {
   jsonApiUrl: string
   packageRef: string
   userId: string
+  issuer: string
   parties: Record<Role, string>
 }
 
@@ -21,30 +23,75 @@ const DEFAULTS: LedgerConfig = {
   jsonApiUrl: 'http://127.0.0.1:6864',
   packageRef: '#veil-lite',
   userId: 'veil',
+  issuer: '',
   parties: { lender: '', borrower: '', regulator: '', valuer: '', outsider: '' },
 }
 
 let cfg: LedgerConfig = DEFAULTS
+let configIssue: string | null = null
 
-/** Load runtime config written by scripts/bootstrap.sh. Returns false when it's
- * missing or has no parties yet (i.e. the sandbox hasn't been bootstrapped). */
+const CONFIGURED_ROLES: Role[] = ['lender', 'borrower', 'regulator', 'valuer', 'outsider']
+const ISSUER_SCOPED_TEMPLATES = new Set<TemplateName>([
+  'LoanOffer',
+  'Loan',
+  'LoanClosed',
+  'CashHolding',
+  'CollateralHolding',
+])
+
+/** Load runtime config written by scripts/bootstrap.sh. Returns false when it
+ * is missing, incomplete, or does not identify a distinct issuer. */
 export async function loadConfig(): Promise<boolean> {
   try {
     const res = await fetch('/ledger-config.json', { cache: 'no-store' })
-    if (!res.ok) return false
+    if (!res.ok) {
+      cfg = DEFAULTS
+      const text = await res.text()
+      let detail = ''
+      try {
+        const body = JSON.parse(text) as { cause?: unknown }
+        if (typeof body.cause === 'string' && body.cause) detail = ` ${body.cause}`
+      } catch {
+        // Keep the status-only message when the endpoint did not return JSON.
+      }
+      configIssue = `Ledger configuration could not be loaded (HTTP ${res.status}).${detail}`
+      return false
+    }
     const loaded = await res.json()
+    const parties = { ...DEFAULTS.parties, ...(loaded?.parties ?? {}) }
+    for (const role of CONFIGURED_ROLES) {
+      parties[role] = typeof parties[role] === 'string' ? parties[role].trim() : ''
+    }
+    const issuer = typeof loaded?.issuer === 'string' ? loaded.issuer.trim() : ''
     cfg = {
       ...DEFAULTS,
       ...loaded,
-      parties: { ...DEFAULTS.parties, ...(loaded.parties ?? {}) },
+      issuer,
+      parties,
     }
-    return Boolean(cfg.parties.lender)
-  } catch {
+    const missing: string[] = CONFIGURED_ROLES.filter((role) => !cfg.parties[role])
+    if (!cfg.issuer) missing.push('issuer')
+    if (missing.length > 0) {
+      configIssue = `Ledger configuration is incomplete. Missing ${missing.length === 1 ? 'party' : 'parties'}: ${missing.join(', ')}.`
+      return false
+    }
+    const issuerCollision = CONFIGURED_ROLES.find((role) => cfg.parties[role] === cfg.issuer)
+    if (issuerCollision) {
+      configIssue = `Ledger configuration is invalid: issuer must be distinct from the ${issuerCollision} party.`
+      return false
+    }
+    configIssue = null
+    return true
+  } catch (error) {
+    cfg = DEFAULTS
+    configIssue = `Ledger configuration could not be read: ${error instanceof Error ? error.message : String(error)}`
     return false
   }
 }
 
 export const getParties = (): Record<Role, string> => cfg.parties
+export const getIssuer = (): string => cfg.issuer
+export const getConfigIssue = (): string | null => configIssue
 
 // In dev, call same-origin ("/v2/...") so the Vite proxy forwards to the sandbox
 // (the JSON API sends no CORS headers). In a production build, use the configured URL.
@@ -120,6 +167,10 @@ export async function listActive(party: string): Promise<ActiveState> {
     if (!ce) continue
     const entity = templateName(ce.templateId) as TemplateName
     if (!KNOWN_TEMPLATES.includes(entity)) continue
+    // Keep the raw ACS response intact for the inspector, but never surface
+    // holdings or deal contracts issued by another configured issuer as
+    // normalized application state.
+    if (ISSUER_SCOPED_TEMPLATES.has(entity) && ce.createArgument?.issuer !== cfg.issuer) continue
     contracts.push({
       contractId: ce.contractId,
       template: entity,
@@ -179,10 +230,10 @@ export const LIQUIDATION_THRESHOLD_LTV = 90
 export function parseHoldings(contracts: Contract[]): Holding[] {
   const out: Holding[] = []
   for (const c of contracts) {
-    if (c.template === 'CashHolding')
-      out.push({ contractId: c.contractId, kind: 'cash', amount: Number(c.args.amount) })
-    else if (c.template === 'CollateralHolding')
-      out.push({ contractId: c.contractId, kind: 'collateral', amount: Number(c.args.quantity), asset: c.args.asset })
+    if (c.template === 'CashHolding' && c.args.issuer === cfg.issuer)
+      out.push({ contractId: c.contractId, kind: 'cash', amount: Number(c.args.amount), issuer: c.args.issuer })
+    else if (c.template === 'CollateralHolding' && c.args.issuer === cfg.issuer)
+      out.push({ contractId: c.contractId, kind: 'collateral', amount: Number(c.args.quantity), asset: c.args.asset, issuer: c.args.issuer })
   }
   return out
 }
@@ -292,6 +343,9 @@ export async function acceptOffer(offerCid: string): Promise<TxResult> {
   const { contracts } = await listActive(cfg.parties.borrower)
   const offer = contracts.find((c) => c.contractId === offerCid && c.template === 'LoanOffer')
   if (!offer) throw new Error('Offer is not visible to the borrower or is no longer active; refresh before accepting.')
+  if (offer.args.issuer !== cfg.issuer) {
+    throw new Error('Refusing to accept an offer issued by a different issuer; refresh the configured issuer view.')
+  }
   const requestedQuantity = Number(offer?.args.collateralQuantity)
   if (!Number.isFinite(requestedQuantity) || requestedQuantity <= 0) {
     throw new Error('Offer collateral quantity is missing or invalid; refresh the lender offer before accepting.')
@@ -407,10 +461,10 @@ export async function seedDemo(): Promise<void> {
     ),
     'seed-valuation',
   )
-  await submit(cfg.parties.lender, create(template('CashHolding'), { owner: cfg.parties.lender, amount: String(SEED.lenderCash) }), 'seed')
-  await submit(cfg.parties.borrower, create(template('CashHolding'), { owner: cfg.parties.borrower, amount: String(SEED.borrowerCash) }), 'seed')
-  await submit(cfg.parties.borrower, create(template('CollateralHolding'), { owner: cfg.parties.borrower, asset: COLLATERAL_ASSET, quantity: String(SEED.borrowerCollateral) }), 'seed')
-  await submit(cfg.parties.borrower, create(template('CollateralHolding'), { owner: cfg.parties.borrower, asset: COLLATERAL_ASSET, quantity: String(SEED.borrowerReserve) }), 'seed')
+  await submitAs([cfg.issuer, cfg.parties.lender], create(template('CashHolding'), { issuer: cfg.issuer, owner: cfg.parties.lender, amount: String(SEED.lenderCash) }), 'seed')
+  await submitAs([cfg.issuer, cfg.parties.borrower], create(template('CashHolding'), { issuer: cfg.issuer, owner: cfg.parties.borrower, amount: String(SEED.borrowerCash) }), 'seed')
+  await submitAs([cfg.issuer, cfg.parties.borrower], create(template('CollateralHolding'), { issuer: cfg.issuer, owner: cfg.parties.borrower, asset: COLLATERAL_ASSET, quantity: String(SEED.borrowerCollateral) }), 'seed')
+  await submitAs([cfg.issuer, cfg.parties.borrower], create(template('CollateralHolding'), { issuer: cfg.issuer, owner: cfg.parties.borrower, asset: COLLATERAL_ASSET, quantity: String(SEED.borrowerReserve) }), 'seed')
 }
 
 async function submitReset(actAs: string[], command: unknown, prefix: string): Promise<TxResult> {
@@ -436,7 +490,7 @@ async function submitReset(actAs: string[], command: unknown, prefix: string): P
 
 /** Clear the ledger and re-seed canonical holdings so the demo can be re-run.
  * Reset is an explicit cooperative demo cleanup. It archives active loans with
- * both signatories rather than bypassing the margin-call deadline/Liquidate
+ * issuer, lender, and borrower rather than bypassing the margin-call deadline/Liquidate
  * choice, then burns known holdings and valuation records before seeding. */
 export async function resetDemo(): Promise<void> {
   let { contracts } = await listActive(cfg.parties.lender)
@@ -444,7 +498,7 @@ export async function resetDemo(): Promise<void> {
     if (c.template === 'LoanOffer') await withdrawOffer(c.contractId)
     else if (c.template === 'Loan') {
       await submitReset(
-        [cfg.parties.lender, cfg.parties.borrower],
+        [cfg.issuer, cfg.parties.lender, cfg.parties.borrower],
         exercise(template('Loan'), c.contractId, 'Archive'),
         'archive-loan',
       )
@@ -453,7 +507,11 @@ export async function resetDemo(): Promise<void> {
   ;({ contracts } = await listActive(cfg.parties.lender))
   for (const c of contracts) {
     if (c.template === 'LoanClosed')
-      await submit(cfg.parties.lender, exercise(template('LoanClosed'), c.contractId, 'Dismiss'), 'dismiss')
+      await submitReset(
+        [cfg.issuer, cfg.parties.lender, cfg.parties.borrower],
+        exercise(template('LoanClosed'), c.contractId, 'Dismiss'),
+        'dismiss',
+      )
   }
   // Price and stream records have multiple signatories. Reset is an explicit
   // cooperative demo cleanup, so archive both templates with all authorized
@@ -470,12 +528,12 @@ export async function resetDemo(): Promise<void> {
       await submitAs(cleanupActors, exercise(template('ValuationStream'), c.contractId, 'Archive'), 'burn-valuation-stream')
     }
   }
-  // Burn every holding (each archived by its owner) before re-seeding.
+  // Burn each trusted holding with issuer and owner authority before reseeding.
   for (const party of [cfg.parties.lender, cfg.parties.borrower]) {
     const { contracts: held } = await listActive(party)
     for (const c of held) {
       if (c.template === 'CashHolding' || c.template === 'CollateralHolding')
-        await submit(party, exercise(template(c.template), c.contractId, 'Archive'), 'burn')
+        await submitAs([cfg.issuer, party], exercise(template(c.template), c.contractId, 'Archive'), 'burn')
     }
   }
   await seedDemo()

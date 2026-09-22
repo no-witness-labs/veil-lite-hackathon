@@ -6,6 +6,8 @@ export async function loadConfig(): Promise<boolean> {
 }
 
 export const getParties = (): Record<Role, string> => ledger.getParties()
+export const getIssuer = (): string => ledger.getIssuer()
+export const getConfigIssue = (): string | null => ledger.getConfigIssue()
 
 export const LIQUIDATION_THRESHOLD_LTV = ledger.LIQUIDATION_THRESHOLD_LTV
 export const COLLATERAL_ASSET = ledger.COLLATERAL_ASSET

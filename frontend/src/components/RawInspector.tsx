@@ -19,7 +19,7 @@ export function RawInspector({ role, raw, offset }: { role: Role; raw: unknown[]
         <div>
           <div style={{ fontSize: 15, fontWeight: 600, color: '#14171f' }}>Raw ledger view</div>
           <div style={{ fontSize: 12, color: '#8a929e', marginTop: 2 }}>
-            active-contracts as {PARTY_NAMES[role]} · offset {offset}
+            active-contracts as {PARTY_NAMES[role]} · offset {offset} · includes all issuers
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>

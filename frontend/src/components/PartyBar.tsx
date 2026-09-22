@@ -1,5 +1,5 @@
 import type { Role } from '../types'
-import { getParties } from '../runtime'
+import { getIssuer, getParties } from '../runtime'
 import { ROLE_DOT, ROLE_LABELS } from '../state'
 
 const mono: React.CSSProperties = { fontFamily: "'IBM Plex Mono',monospace" }
@@ -13,6 +13,7 @@ function shortParty(p: string): string {
 /** Slim strip exposing the active Canton party identifiers. */
 export function PartyBar({ active }: { active: Role }) {
   const parties = getParties()
+  const issuer = getIssuer()
   const fingerprint = (parties.lender.split('::')[1] ?? '').slice(0, 10)
   const label = `Canton parties · participant ${fingerprint}…`
   return (
@@ -32,6 +33,11 @@ export function PartyBar({ active }: { active: Role }) {
               </div>
             )
           })}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, opacity: 0.82 }}>
+            <span style={{ width: 7, height: 7, borderRadius: 999, background: '#b7791f', flex: 'none' }} />
+            <span style={{ fontSize: 11, fontWeight: 600, color: '#5b6472' }}>Demo issuer</span>
+            <span style={{ ...mono, fontSize: 11, color: '#9aa1ad' }}>{shortParty(issuer)}</span>
+          </div>
         </div>
       </div>
     </div>

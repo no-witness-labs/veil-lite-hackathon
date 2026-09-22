@@ -3,8 +3,8 @@ import { PARTY_NAMES } from '../state'
 
 const mono: React.CSSProperties = { fontFamily: "'IBM Plex Mono',monospace" }
 
-/** The active party's own wallet. Holdings are owner-signatory with no
- * observers, so each role sees only its own — a second privacy signal. */
+/** The active party's own wallet. Holdings are issuer + owner signatory with
+ * no observers, so each role sees only its own — a second privacy signal. */
 export function HoldingsPanel({ role, holdings }: { role: Role; holdings: Holding[] }) {
   const cash = holdings.filter((h) => h.kind === 'cash').sort((a, b) => b.amount - a.amount)
   const collateral = holdings.filter((h) => h.kind === 'collateral')
@@ -23,10 +23,10 @@ export function HoldingsPanel({ role, holdings }: { role: Role; holdings: Holdin
       ) : (
         <div style={{ padding: '14px 24px', display: 'flex', flexDirection: 'column', gap: 10 }}>
           {cash.map((h) => (
-            <Row key={h.contractId} label="Cash" detail="USDC" value={`${h.amount} USDC`} bg="#eef2fe" color="#2748d8" />
+            <Row key={h.contractId} label="Cash" detail="Simulated USDC" value={`${h.amount} simulated USDC`} bg="#eef2fe" color="#2748d8" />
           ))}
           {collateral.map((h) => (
-            <Row key={h.contractId} label="Collateral" detail={h.asset ?? ''} value={`${h.amount} units`} bg="#f0eefb" color="#6b46c1" />
+            <Row key={h.contractId} label="Collateral" detail={`Simulated ${h.asset ?? 'asset'}`} value={`${h.amount} units`} bg="#f0eefb" color="#6b46c1" />
           ))}
         </div>
       )}

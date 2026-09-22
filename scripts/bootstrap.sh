@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Bootstrap the running Canton sandbox for the Veil demo:
 #   1. upload the Veil DAR
-#   2. allocate the five demo parties (idempotent)
+#   2. allocate the five user roles and the demo issuer (idempotent)
 #   3. write frontend/public/ledger-config.json for the UI
 #
 # Usage: scripts/bootstrap.sh [JSON_API_URL]
@@ -9,7 +9,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BASE="${1:-http://127.0.0.1:6864}"
-DAR="$ROOT/.daml/dist/veil-lite-0.4.0.dar"
+DAR="$ROOT/.daml/dist/veil-lite-0.5.0.dar"
 CONFIG="$ROOT/frontend/public/ledger-config.json"
 USER_ID="veil"
 
@@ -53,6 +53,7 @@ BORROWER="$(allocate Borrower)"
 REGULATOR="$(allocate Regulator)"
 VALUER="$(allocate Valuer)"
 OUTSIDER="$(allocate Outsider)"
+ISSUER="$(allocate DemoIssuer)"
 
 mkdir -p "$(dirname "$CONFIG")"
 cat > "$CONFIG" <<JSON
@@ -60,6 +61,7 @@ cat > "$CONFIG" <<JSON
   "jsonApiUrl": "$BASE",
   "packageRef": "#veil-lite",
   "userId": "$USER_ID",
+  "issuer": "$ISSUER",
   "parties": {
     "lender": "$LENDER",
     "borrower": "$BORROWER",
@@ -79,10 +81,10 @@ echo "→ Wrote $CONFIG"
 COLLATERAL_ASSET="Tokenized T-Bill / MMF"
 
 create_holding() {
-  # $1 = acting party, $2 = JSON createArguments, $3 = template entity
+  # $1 = owner; issuance requires both owner and issuer authority.
   curl --fail-with-body -sS -o /dev/null -X POST "$BASE/v2/commands/submit-and-wait-for-transaction" \
     -H "Content-Type: application/json" \
-    -d "{\"commands\":{\"commands\":[{\"CreateCommand\":{\"templateId\":\"#veil-lite:Veil:$3\",\"createArguments\":$2}}],\"commandId\":\"seed-$3-$RANDOM\",\"actAs\":[\"$1\"],\"userId\":\"$USER_ID\"}}"
+    -d "{\"commands\":{\"commands\":[{\"CreateCommand\":{\"templateId\":\"#veil-lite:Veil:$3\",\"createArguments\":$2}}],\"commandId\":\"seed-$3-$RANDOM\",\"actAs\":[\"$ISSUER\",\"$1\"],\"userId\":\"$USER_ID\"}}"
 }
 
 already_seeded="$(curl -s -X POST "$BASE/v2/state/active-contracts" \
@@ -90,16 +92,19 @@ already_seeded="$(curl -s -X POST "$BASE/v2/state/active-contracts" \
   -d "{\"filter\":{\"filtersByParty\":{\"$BORROWER\":{\"cumulative\":[{\"identifierFilter\":{\"WildcardFilter\":{\"value\":{\"includeCreatedEventBlob\":false}}}}]}}},\"verbose\":false,\"activeAtOffset\":$(curl -s "$BASE/v2/state/ledger-end" | python3 -c 'import sys,json;print(json.load(sys.stdin)["offset"])')}" \
   | python3 -c 'import sys,json
 d=json.load(sys.stdin)
-print(any("CollateralHolding" in (e.get("contractEntry",{}).get("JsActiveContract",{}).get("createdEvent",{}) or {}).get("templateId","") for e in d))')"
+events=[e.get("contractEntry",{}).get("JsActiveContract",{}).get("createdEvent",{}) or {} for e in d]
+if any(e.get("templateId", "").endswith((":Veil:CashHolding", ":Veil:CollateralHolding", ":Veil:LoanOffer", ":Veil:Loan", ":Veil:LoanClosed")) and not e.get("createArgument", {}).get("issuer") for e in events):
+    sys.exit("Legacy asset contracts found; restart with a fresh 0.5.0 sandbox.")
+print(any(e.get("templateId", "").endswith(":Veil:CollateralHolding") and e.get("createArgument", {}).get("issuer") == sys.argv[1] for e in events))' "$ISSUER")"
 
 if [ "$already_seeded" = "True" ]; then
   echo "→ Holdings already seeded, skipping"
 else
   echo "→ Seeding demo holdings"
-  create_holding "$LENDER"   "{\"owner\":\"$LENDER\",\"amount\":\"100\"}"   CashHolding
-  create_holding "$BORROWER" "{\"owner\":\"$BORROWER\",\"amount\":\"105\"}" CashHolding
-  create_holding "$BORROWER" "{\"owner\":\"$BORROWER\",\"asset\":\"$COLLATERAL_ASSET\",\"quantity\":\"150\"}" CollateralHolding
-  create_holding "$BORROWER" "{\"owner\":\"$BORROWER\",\"asset\":\"$COLLATERAL_ASSET\",\"quantity\":\"50\"}" CollateralHolding
+  create_holding "$LENDER"   "{\"issuer\":\"$ISSUER\",\"owner\":\"$LENDER\",\"amount\":\"100\"}"   CashHolding
+  create_holding "$BORROWER" "{\"issuer\":\"$ISSUER\",\"owner\":\"$BORROWER\",\"amount\":\"105\"}" CashHolding
+  create_holding "$BORROWER" "{\"issuer\":\"$ISSUER\",\"owner\":\"$BORROWER\",\"asset\":\"$COLLATERAL_ASSET\",\"quantity\":\"150\"}" CollateralHolding
+  create_holding "$BORROWER" "{\"issuer\":\"$ISSUER\",\"owner\":\"$BORROWER\",\"asset\":\"$COLLATERAL_ASSET\",\"quantity\":\"50\"}" CollateralHolding
 fi
 
 # All three demo parties authorize the stream; future price updates need only
@@ -112,7 +117,7 @@ mark_count="$(curl --fail-with-body -sS -X POST "$BASE/v2/state/active-contracts
 events=[e.get("contractEntry",{}).get("JsActiveContract",{}).get("createdEvent",{}) for e in json.load(sys.stdin)]
 marks=[e for e in events if e.get("templateId", "").endswith(":Veil:CollateralValuation")]
 if any("streamId" not in e["createArgument"] for e in marks):
-    sys.exit("Legacy valuations found; restart with a fresh 0.4.0 sandbox.")
+    sys.exit("Legacy valuations found; restart with a fresh 0.5.0 sandbox.")
 if any(e.get("templateId", "").endswith(":Veil:ValuationStream") for e in events):
     sys.exit("Unpublished stream found; initialize it before re-running bootstrap.")
 print(len(marks))')"

@@ -111,7 +111,7 @@ export function DealCard({
       <div style={{ padding: '22px 28px', borderBottom: '1px solid #eef0f3', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div>
           <div style={{ fontSize: 17, fontWeight: 600, color: '#14171f', letterSpacing: '-0.01em' }}>Secured Credit Facility</div>
-          <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: '#9aa1ad', marginTop: 3 }}>VEIL-0001 · Repo-style · USDC</div>
+          <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, color: '#9aa1ad', marginTop: 3 }}>VEIL-0001 · Repo-style · simulated USDC</div>
           <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, color: '#bcc2cb', marginTop: 4 }}>
             {deal.template} · {deal.contractId.slice(0, 10)}…{deal.contractId.slice(-4)} · offset {deal.offset}
           </div>
@@ -134,8 +134,12 @@ export function DealCard({
       </div>
 
       <div style={{ ...section, display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 20 }}>
-        <div><div style={monoLabel}>Principal</div><div style={monoValue}>{fmtMoney(principal)}</div></div>
-        <div><div style={monoLabel}>Interest</div><div style={monoValue}>{interest} USDC · {((interest / principal) * 100).toFixed(1)}%</div></div>
+        <div>
+          <div style={monoLabel}>{status === 'offered' ? 'Funded principal' : 'Principal'}</div>
+          <div style={monoValue}>{fmtMoney(principal)}</div>
+          {status === 'offered' && <div style={{ fontSize: 11, color: '#8a929e', marginTop: 3 }}>Reserved in issuer-signed offer escrow</div>}
+        </div>
+        <div><div style={monoLabel}>Interest</div><div style={monoValue}>{interest} simulated USDC · {((interest / principal) * 100).toFixed(1)}%</div></div>
         <div><div style={monoLabel}>Repayment</div><div style={monoValue}>{fmtMoney(repayment)}</div></div>
         <div>
           <div style={monoLabel}>Maturity · ledger UTC</div>
@@ -159,9 +163,9 @@ export function DealCard({
           <div style={{ ...monoLabel, marginBottom: 10 }}>Collateral</div>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
             <div>
-              <div style={{ fontSize: 14, fontWeight: 600, color: '#14171f' }}>{deal.args.collateralAsset ?? 'Tokenized T-Bill / MMF'}</div>
+              <div style={{ fontSize: 14, fontWeight: 600, color: '#14171f' }}>{deal.args.collateralAsset ?? 'Tokenized T-Bill / MMF'} <span style={{ fontSize: 11, fontWeight: 500, color: '#8a929e' }}>(simulated)</span></div>
               <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 13, color: '#5b6472', marginTop: 3 }}>
-                {collateral} units · {markPrice ? `${collateralValue.toFixed(2)} USDC` : 'awaiting mark'}
+                {collateral} units · {markPrice ? `${collateralValue.toFixed(2)} simulated USDC` : 'awaiting mark'}
               </div>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, fontWeight: 600, letterSpacing: '0.06em', color: lock.color, background: lock.bg, padding: '7px 13px', borderRadius: 999, flex: 'none' }}>
@@ -172,7 +176,7 @@ export function DealCard({
             <div style={monoLabel}>Ledger-attested mark</div>
             {valuation ? (
               <div style={{ fontSize: 13, color: markFresh ? '#3d4452' : '#a23b2e', marginTop: 5, lineHeight: 1.45 }}>
-                <b>{valuation.unitPrice.toFixed(2)} USDC/unit</b> · observed {formatTime(valuation.observedAt)} · {markFresh ? 'fresh for margin actions' : markIssue}
+                <b>{valuation.unitPrice.toFixed(2)} simulated USDC/unit</b> · observed {formatTime(valuation.observedAt)} · {markFresh ? 'fresh for margin actions' : markIssue}
               </div>
             ) : <div style={{ fontSize: 13, color: '#8a929e', marginTop: 5 }}>No valuation has been published for this facility.</div>}
             {(deal.args.valuationStreamId || valuation?.streamId) && <div style={{ ...monoLabel, fontSize: 9, marginTop: 9 }}>Valuation stream · {shortCid(deal.args.valuationStreamId ?? valuation?.streamId ?? '')}</div>}
