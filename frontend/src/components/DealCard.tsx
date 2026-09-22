@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { Contract, Role, Status, Valuation } from '../types'
-import { STATUS_TONE, dealNumbers, fmtDate, fmtMoney, lockTone, ltvTone, marginCallOf } from '../state'
+import { STATUS_TONE, dealNumbers, fmtMoney, fmtUtcTime, lockTone, ltvTone, marginCallOf } from '../state'
 import { Stepper } from './Stepper'
 import { RoomChips } from './RoomChips'
 
@@ -28,6 +28,7 @@ export interface DealActions {
   onTopUp: (quantity: number) => void
   onResolveMarginCall: () => void
   onLiquidate: () => void
+  onLiquidateOverdue: () => void
 }
 
 export function DealCard({
@@ -57,12 +58,15 @@ export function DealCard({
   const { collateralValue, ltv, repayment } = dealNumbers({ principal, interest, collateral }, markPrice ?? 1)
   const marginCall = marginCallOf(deal)
   const deadlineMs = marginCall ? Date.parse(marginCall.deadline) : Number.NaN
+  const maturityMs = deal.args.maturity ? Date.parse(deal.args.maturity) : Number.NaN
   useEffect(() => {
-    if (status !== 'active' || (!valuation?.observedAt && !marginCall?.deadline)) return undefined
+    if ((status !== 'active' && status !== 'offered') || !Number.isFinite(maturityMs)) return undefined
     const timer = window.setInterval(() => setNow(Date.now()), 1000)
     return () => window.clearInterval(timer)
-  }, [status, valuation?.observedAt, marginCall?.deadline])
+  }, [status, maturityMs])
   const beforeDeadline = Number.isFinite(deadlineMs) ? now < deadlineMs : false
+  const beforeMaturity = Number.isFinite(maturityMs) ? now < maturityMs : false
+  const pastMaturity = Number.isFinite(maturityMs) ? now > maturityMs : false
   const markAgeMs = valuation?.observedAt ? now - Date.parse(valuation.observedAt) : Number.POSITIVE_INFINITY
   const markFresh = Boolean(valuation && Number.isFinite(markAgeMs) && markAgeMs >= 0 && markAgeMs <= 5 * 60 * 1000)
   const markIssue = markAgeMs < 0 ? 'future-dated — use a synchronized ledger clock' : 'stale — publish a fresh mark'
@@ -80,17 +84,19 @@ export function DealCard({
 
   const fObserver = role === 'regulator'
   const fLenderWithdraw = role === 'lender' && status === 'offered'
-  const fBorrowerAccept = role === 'borrower' && status === 'offered'
+  const fBorrowerAccept = role === 'borrower' && status === 'offered' && beforeMaturity
   const fBorrowerRepay = role === 'borrower' && status === 'active'
-  const fLenderIssue = role === 'lender' && status === 'active' && !marginCall && markBreach
-  const fBorrowerTopUp = role === 'borrower' && status === 'active' && Boolean(marginCall) && beforeDeadline && markBreach && topUpRestores
-  const fBorrowerResolve = role === 'borrower' && status === 'active' && Boolean(marginCall) && !markBreach && markFresh
+  const fLenderIssue = role === 'lender' && status === 'active' && beforeMaturity && !marginCall && markBreach
+  const fBorrowerTopUp = role === 'borrower' && status === 'active' && beforeMaturity && Boolean(marginCall) && beforeDeadline && markBreach && topUpRestores
+  const fBorrowerResolve = role === 'borrower' && status === 'active' && beforeMaturity && Boolean(marginCall) && !markBreach && markFresh
   const fLenderLiquidate = role === 'lender' && status === 'active' && Boolean(marginCall) && !beforeDeadline && markBreach
+  const fLenderOverdue = role === 'lender' && status === 'active' && pastMaturity
   const fClosed = (role === 'lender' || role === 'borrower') && (status === 'repaid' || status === 'liquidated')
 
   let actionHint = 'Actions available to you'
   if (fObserver) actionHint = 'Read-only observer'
   else if (fClosed) actionHint = 'Facility closed'
+  else if (role === 'lender' && fLenderOverdue) actionHint = 'Loan past maturity — lender may liquidate without a valuation'
   else if (role === 'lender' && status === 'active' && !marginCall) actionHint = markFresh && liquidationThreshold !== undefined ? `Issue a call when the attested mark breaches ${liquidationThreshold}% LTV` : 'Fresh ledger valuation required'
   else if (role === 'lender' && marginCall && beforeDeadline) actionHint = 'Liquidation unlocks when the margin-call deadline passes'
   else if (role === 'borrower' && marginCall && beforeDeadline) actionHint = 'Restore LTV before the margin-call deadline'
@@ -126,7 +132,21 @@ export function DealCard({
         <div><div style={monoLabel}>Principal</div><div style={monoValue}>{fmtMoney(principal)}</div></div>
         <div><div style={monoLabel}>Interest</div><div style={monoValue}>{interest} USDC · {((interest / principal) * 100).toFixed(1)}%</div></div>
         <div><div style={monoLabel}>Repayment</div><div style={monoValue}>{fmtMoney(repayment)}</div></div>
-        <div><div style={monoLabel}>Maturity · informational</div><div style={monoValue}>{fmtDate(deal.args.maturity ?? '')}</div><div style={{ fontSize: 11, color: '#aeb4be', marginTop: 3 }}>Margin timing uses the ledger call deadline</div></div>
+        <div>
+          <div style={monoLabel}>Maturity · ledger UTC</div>
+          <div style={monoValue}>{fmtUtcTime(deal.args.maturity ?? '')}</div>
+          <div style={{ fontSize: 11, color: pastMaturity ? '#a23b2e' : '#aeb4be', marginTop: 3 }}>
+            {pastMaturity
+              ? status === 'active' && role === 'lender'
+                ? 'Past maturity — overdue liquidation is available'
+                : status === 'offered'
+                  ? 'Past maturity — offer acceptance is closed'
+                  : 'Past maturity — facility is closed'
+              : beforeMaturity
+                ? 'Maturity rules are enforced by the ledger'
+                : 'Maturity reached — ledger actions are boundary-checked'}
+          </div>
+        </div>
       </div>
 
       <div style={{ ...section, display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 28 }}>
@@ -150,6 +170,7 @@ export function DealCard({
                 <b>{valuation.unitPrice.toFixed(2)} USDC/unit</b> · observed {formatTime(valuation.observedAt)} · {markFresh ? 'fresh for margin actions' : markIssue}
               </div>
             ) : <div style={{ fontSize: 13, color: '#8a929e', marginTop: 5 }}>No valuation has been published for this facility.</div>}
+            {(deal.args.valuationStreamId || valuation?.streamId) && <div style={{ ...monoLabel, fontSize: 9, marginTop: 9 }}>Valuation stream · {shortCid(deal.args.valuationStreamId ?? valuation?.streamId ?? '')}</div>}
           </div>
           {status === 'offered' && <div style={{ marginTop: 12, fontSize: 12, color: '#5b6472', lineHeight: 1.45 }}><b>Agreed valuation agent:</b> {agreedAgent}<br /><b>Margin-call window:</b> {Number.isFinite(agreedWindow) ? `${agreedWindow} seconds` : 'not set'}</div>}
         </div>
@@ -171,15 +192,17 @@ export function DealCard({
             {fObserver && <ObserverBadge />}
             {fLenderWithdraw && <ActionButton label="Withdraw offer" onClick={actions.onWithdraw} busy={busy} variant="danger-outline" />}
             {fBorrowerAccept && <ActionButton label="Accept offer" onClick={actions.onAccept} busy={busy} variant="primary" />}
+            {role === 'borrower' && status === 'offered' && !beforeMaturity && <DisabledButton label="Offer expired at maturity" />}
             {fBorrowerRepay && <ActionButton label={`Repay ${fmtMoney(repayment)}`} onClick={actions.onRepay} busy={busy} variant="success" />}
-            {role === 'lender' && status === 'active' && !marginCall && !fLenderIssue && <DisabledButton label={markFresh ? (markBreach ? 'Issue margin call' : 'Healthy — no call') : 'Fresh mark required'} />}
+            {role === 'lender' && status === 'active' && !marginCall && !fLenderIssue && !fLenderOverdue && <DisabledButton label={markFresh ? (markBreach ? 'Issue margin call' : 'Healthy — no call') : 'Fresh mark required'} />}
             {fLenderIssue && <ActionButton label="Issue margin call" onClick={actions.onIssueMarginCall} busy={busy} variant="danger-outline" />}
             {role === 'borrower' && marginCall && fBorrowerTopUp && <ActionButton label={`Top up ${availableTopUp} units`} onClick={() => actions.onTopUp(availableTopUp)} busy={busy} variant="primary" />}
             {role === 'borrower' && marginCall && !fBorrowerTopUp && fBorrowerResolve && <ActionButton label="Resolve margin call" onClick={actions.onResolveMarginCall} busy={busy} variant="success" />}
-            {role === 'borrower' && marginCall && !fBorrowerTopUp && !fBorrowerResolve && <DisabledButton label={beforeDeadline ? (availableTopUp > 0 ? 'Fresh mark or exact top-up required' : 'No reserve restores LTV') : 'Call expired — lender may liquidate'} />}
+            {role === 'borrower' && marginCall && !fBorrowerTopUp && !fBorrowerResolve && <DisabledButton label={!beforeMaturity ? 'Maturity reached — repay or await lender liquidation' : beforeDeadline ? (availableTopUp > 0 ? 'Fresh mark or exact top-up required' : 'No reserve restores LTV') : 'Call expired — lender may liquidate'} />}
             {role === 'lender' && marginCall && beforeDeadline && <DisabledButton label="Liquidate after deadline" />}
             {fLenderLiquidate && <ActionButton label="Liquidate collateral" onClick={actions.onLiquidate} busy={busy} variant="danger" />}
             {role === 'lender' && marginCall && !beforeDeadline && !fLenderLiquidate && <DisabledButton label="Fresh breached mark required" />}
+            {fLenderOverdue && <ActionButton label="Liquidate after maturity" onClick={actions.onLiquidateOverdue} busy={busy} variant="danger" />}
             {fClosed && <div style={{ fontSize: 13, color: '#8a929e' }}>This facility is closed.</div>}
           </div>
         </div>
@@ -214,5 +237,9 @@ function ActionButton({ label, onClick, busy, variant }: { label: string; onClic
 
 function formatTime(value: string): string {
   const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
+  return Number.isNaN(date.getTime()) ? value : `${date.toISOString().replace('T', ' ').replace(/Z$/, ' UTC')}`
+}
+
+function shortCid(value: string): string {
+  return value.length > 18 ? `${value.slice(0, 10)}…${value.slice(-6)}` : value
 }

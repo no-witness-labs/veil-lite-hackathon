@@ -13,13 +13,13 @@ const monoLabel: React.CSSProperties = {
   color: '#8a929e',
 }
 
-/** Session log of committed ledger transactions. */
+/** Demo-operator session log; it is intentionally hidden from valuer/outsider views. */
 export function ActivityFeed({ entries }: { entries: ActivityEntry[] }) {
   return (
     <div style={{ background: '#fff', border: '1px solid #e6e8ec', borderRadius: 14, boxShadow: '0 1px 2px rgba(20,23,31,0.04)', overflow: 'hidden' }}>
       <div style={{ padding: '18px 24px', borderBottom: '1px solid #eef0f3', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={{ fontSize: 15, fontWeight: 600, color: '#14171f' }}>Ledger activity</div>
-        <div style={monoLabel}>this session · {entries.length} tx{entries.length === 1 ? '' : 's'}</div>
+        <div style={{ fontSize: 15, fontWeight: 600, color: '#14171f' }}>Demo operator activity</div>
+        <div style={monoLabel}>shared session · {entries.length} tx{entries.length === 1 ? '' : 's'}</div>
       </div>
 
       {entries.length === 0 ? (

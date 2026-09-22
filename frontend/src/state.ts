@@ -38,18 +38,32 @@ export interface Tone {
 
 export const fmtMoney = (n: number) => `${n} USDC`
 
+function parseLedgerTime(value: string): Date {
+  const normalized = /^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T00:00:00.000Z` : value
+  return new Date(normalized)
+}
+
 export function fmtDate(iso: string): string {
   const mo = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-  const d = new Date(`${iso}T00:00:00`)
+  const d = parseLedgerTime(iso)
   if (Number.isNaN(d.getTime())) return iso
-  return `${d.getDate()} ${mo[d.getMonth()]} ${d.getFullYear()}`
+  return `${d.getUTCDate()} ${mo[d.getUTCMonth()]} ${d.getUTCFullYear()}`
+}
+
+/** Display the exact maturity instant stored on the ledger, in UTC. */
+export function fmtUtcTime(iso: string): string {
+  const d = parseLedgerTime(iso)
+  if (Number.isNaN(d.getTime())) return iso
+  const pad = (value: number) => String(value).padStart(2, '0')
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())} UTC`
 }
 
 export function daysTo(iso: string): number {
-  const d = new Date(`${iso}T00:00:00`)
+  const d = parseLedgerTime(iso)
   const today = new Date()
-  today.setHours(0, 0, 0, 0)
-  return Math.round((d.getTime() - today.getTime()) / 86400000)
+  const todayUtc = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate())
+  if (Number.isNaN(d.getTime())) return Number.NaN
+  return Math.round((d.getTime() - todayUtc) / 86400000)
 }
 
 /** The contract that defines the party's current view: the most recently
@@ -66,7 +80,7 @@ export function statusOf(deal: Contract | undefined): Status {
   if (!deal) return 'none'
   if (deal.template === 'LoanOffer') return 'offered'
   if (deal.template === 'Loan') return 'active'
-  return deal.args.reason === 'Liquidated' ? 'liquidated' : 'repaid'
+  return deal.args.reason === 'Liquidated' || deal.args.reason === 'LiquidatedAtMaturity' ? 'liquidated' : 'repaid'
 }
 
 export function marginCallOf(deal: Contract | undefined): MarginCall | undefined {
@@ -78,9 +92,11 @@ export function marginCallOf(deal: Contract | undefined): MarginCall | undefined
 }
 
 export function valuationFor(contracts: Contract[], deal?: Contract): Valuation | undefined {
+  if (deal && typeof deal.args.valuationStreamId !== 'string') return undefined
   const marks = contracts
     .filter((contract) => {
       if (contract.template !== 'CollateralValuation') return false
+      if (deal && contract.args.streamId !== deal.args.valuationStreamId) return false
       if (!deal) return true
       return contract.args.collateralAsset === deal.args.collateralAsset
         && contract.args.lender === deal.args.lender
@@ -100,14 +116,15 @@ export function valuationFor(contracts: Contract[], deal?: Contract): Valuation 
         borrower: contract.args.borrower ?? '',
         regulator: contract.args.regulator ?? '',
         collateralAsset: contract.args.collateralAsset ?? '',
+        streamId: contract.args.streamId ?? '',
         offset: contract.offset,
       }
     })
     .filter((mark): mark is Valuation => Boolean(mark))
-  return marks.reduce<Valuation | undefined>((latest, current) => {
-    if (!latest || current.offset > latest.offset) return current
-    return latest
-  }, undefined)
+  // A stream has exactly one active mark because Publish consumes and replaces
+  // its predecessor. Treat a missing or parallel mark as an invalid current
+  // valuation instead of silently choosing by offset.
+  return marks.length === 1 && marks[0].streamId ? marks[0] : undefined
 }
 
 export const STATUS_TONE: Record<Status, Tone> = {

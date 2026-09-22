@@ -24,7 +24,11 @@ export function ValuationPanel({
   busy: boolean
 }) {
   const [price, setPrice] = useState('1')
-  const marks = contracts.filter((contract) => contract.template === 'CollateralValuation').sort((a, b) => b.offset - a.offset)
+  const marks = contracts
+    .filter((contract) => contract.template === 'CollateralValuation' && typeof contract.args.streamId === 'string')
+    .sort((a, b) => b.offset - a.offset)
+  const streamId = marks.length === 1 ? marks[0].args.streamId : undefined
+  const streamReady = marks.length === 1 && typeof streamId === 'string'
   const parsedPrice = Number(price)
   const validPrice = Number.isFinite(parsedPrice) && parsedPrice > 0
   const submit = () => {
@@ -39,6 +43,10 @@ export function ValuationPanel({
           Sign a timestamped unit price for the Veil demo deal. This is manually attested demo data; it is not a live
           oracle feed.
         </div>
+        <div style={{ ...label, marginTop: 14 }}>
+          {streamReady ? `Current stream lineage · ${shortCid(streamId ?? '')}` : `Current mark unavailable · ${marks.length} found`}
+        </div>
+        {!streamReady && <div style={{ fontSize: 12, color: '#a23b2e', marginTop: 6 }}>Exactly one current mark with a stream lineage is required before publishing.</div>}
       </div>
 
       <div style={{ padding: 28 }}>
@@ -62,7 +70,7 @@ export function ValuationPanel({
               style={{ width: '100%', border: '1px solid #e6e8ec', borderRadius: 9, padding: '11px 13px', ...mono, fontSize: 15, color: '#14171f', outline: 'none' }}
             />
           </div>
-          <button onClick={submit} disabled={busy || !validPrice} style={publishStyle(busy || !validPrice)}>
+          <button onClick={submit} disabled={busy || !validPrice || !streamReady} style={publishStyle(busy || !validPrice || !streamReady)}>
             {busy ? 'Publishing…' : 'Publish mark'}
           </button>
         </div>
@@ -126,4 +134,8 @@ function formatObserved(value: string): string {
   if (!value) return 'unknown time'
   const parsed = new Date(value)
   return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString()
+}
+
+function shortCid(value: string): string {
+  return value.length > 18 ? `${value.slice(0, 10)}…${value.slice(-6)}` : value
 }

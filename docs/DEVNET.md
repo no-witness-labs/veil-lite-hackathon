@@ -4,7 +4,7 @@ Run Veil against the shared Seaport / Five North Canton DevNet instead of the
 local sandbox. The contracts and UI are the same; DevNet adds OIDC auth, a
 remote participant, persistent parties, and a server-side proxy for the browser.
 
-Season 3 package 0.2.0 is currently validated locally only. Use fresh suffixed parties for any future DevNet validation; this change does not migrate prior loans or deploy the new application. The proxy is a shared demo operator, not independent end-user authentication.
+Season 3 package 0.3.0 requires a fresh local or DevNet environment. Use fresh suffixed parties for any future DevNet validation; this change does not migrate prior loans or deploy the new application. The proxy is a shared demo operator, not independent end-user authentication.
 
 This follows the same pattern as the CloakRFQ DevNet guide:
 <https://github.com/no-witness-labs/canton-hackathon-cloakRFQ/blob/main/docs/DEVNET.md>.
@@ -17,7 +17,7 @@ This follows the same pattern as the CloakRFQ DevNet guide:
   - Token URL: `https://auth.sandbox.fivenorth.io/application/o/token/`
   - Client ID: `validator-devnet-m2m`
   - Client secret: keep this local; never commit it.
-- The `veil-lite-0.2.0.dar` package deployed/vetted on the validator for a new test environment.
+- The `veil-lite-0.3.0.dar` package deployed/vetted on the validator for a new test environment.
 
 ## 1. Configure DevNet credentials
 
@@ -48,7 +48,7 @@ dpm build
 The deployable DAR is:
 
 ```text
-.daml/dist/veil-lite-0.2.0.dar
+.daml/dist/veil-lite-0.3.0.dar
 ```
 
 Package/template references use:
@@ -74,6 +74,7 @@ The script:
 4. Grants `CanActAs` for those parties to `VEIL_LEDGER_USER_ID` (default: `6`).
 5. Seeds the canonical holdings: lender 100 cash, borrower 105 cash + 150 collateral + a separate 50-unit reserve.
 6. Writes `frontend/public/ledger-config.json`.
+7. Initializes one jointly authorized valuation stream and price 1. The demo operator supplies lender, borrower, and valuer authority in one transaction; independent signing is not implemented.
 
 DevNet is persistent. To get fresh parties for another clean run, pass a suffix:
 
@@ -156,4 +157,4 @@ and serves `frontend/dist`.
 - No visible holdings: rerun `python3 scripts/bootstrap-devnet.py <newtag>` and
   hard-refresh the app so it uses the new generated config.
 - Do not upload `veil-0.1.0.dar`; that package name collides with an existing
-  DevNet package. Use `veil-lite-0.2.0.dar` for this branch.
+  DevNet package. Use `veil-lite-0.3.0.dar` for this branch.

@@ -8,6 +8,7 @@ export type TemplateName =
   | 'LoanClosed'
   | 'CashHolding'
   | 'CollateralHolding'
+  | 'ValuationStream'
   | 'CollateralValuation'
 
 /** The valuation record attached to an active margin-call workflow. */
@@ -24,6 +25,8 @@ export interface DealArgs {
   borrower?: string
   regulator?: string
   valuationAgent?: string
+  valuationStreamId?: string
+  streamId?: string
   principal?: string
   interest?: string
   collateralAsset?: string
@@ -79,6 +82,7 @@ export interface Valuation {
   borrower: string
   regulator: string
   collateralAsset: string
+  streamId: string
   offset: number
 }
 

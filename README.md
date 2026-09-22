@@ -1,6 +1,6 @@
 # Veil — Confidential Lending on Canton
 
-> HackCanton Season 3 development: private financing with attested valuations, margin calls, and collateral top-ups.
+> HackCanton Season 3 development: private financing with replaceable attested prices, margin calls, collateral top-ups, and enforced maturity.
 
 **Earlier demo:** <https://veil-lite-hackathon.vercel.app/>. The Season 3 changes below require a fresh local sandbox; they have not been deployed to this URL.
 
@@ -34,20 +34,21 @@ Concrete demo framing: **private repo-style financing**. The borrower pledges 15
 Build the flow:
 
 1. Lender and borrower already know each other from an off-ledger private credit relationship.
-2. Lender creates a private borrower-specific `LoanOffer`.
+2. Lender creates a private borrower-specific `LoanOffer`, binding it to the jointly authorized valuation stream and a future repayment timestamp.
 3. Borrower accepts and opens a loan.
 4. Borrower's collateral becomes locked/escrowed in the loan state.
 5. Regulator can observe the offer and loan.
 6. Outsider cannot see either offer or loan.
 7. Borrower repays and collateral is released.
-8. A separately named valuation agent publishes an attested unit price. The agent cannot see the loan.
+8. A separately named valuation agent replaces the current attested price. The old price is archived; the agent cannot see the loan.
 9. The lender opens a margin call when a fresh valuation shows an LTV breach. Canton records a cure deadline.
 10. The borrower deposits an exact 50-unit reserve before the deadline, bringing locked collateral to 200 and clearing the call. Repayment returns all 200 units.
 11. Alternatively, an expired call can be liquidated only if a fresh valuation still shows a breach. A recovered price can resolve the call without a deposit.
+12. Past the repayment timestamp, the lender may instead liquidate for nonpayment without a price check. Repayment remains available until the loan closes.
 
 ## Contract model
 
-Six Daml templates. Loan states are scoped to lender, borrower, and regulator. The valuation agent sees price attestations but is not a loan observer. These active-contract views are not a claim that historical disclosures can be revoked.
+Seven Daml templates. Loan states are scoped to lender, borrower, and regulator. The valuation agent sees price attestations but is not a loan observer. These active-contract views are not a claim that historical disclosures can be revoked.
 
 ```text
  Who can see each contract            Lender   Borrower  Regulator  Valuer  Outsider
@@ -57,7 +58,8 @@ Six Daml templates. Loan states are scoped to lender, borrower, and regulator. T
  LoanOffer          sig: L  obs: B,R      S         O         O        –       –
  Loan               sig: L,B  obs: R      S         S         O        –       –
  LoanClosed         sig: L,B  obs: R      S         S         O        –       –
- CollateralValuation sig: V obs: L,B,R    O         O         O        S       –
+ ValuationStream     sig: V,L,B obs: R    S         S         O        S       –
+ CollateralValuation sig: V,L,B obs: R    S         S         O        S       –
    S = signatory (authorizes + sees)   O = observer (sees only)   – = cannot see
 ```
 
@@ -93,7 +95,7 @@ Lifecycle and the money/collateral trail (canonical demo numbers):
 State: `none → Offered → Active → Margin call → Active | Liquidated`. Repayment is available from Active or Margin call; withdrawal refunds an unaccepted offer.
 
 Authorization is structural too: the borrower can draw the lender's principal only because the lender
-pre-signed the `LoanOffer`; liquidation requires an expired margin call and a fresh mark from the agreed valuation agent. Each loan replacement retains both signatories and the regulator observer. Cash and collateral are demo holdings that participants can create, not externally backed tokens.
+pre-signed the `LoanOffer`; margin liquidation requires an expired call and a fresh current price from the agreed stream. A separate maturity-default action requires ledger time strictly after the repayment timestamp. Each loan replacement retains both signatories and the regulator observer. Cash and collateral are demo holdings that participants can create, not externally backed tokens.
 
 For the full end-to-end picture — build, deploy, the JSON Ledger API, and a step-by-step walkthrough of
 every flow (create offer, accept, repay, liquidate, withdraw, reset) — see **[docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)**.
@@ -165,7 +167,7 @@ npm --prefix frontend run dev
 ```
 
 See **[docs/DEVNET.md](./docs/DEVNET.md)** for the full DevNet setup. The DevNet package name is
-`veil-lite` and the deployable DAR is `.daml/dist/veil-lite-0.2.0.dar`.
+`veil-lite` and the deployable DAR is `.daml/dist/veil-lite-0.3.0.dar`.
 See **[docs/VERCEL.md](./docs/VERCEL.md)** for the Vercel deployment environment variables and smoke checks.
 
 3-minute click path: **Lender** create offer → **Borrower** sees it → **Outsider** sees nothing →

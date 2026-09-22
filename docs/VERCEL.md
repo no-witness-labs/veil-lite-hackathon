@@ -2,7 +2,7 @@
 
 Veil's Vercel deployment is a live Canton DevNet app.
 
-The existing deployment is the prior version. Season 3 requires package 0.2.0, a new valuer party, and a fresh demo environment; it has not been deployed or tested on DevNet by this change. See [SEASON3.md](SEASON3.md).
+The existing deployment is the prior version. Season 3 requires package 0.3.0, a valuer party, and a fresh demo environment; it has not been deployed or tested on DevNet by this change. See [SEASON3.md](SEASON3.md).
 
 ## What Vercel serves
 

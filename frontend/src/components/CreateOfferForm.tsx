@@ -61,13 +61,14 @@ export function CreateOfferForm({
             <input type="number" value={draft.collateral} onChange={num('collateral')} style={inputStyle} />
           </div>
           <div>
-            <div style={labelStyle}>Maturity</div>
+            <div style={labelStyle}>Maturity · UTC start of day</div>
             <input
               type="date"
               value={draft.maturity}
               onChange={(e) => onChange('maturity', e.target.value)}
               style={{ ...inputStyle, fontSize: 14 }}
             />
+            <div style={{ fontSize: 11, color: '#aeb4be', marginTop: 6 }}>Acceptance and collateral cures must complete before this deadline. Repayment remains available until the loan closes.</div>
           </div>
         </div>
 

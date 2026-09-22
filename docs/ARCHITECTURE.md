@@ -14,20 +14,21 @@ action does on and off the ledger. For the contract visibility/lifecycle diagram
  3. JSON Ledger API v2  HTTP :6864   (gRPC Ledger API :6865)  the on/off-chain boundary
  2. Canton sandbox      participant + sequencer + mediator +  runs contracts, enforces
        synchronizer (dpm sandbox, in-memory, auth off)        privacy + authorization
- 1. Contracts           daml/Veil.daml → veil-lite-0.2.0.dar  the rules (on-ledger)
+ 1. Contracts           daml/Veil.daml → veil-lite-0.3.0.dar  the rules (on-ledger)
 ```
 
 ## 1. Contracts (on-ledger)
 
-Six Daml templates in `daml/Veil.daml`; detailed margin policies are in [SEASON3.md](SEASON3.md):
+Seven Daml templates in `daml/Veil.daml`; detailed policies are in [SEASON3.md](SEASON3.md):
 
 | Template | Signatory / Observer | Purpose | Choices |
 | --- | --- | --- | --- |
 | `CashHolding` | owner | demo principal asset, bearer | `MakeOffer`, `Split` |
 | `CollateralHolding` | owner | demo T-Bill/MMF collateral, bearer | `SplitCollateral` |
-| `CollateralValuation` | sig valuation agent · obs lender, borrower, regulator | manually attested unit price | built-in `Archive` |
+| `ValuationStream` | sig valuer, lender, borrower · obs regulator | agreed price stream registration | `PublishInitial` |
+| `CollateralValuation` | sig valuer, lender, borrower · obs regulator | current attested unit price | `Publish` |
 | `LoanOffer` | sig lender · obs borrower, regulator | pre-funded private offer | `Accept`, `Withdraw` |
-| `Loan` | sig lender, borrower · obs regulator | position with optional margin-call state | `IssueMarginCall`, `TopUpCollateral`, `ResolveMarginCall`, `Repay`, `Liquidate` |
+| `Loan` | sig lender, borrower · obs regulator | position with optional margin-call state | `IssueMarginCall`, `TopUpCollateral`, `ResolveMarginCall`, `Repay`, `Liquidate`, `LiquidateOverdue` |
 | `LoanClosed` | sig lender, borrower · obs regulator | terminal settlement record | `Dismiss` |
 
 Two properties are enforced by Canton, not the app:
@@ -38,7 +39,7 @@ Two properties are enforced by Canton, not the app:
 ## 2. Build & package
 
 ```bash
-dpm build                       # daml/Veil.daml → .daml/dist/veil-lite-0.2.0.dar
+dpm build                       # daml/Veil.daml → .daml/dist/veil-lite-0.3.0.dar
 (cd test && dpm build && dpm test)
 ```
 
@@ -57,6 +58,7 @@ then runs `scripts/bootstrap.sh`, which:
    → on-ledger identities like `Lender::<fingerprint>`.
 3. **Seeds holdings** — lender `CashHolding(100)`, borrower `CashHolding(105)` + `CollateralHolding(150)` + a separate `CollateralHolding(50)` reserve.
 4. **Writes config** — `frontend/public/ledger-config.json` (the party ids the UI fetches at runtime).
+5. **Registers an agreed stream and initial price** — a demo `CreateAndExerciseCommand` carries lender, borrower, and valuer authority and exercises `PublishInitial` with price 1. This simulates their joint consent; it is not independent wallet signing.
 
 The sandbox is in-memory: restarting it is a clean ledger.
 
@@ -87,6 +89,7 @@ liquidation threshold 90%.
 
 ### Create offer — `CashHolding.MakeOffer`
 - **Trigger:** lender submits the Create-offer form → `createOffer(draft)`.
+- **Terms:** `maturity` is an RFC3339 UTC timestamp and `valuationCid` identifies a fresh current price from the agreed stream. The offer stores that price's immutable `streamId`; a later parallel stream cannot replace it.
 - **Off-chain:** read the lender's `CashHolding` with `amount ≥ principal` (`findCash`), then
   `ExerciseCommand` `#veil-lite:Veil:CashHolding` · `MakeOffer` (terms), `actAs: [Lender]`.
 - **On-ledger** (authority: cash owner = lender): assert `amount ≥ principal`; **archive** the
@@ -99,6 +102,7 @@ liquidation threshold 90%.
 - **Off-chain:** read the borrower's `CollateralHolding` (`findCollateral`), then `ExerciseCommand`
   `#veil-lite:Veil:LoanOffer` · `Accept {collateralCid}`, `actAs: [Borrower]`.
 - **On-ledger** (authority: controller **borrower** + offer signatory **lender**):
+  require ledger time strictly before maturity;
   fetch & validate the collateral (owner/asset/quantity); **archive `CollateralHolding`** (collateral
   LOCKED); **create borrower `CashHolding(principal)`** (principal delivered from escrow); **create
   `Loan`** (sig lender+borrower, obs regulator, `collateralLocked=True`). The offer is consumed.
@@ -119,15 +123,20 @@ liquidation threshold 90%.
   Net: lender +5, borrower −5, cash conserved.
 
 ### Margin call and cure
-- The valuer creates `CollateralValuation` with a unit price and observation time. Its signature authenticates the source; economic accuracy remains trusted.
-- Lender exercises `IssueMarginCall {valuationCid}`. The loan verifies agent, counterparties, asset, freshness, and LTV. It replaces itself with a call carrying a ledger-time deadline. Reissuing an open call fails.
-- Borrower exercises `TopUpCollateral {collateralCid, topUpQuantity, valuationCid}` before the deadline. The exact matching deposit is consumed only if fresh valuation proves the new total collateral restores LTV below the threshold; a replacement loan clears the call.
-- Borrower can also `ResolveMarginCall {valuationCid}` on price recovery, including after the deadline, or repay at any time.
+- The valuer exercises `Publish` on the current `CollateralValuation`. Canton archives it and creates a replacement with the same stream ID and a ledger timestamp. Economic accuracy remains trusted. Neither the valuer nor a counterparty alone has the authority to fabricate a price with all required signatories.
+- Lender exercises `IssueMarginCall {valuationCid}`. The loan verifies stream identity, agent, counterparties, asset, freshness, and LTV. It replaces itself with a call carrying a ledger-time deadline. Reissuing an open call fails.
+- Borrower exercises `TopUpCollateral {collateralCid, topUpQuantity, valuationCid}` before both deadline and maturity. The exact matching deposit is consumed only if the current price proves the new total collateral restores LTV below the threshold; a replacement loan clears the call.
+- Before maturity, borrower can `ResolveMarginCall {valuationCid}` on price recovery, including after the call deadline. Repayment remains allowed even after maturity.
 
 ### Liquidate — `Loan.Liquidate`
 - Lender submits `Liquidate {valuationCid}`.
 - Canton requires an open call whose deadline has passed and a fresh, correctly scoped price record that still shows a breach.
-- The loan is consumed; a lender holding receives **all currently locked collateral** and `LoanClosed` records liquidation. The valuation is read, not archived; lender authorization plus observer access suffices to read it.
+- The loan is consumed; a lender holding receives **all currently locked collateral** and `LoanClosed` records liquidation. The current price is read, not archived by this action.
+
+### Maturity default — `Loan.LiquidateOverdue`
+- Requires lender authority and ledger time strictly after the agreed maturity; no price or margin call is required.
+- Transfers all currently locked collateral to the lender and creates a `LoanClosed` record with reason `LiquidatedAtMaturity`.
+- Repayment and liquidation consume the same loan: once either commits the other cannot execute. An ongoing call or a prior top-up never changes maturity.
 
 ### Withdraw — `LoanOffer.Withdraw`
 - **Trigger:** lender withdraws an un-accepted offer → `withdrawOffer(offerCid)`.
@@ -136,7 +145,7 @@ liquidation threshold 90%.
 - **After:** Status returns to **none**; lender's cash is restored.
 
 ### Reset / seed (client orchestration, not a single choice)
-`resetDemo()` withdraws offers, cooperatively archives live loans using both signatories, dismisses settlement records, and clears holdings and valuation records with their owners' authority. It then seeds lender cash 100, borrower cash 105, and borrower collateral 150 + 50. This is destructive **demo cleanup**, not a real cancellation or a liquidation bypass.
+`resetDemo()` withdraws offers, cooperatively archives live loans using both signatories, dismisses settlement records, and clears holdings and valuations/streams with all their signatories. It then seeds lender cash 100, borrower cash 105, borrower collateral 150 + 50, and a new agreed price stream. This is destructive **demo cleanup**, not a real cancellation or a liquidation bypass.
 
 ## On-chain vs off-chain boundary
 
@@ -145,7 +154,7 @@ liquidation threshold 90%.
 | Per-contract visibility (privacy) | Party identity / KYC (known counterparties) |
 | Per-choice authorization and attestation source | Valuer's manually supplied unit price and its economic accuracy |
 | Collateral lock/release, cash movement, double-entry | Demo holdings with no real asset backing |
-| Margin deadline, freshness, and LTV calculated from attested prices | Demo seeding + reset orchestration |
+| Maturity, margin deadline, price replacement/freshness, and LTV | Demo seeding + reset orchestration |
 | `LoanClosed` settlement record | Activity feed (derived from tx responses) |
 
 ## End-to-end trace (Accept)

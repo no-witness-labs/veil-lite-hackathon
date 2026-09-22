@@ -5,6 +5,7 @@ import {
   createOffer,
   issueMarginCall,
   liquidateLoan,
+  liquidateOverdueLoan,
   listActive,
   loadConfig,
   parseHoldings,
@@ -244,6 +245,8 @@ export default function App() {
                         if (!valuation) throw new Error('No ledger valuation is visible. Publish a fresh mark before liquidating.')
                         return liquidateLoan(deal.contractId, valuation.contractId)
                       }),
+                    onLiquidateOverdue: () =>
+                      act('Liquidate after maturity', PARTY_NAMES.lender, () => liquidateOverdueLoan(deal.contractId)),
                     onIssueMarginCall: () =>
                       act('Issue margin call', PARTY_NAMES.lender, () => {
                         if (!valuation) throw new Error('No ledger valuation is visible. Publish a fresh breached mark first.')

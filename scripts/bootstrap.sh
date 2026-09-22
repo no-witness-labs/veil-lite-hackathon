@@ -9,7 +9,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BASE="${1:-http://127.0.0.1:6864}"
-DAR="$ROOT/.daml/dist/veil-lite-0.2.0.dar"
+DAR="$ROOT/.daml/dist/veil-lite-0.3.0.dar"
 CONFIG="$ROOT/frontend/public/ledger-config.json"
 USER_ID="veil"
 
@@ -100,6 +100,29 @@ else
   create_holding "$BORROWER" "{\"owner\":\"$BORROWER\",\"amount\":\"105\"}" CashHolding
   create_holding "$BORROWER" "{\"owner\":\"$BORROWER\",\"asset\":\"$COLLATERAL_ASSET\",\"quantity\":\"150\"}" CollateralHolding
   create_holding "$BORROWER" "{\"owner\":\"$BORROWER\",\"asset\":\"$COLLATERAL_ASSET\",\"quantity\":\"50\"}" CollateralHolding
+fi
+
+# All three demo parties authorize the stream; future price updates need only
+# the valuer, through a consuming choice that preserves this stream identity.
+echo "→ Checking agreed valuation stream"
+mark_count="$(curl --fail-with-body -sS -X POST "$BASE/v2/state/active-contracts" \
+  -H "Content-Type: application/json" \
+  -d "{\"filter\":{\"filtersByParty\":{\"$VALUER\":{\"cumulative\":[{\"identifierFilter\":{\"WildcardFilter\":{\"value\":{\"includeCreatedEventBlob\":false}}}}]}}},\"verbose\":false,\"activeAtOffset\":$(curl --fail-with-body -sS "$BASE/v2/state/ledger-end" | python3 -c 'import sys,json;print(json.load(sys.stdin)["offset"])')}" \
+  | python3 -c 'import sys,json
+events=[e.get("contractEntry",{}).get("JsActiveContract",{}).get("createdEvent",{}) for e in json.load(sys.stdin)]
+marks=[e for e in events if e.get("templateId", "").endswith(":Veil:CollateralValuation")]
+if any("streamId" not in e["createArgument"] for e in marks):
+    sys.exit("Legacy valuations found; restart with a fresh 0.3.0 sandbox.")
+if any(e.get("templateId", "").endswith(":Veil:ValuationStream") for e in events):
+    sys.exit("Unpublished stream found; initialize it before re-running bootstrap.")
+print(len(marks))')"
+if [ "$mark_count" = "0" ]; then
+  curl --fail-with-body -sS -o /dev/null -X POST "$BASE/v2/commands/submit-and-wait-for-transaction" \
+    -H "Content-Type: application/json" \
+    -d "{\"commands\":{\"commands\":[{\"CreateAndExerciseCommand\":{\"templateId\":\"#veil-lite:Veil:ValuationStream\",\"createArguments\":{\"valuationAgent\":\"$VALUER\",\"lender\":\"$LENDER\",\"borrower\":\"$BORROWER\",\"regulator\":\"$REGULATOR\",\"collateralAsset\":\"$COLLATERAL_ASSET\"},\"choice\":\"PublishInitial\",\"choiceArgument\":{\"unitPrice\":\"1\"}}}],\"commandId\":\"seed-valuation-$RANDOM\",\"actAs\":[\"$LENDER\",\"$BORROWER\",\"$VALUER\"],\"userId\":\"$USER_ID\"}}"
+elif [ "$mark_count" != "1" ]; then
+  echo "Ambiguous valuation streams; use a fresh sandbox." >&2
+  exit 1
 fi
 
 echo "✓ Bootstrap complete"

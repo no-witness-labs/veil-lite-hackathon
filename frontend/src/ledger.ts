@@ -57,6 +57,7 @@ const KNOWN_TEMPLATES: TemplateName[] = [
   'LoanClosed',
   'CashHolding',
   'CollateralHolding',
+  'ValuationStream',
   'CollateralValuation',
 ]
 
@@ -130,11 +131,15 @@ export async function listActive(party: string): Promise<ActiveState> {
 }
 
 async function submit(actAs: string, command: unknown, prefix: string): Promise<TxResult> {
+  return submitAs([actAs], command, prefix)
+}
+
+async function submitAs(actAs: string[], command: unknown, prefix: string): Promise<TxResult> {
   const res = await api<any>('/v2/commands/submit-and-wait-for-transaction', {
     commands: {
       commands: [command],
       commandId: nextCommandId(prefix),
-      actAs: [actAs],
+      actAs,
       userId: cfg.userId,
     },
   })
@@ -152,6 +157,15 @@ async function submit(actAs: string, command: unknown, prefix: string): Promise<
 
 function create(templateId: string, createArguments: Record<string, unknown>) {
   return { CreateCommand: { templateId, createArguments } }
+}
+
+function createAndExercise(
+  templateId: string,
+  createArguments: Record<string, unknown>,
+  choice: string,
+  choiceArgument: Record<string, unknown> = {},
+) {
+  return { CreateAndExerciseCommand: { templateId, createArguments, choice, choiceArgument } }
 }
 
 function exercise(templateId: string, contractId: string, choice: string, choiceArgument: Record<string, unknown> = {}) {
@@ -225,8 +239,34 @@ async function findCollateral(party: string, asset: string, quantity?: number): 
   return h.contractId
 }
 
+/** Return the one active mark for the configured deal. A stream publishes by
+ * replacement, so accepting multiple matching marks would hide a broken
+ * stream or stale parallel branch from the user. */
+async function findCurrentValuation(party: string): Promise<Contract> {
+  const { contracts } = await listActive(party)
+  const marks = contracts.filter((contract) =>
+    contract.template === 'CollateralValuation'
+      && contract.args.valuationAgent === cfg.parties.valuer
+      && contract.args.lender === cfg.parties.lender
+      && contract.args.borrower === cfg.parties.borrower
+      && contract.args.regulator === cfg.parties.regulator
+      && contract.args.collateralAsset === COLLATERAL_ASSET
+      && typeof contract.args.streamId === 'string'
+  )
+  if (marks.length !== 1) {
+    throw new Error(`Expected exactly one active valuation mark for the configured stream; found ${marks.length}. Publish or reset the demo before creating an offer.`)
+  }
+  return marks[0]
+}
+
+function ledgerMaturity(value: string): string {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return value
+  return `${value}T00:00:00.000Z`
+}
+
 /** Lender funds + creates the offer from a cash holding (MakeOffer). */
 export async function createOffer(draft: Draft): Promise<TxResult> {
+  const valuation = await findCurrentValuation(cfg.parties.lender)
   const cashCid = await findCash(cfg.parties.lender, draft.principal)
   return submit(
     cfg.parties.lender,
@@ -234,11 +274,12 @@ export async function createOffer(draft: Draft): Promise<TxResult> {
       borrower: cfg.parties.borrower,
       regulator: cfg.parties.regulator,
       valuationAgent: cfg.parties.valuer,
+      valuationCid: valuation.contractId,
       principal: String(draft.principal),
       interest: String(draft.interest),
       collateralAsset: COLLATERAL_ASSET,
       collateralQuantity: String(draft.collateral),
-      maturity: draft.maturity,
+      maturity: ledgerMaturity(draft.maturity),
       liquidationThresholdLtv: String(LIQUIDATION_THRESHOLD_LTV),
       marginCallWindowSeconds: String(MARGIN_CALL_WINDOW_SECONDS),
     }),
@@ -269,21 +310,28 @@ export async function repayLoan(loanCid: string, repayment: number): Promise<TxR
 
 export const MARGIN_CALL_WINDOW_SECONDS = 60
 
-/** The valuer creates a shared, timestamped mark. This is a manually attested
- * demo value, not an oracle claim; no loan read is needed to publish it. */
-export const publishValuation = (unitPrice: number): Promise<TxResult> => {
+/** Replace the current mark on the configured stream. This is manually
+ * attested demo data, not an oracle claim; the UI never creates a parallel
+ * valuation contract or chooses an arbitrary latest stream. */
+export async function publishValuation(unitPrice: number): Promise<TxResult> {
   if (!Number.isFinite(unitPrice) || unitPrice <= 0) throw new Error('Valuation price must be greater than zero.')
+  const { contracts } = await listActive(cfg.parties.valuer)
+  const marks = contracts.filter((contract) =>
+    contract.template === 'CollateralValuation'
+      && contract.contractId
+      && contract.args.valuationAgent === cfg.parties.valuer
+      && contract.args.lender === cfg.parties.lender
+      && contract.args.borrower === cfg.parties.borrower
+      && contract.args.regulator === cfg.parties.regulator
+      && contract.args.collateralAsset === COLLATERAL_ASSET
+      && typeof contract.args.streamId === 'string'
+  )
+  if (marks.length !== 1) {
+    throw new Error(`Expected exactly one active mark on the configured valuation stream; found ${marks.length}. Reset the demo to restore the stream lineage.`)
+  }
   return submit(
     cfg.parties.valuer,
-    create(template('CollateralValuation'), {
-      valuationAgent: cfg.parties.valuer,
-      lender: cfg.parties.lender,
-      borrower: cfg.parties.borrower,
-      regulator: cfg.parties.regulator,
-      collateralAsset: COLLATERAL_ASSET,
-      unitPrice: String(unitPrice),
-      observedAt: new Date().toISOString(),
-    }),
+    exercise(template('CollateralValuation'), marks[0].contractId, 'Publish', { unitPrice: String(unitPrice) }),
     'valuation',
   )
 }
@@ -314,9 +362,30 @@ export const resolveMarginCall = (loanCid: string, valuationCid: string): Promis
 export const liquidateLoan = (cid: string, valuationCid: string): Promise<TxResult> =>
   submit(cfg.parties.lender, exercise(template('Loan'), cid, 'Liquidate', { valuationCid }), 'liquidate')
 
+/** Close a loan after its exact ledger maturity instant, without a price mark
+ * or margin call. The Daml choice enforces now > maturity. */
+export const liquidateOverdueLoan = (cid: string): Promise<TxResult> =>
+  submit(cfg.parties.lender, exercise(template('Loan'), cid, 'LiquidateOverdue'), 'liquidate-overdue')
+
 /** Seed the canonical demo holdings: lender 100 cash, borrower 105 cash plus
  * the locked-offer quantity (150) and a separate 50-unit top-up reserve. */
 export async function seedDemo(): Promise<void> {
+  await submitAs(
+    [cfg.parties.lender, cfg.parties.borrower, cfg.parties.valuer],
+    createAndExercise(
+      template('ValuationStream'),
+      {
+        valuationAgent: cfg.parties.valuer,
+        lender: cfg.parties.lender,
+        borrower: cfg.parties.borrower,
+        regulator: cfg.parties.regulator,
+        collateralAsset: COLLATERAL_ASSET,
+      },
+      'PublishInitial',
+      { unitPrice: '1' },
+    ),
+    'seed-valuation',
+  )
   await submit(cfg.parties.lender, create(template('CashHolding'), { owner: cfg.parties.lender, amount: String(SEED.lenderCash) }), 'seed')
   await submit(cfg.parties.borrower, create(template('CashHolding'), { owner: cfg.parties.borrower, amount: String(SEED.borrowerCash) }), 'seed')
   await submit(cfg.parties.borrower, create(template('CollateralHolding'), { owner: cfg.parties.borrower, asset: COLLATERAL_ASSET, quantity: String(SEED.borrowerCollateral) }), 'seed')
@@ -365,12 +434,20 @@ export async function resetDemo(): Promise<void> {
     if (c.template === 'LoanClosed')
       await submit(cfg.parties.lender, exercise(template('LoanClosed'), c.contractId, 'Dismiss'), 'dismiss')
   }
-  // Valuations are signed only by the valuer, so archive them in that party's
-  // view after deal contracts have been removed.
-  const { contracts: marks } = await listActive(cfg.parties.valuer)
-  for (const c of marks) {
-    if (c.template === 'CollateralValuation')
-      await submit(cfg.parties.valuer, exercise(template('CollateralValuation'), c.contractId, 'Archive'), 'burn-valuation')
+  // Price and stream records have multiple signatories. Reset is an explicit
+  // cooperative demo cleanup, so archive both templates with all authorized
+  // parties before recreating one stream and its initial mark.
+  const { contracts: valuations } = await listActive(cfg.parties.valuer)
+  const cleanupActors = [cfg.parties.lender, cfg.parties.borrower, cfg.parties.valuer]
+  for (const c of valuations) {
+    if (c.template === 'CollateralValuation') {
+      await submitAs(cleanupActors, exercise(template('CollateralValuation'), c.contractId, 'Archive'), 'burn-valuation')
+    }
+  }
+  for (const c of valuations) {
+    if (c.template === 'ValuationStream') {
+      await submitAs(cleanupActors, exercise(template('ValuationStream'), c.contractId, 'Archive'), 'burn-valuation-stream')
+    }
   }
   // Burn every holding (each archived by its owner) before re-seeding.
   for (const party of [cfg.parties.lender, cfg.parties.borrower]) {

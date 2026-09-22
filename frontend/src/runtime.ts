@@ -39,4 +39,7 @@ export const resolveMarginCall = (loanCid: string, valuationCid: string): Promis
 export const liquidateLoan = (loanCid: string, valuationCid: string): Promise<TxResult> =>
   ledger.liquidateLoan(loanCid, valuationCid)
 
+export const liquidateOverdueLoan = (loanCid: string): Promise<TxResult> =>
+  ledger.liquidateOverdueLoan(loanCid)
+
 export const resetDemo = (): Promise<void> => ledger.resetDemo()

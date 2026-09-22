@@ -13,60 +13,75 @@ tbill = "Tokenized T-Bill / MMF"
 testStart : Time
 testStart = time (date 2030 Jan 1) 12 0 0
 
--- Allocate the demo parties and seed holdings: lender funds with 100 cash,
--- borrower has the 105 repayment wallet and 150 locked collateral.
-setup : Script (Party, Party, Party, Party, (ContractId CashHolding, ContractId CashHolding, ContractId CollateralHolding))
+maturityTime : Time
+maturityTime = time (date 2030 Feb 1) 12 0 0
+
+shortMaturity : Time
+shortMaturity = addRelTime testStart (seconds 60)
+
+-- The fixture has one shared stream and its current agreed mark at unit price
+-- 1.0. The stream's three signatories authorize each initial publication.
+setup : Script ((Party, Party, Party, Party, ContractId ValuationStream), (ContractId CollateralValuation, ContractId CashHolding, ContractId CashHolding, ContractId CollateralHolding))
 setup = do
   lender <- allocateParty "Lender"
   borrower <- allocateParty "Borrower"
   regulator <- allocateParty "Regulator"
   valuationAgent <- allocateParty "ValuationAgent"
+  streamCid <- submitMulti [lender, borrower, valuationAgent] [] do
+    createCmd ValuationStream with
+      valuationAgent
+      lender
+      borrower
+      regulator
+      collateralAsset = tbill
+  initialMark <- submit valuationAgent do
+    exerciseCmd streamCid PublishInitial with unitPrice = 1.0
   lenderCash <- submit lender do createCmd CashHolding with owner = lender; amount = 100.0
   borrowerCash <- submit borrower do createCmd CashHolding with owner = borrower; amount = 105.0
   borrowerColl <- submit borrower do createCmd CollateralHolding with owner = borrower; asset = tbill; quantity = 150.0
-  pure (lender, borrower, regulator, valuationAgent, (lenderCash, borrowerCash, borrowerColl))
+  pure ((lender, borrower, regulator, valuationAgent, streamCid), (initialMark, lenderCash, borrowerCash, borrowerColl))
 
-makeOffer : Party -> Party -> Party -> Party -> ContractId CashHolding -> Script (ContractId LoanOffer)
-makeOffer lender borrower regulator valuationAgent lenderCash =
+createStream : Party -> Party -> Party -> Party -> Text -> Script (ContractId ValuationStream)
+createStream lender borrower regulator valuationAgent asset =
+  submitMulti [lender, borrower, valuationAgent] [] do
+    createCmd ValuationStream with
+      valuationAgent
+      lender
+      borrower
+      regulator
+      collateralAsset = asset
+
+publishInitial : Party -> ContractId ValuationStream -> Decimal -> Script (ContractId CollateralValuation)
+publishInitial valuationAgent streamCid unitPrice =
+  submit valuationAgent do exerciseCmd streamCid PublishInitial with unitPrice
+
+publishPrice : Party -> ContractId CollateralValuation -> Decimal -> Script (ContractId CollateralValuation)
+publishPrice valuationAgent markCid unitPrice =
+  submit valuationAgent do exerciseCmd markCid Publish with unitPrice
+
+makeOfferAt : Party -> Party -> Party -> Party -> ContractId CashHolding -> ContractId CollateralValuation -> Time -> Script (ContractId LoanOffer)
+makeOfferAt lender borrower regulator valuationAgent lenderCash valuationCid maturity =
   submit lender do
     exerciseCmd lenderCash MakeOffer with
-      borrower; regulator; valuationAgent
+      borrower
+      regulator
+      valuationAgent
+      valuationCid
       principal = 100.0
       interest = 5.0
       collateralAsset = tbill
       collateralQuantity = 150.0
-      maturity = "2030-02-01"
+      maturity
       liquidationThresholdLtv = 90.0
       marginCallWindowSeconds = 60
+
+makeOffer : Party -> Party -> Party -> Party -> ContractId CashHolding -> ContractId CollateralValuation -> Script (ContractId LoanOffer)
+makeOffer lender borrower regulator valuationAgent lenderCash valuationCid =
+  makeOfferAt lender borrower regulator valuationAgent lenderCash valuationCid maturityTime
 
 acceptLoan : Party -> ContractId LoanOffer -> ContractId CollateralHolding -> Script (ContractId Loan)
 acceptLoan borrower offerCid collateralCid =
   submit borrower do exerciseCmd offerCid Accept with collateralCid
-
-makeValuation : Party -> Party -> Party -> Party -> Party -> Text -> Decimal -> Script (ContractId CollateralValuation)
-makeValuation valuationAgent lender borrower regulator markSigner asset unitPrice = do
-  now <- getTime
-  submit markSigner do
-    createCmd CollateralValuation with
-      valuationAgent
-      lender
-      borrower
-      regulator
-      collateralAsset = asset
-      unitPrice
-      observedAt = now
-
-makeValuationAt : Party -> Party -> Party -> Party -> Party -> Text -> Decimal -> Time -> Script (ContractId CollateralValuation)
-makeValuationAt valuationAgent lender borrower regulator markSigner asset unitPrice observedAt =
-  submit markSigner do
-    createCmd CollateralValuation with
-      valuationAgent
-      lender
-      borrower
-      regulator
-      collateralAsset = asset
-      unitPrice
-      observedAt
 
 cashAmounts : Party -> Script [Decimal]
 cashAmounts p = do
@@ -81,11 +96,9 @@ collateralQuantities p = do
 testFullLifecycle : Script ()
 testFullLifecycle = script do
   setTime testStart
-  (lender, borrower, regulator, valuationAgent, (lenderCash, borrowerCash, borrowerColl)) <- setup
-
-  offerCid <- makeOffer lender borrower regulator valuationAgent lenderCash
+  ((lender, borrower, regulator, valuationAgent, streamCid), (initialMark, lenderCash, borrowerCash, borrowerColl)) <- setup
+  offerCid <- makeOffer lender borrower regulator valuationAgent lenderCash initialMark
   query @LoanOffer regulator >>= \offers -> length offers === 1
-
   loanCid <- acceptLoan borrower offerCid borrowerColl
   Some loan <- queryContractId borrower loanCid
   loan.collateralLocked === True
@@ -93,24 +106,22 @@ testFullLifecycle = script do
   loan.interest === 5.0
   loan.collateralQuantity === 150.0
   loan.valuationAgent === valuationAgent
+  loan.valuationStreamId === streamCid
   loan.marginCallWindowSeconds === 60
   loan.marginCall === None
   query @Loan regulator >>= \loans -> length loans === 1
   query @CollateralHolding borrower >>= \holdings -> length holdings === 0
   cashAmounts borrower >>= \amounts -> amounts === [100.0, 105.0]
-
   outsider <- allocateParty "Outsider"
   query @Loan outsider >>= \loans -> length loans === 0
   query @Loan valuationAgent >>= \loans -> length loans === 0
-
-  closedCid <- submit borrower do
-    exerciseCmd loanCid Repay with repaymentCid = borrowerCash
+  closedCid <- submit borrower do exerciseCmd loanCid Repay with repaymentCid = borrowerCash
   query @Loan borrower >>= \loans -> length loans === 0
   query @CollateralHolding borrower >>= \holdings -> length holdings === 1
   Some closed <- queryContractId regulator closedCid
   closed.reason === "Repaid"
   closed.collateralReleased === True
-  closed.valuationAgent === valuationAgent
+  closed.valuationStreamId === streamCid
   cashAmounts lender >>= \amounts -> amounts === [105.0]
   cashAmounts borrower >>= \amounts -> amounts === [100.0]
   query @LoanClosed outsider >>= \closedLoans -> length closedLoans === 0
@@ -118,8 +129,8 @@ testFullLifecycle = script do
 testWithdrawRefunds : Script ()
 testWithdrawRefunds = script do
   setTime testStart
-  (lender, borrower, regulator, valuationAgent, (lenderCash, _, _)) <- setup
-  offerCid <- makeOffer lender borrower regulator valuationAgent lenderCash
+  ((lender, borrower, regulator, valuationAgent, _), (initialMark, lenderCash, _, _)) <- setup
+  offerCid <- makeOffer lender borrower regulator valuationAgent lenderCash initialMark
   query @CashHolding lender >>= \holdings -> length holdings === 0
   _ <- submit lender do exerciseCmd offerCid Withdraw
   cashAmounts lender >>= \amounts -> amounts === [100.0]
@@ -128,19 +139,16 @@ testWithdrawRefunds = script do
 testRepayExactAmountViaSplit : Script ()
 testRepayExactAmountViaSplit = script do
   setTime testStart
-  (lender, borrower, regulator, valuationAgent, (lenderCash, _, borrowerColl)) <- setup
-  offerCid <- makeOffer lender borrower regulator valuationAgent lenderCash
+  ((lender, borrower, regulator, valuationAgent, _), (initialMark, lenderCash, _, borrowerColl)) <- setup
+  offerCid <- makeOffer lender borrower regulator valuationAgent lenderCash initialMark
   loanCid <- acceptLoan borrower offerCid borrowerColl
-
   oversized <- submit borrower do createCmd CashHolding with owner = borrower; amount = 5000.0
   submitMustFail borrower do exerciseCmd loanCid Repay with repaymentCid = oversized
-  (exactCid, remainderCid) <- submit borrower do
-    exerciseCmd oversized Split with splitAmount = 105.0
+  (exactCid, remainderCid) <- submit borrower do exerciseCmd oversized Split with splitAmount = 105.0
   Some exact <- queryContractId borrower exactCid
   exact.amount === 105.0
   Some remainder <- queryContractId borrower remainderCid
   remainder.amount === 4895.0
-
   closedCid <- submit borrower do exerciseCmd loanCid Repay with repaymentCid = exactCid
   Some closed <- queryContractId regulator closedCid
   closed.reason === "Repaid"
@@ -149,403 +157,421 @@ testRepayExactAmountViaSplit = script do
   cashAmounts borrower >>= \amounts -> amounts === [100.0, 105.0, 4895.0]
   collateralQuantities borrower >>= \quantities -> quantities === [150.0]
 
--- A breached mark opens one call. A fresh healthy mark and an exact 50-unit
--- holding cure it, and repayment then returns both the original 150 and the
--- top-up amount. The extra 50-unit holding is deliberately retained.
+testStreamReplacementAndPrivacy : Script ()
+testStreamReplacementAndPrivacy = script do
+  setTime testStart
+  ((lender, borrower, regulator, valuationAgent, streamCid), (initialMark, lenderCash, _, borrowerColl)) <- setup
+  replacement <- publishPrice valuationAgent initialMark 1.1
+  None <- queryContractId valuationAgent initialMark
+  Some current <- queryContractId lender replacement
+  current.streamId === streamCid
+  current.unitPrice === 1.1
+  submitMustFail valuationAgent do exerciseCmd initialMark Publish with unitPrice = 1.2
+  query @CollateralValuation regulator >>= \marks -> length marks === 1
+  submitMustFail regulator do exerciseCmd replacement Publish with unitPrice = 1.2
+  query @ValuationStream lender >>= \streams -> length streams === 0
+  outsider <- allocateParty "Outsider"
+  query @ValuationStream outsider >>= \streams -> length streams === 0
+  offerCid <- makeOffer lender borrower regulator valuationAgent lenderCash replacement
+  loanCid <- acceptLoan borrower offerCid borrowerColl
+  query @Loan valuationAgent >>= \loans -> length loans === 0
+  query @Loan regulator >>= \loans -> length loans === 1
+  query @Loan outsider >>= \loans -> length loans === 0
+  Some loan <- queryContractId borrower loanCid
+  loan.valuationStreamId === streamCid
+
+-- Archived predecessor marks cannot be fetched even though they would still
+-- be within the normal five-minute freshness window.
+testArchivedMarkRejected : Script ()
+testArchivedMarkRejected = script do
+  setTime testStart
+  ((lender, borrower, regulator, valuationAgent, _), (initialMark, lenderCash, _, borrowerColl)) <- setup
+  offerCid <- makeOffer lender borrower regulator valuationAgent lenderCash initialMark
+  loanCid <- acceptLoan borrower offerCid borrowerColl
+  breachOne <- publishPrice valuationAgent initialMark 0.5
+  healthyOne <- publishPrice valuationAgent breachOne 0.8
+  submitMustFail lender do exerciseCmd loanCid IssueMarginCall with valuationCid = breachOne
+  breachTwo <- publishPrice valuationAgent healthyOne 0.5
+  calledLoanCid <- submit lender do exerciseCmd loanCid IssueMarginCall with valuationCid = breachTwo
+  healthyTwo <- publishPrice valuationAgent breachTwo 0.8
+  topUpHolding <- submit borrower do createCmd CollateralHolding with owner = borrower; asset = tbill; quantity = 50.0
+  submitMustFail borrower do
+    exerciseCmd calledLoanCid TopUpCollateral with
+      collateralCid = topUpHolding
+      topUpQuantity = 50.0
+      valuationCid = breachTwo
+  submitMustFail borrower do exerciseCmd calledLoanCid ResolveMarginCall with valuationCid = breachTwo
+  passTime (seconds 60)
+  submitMustFail lender do exerciseCmd calledLoanCid Liquidate with valuationCid = breachTwo
+  Some current <- queryContractId valuationAgent healthyTwo
+  current.unitPrice === 0.8
+
+testParallelStreamAndForgedMarks : Script ()
+testParallelStreamAndForgedMarks = script do
+  setTime testStart
+  ((lender, borrower, regulator, valuationAgent, streamCid), (initialMark, lenderCash, _, borrowerColl)) <- setup
+  offerCid <- makeOffer lender borrower regulator valuationAgent lenderCash initialMark
+  loanCid <- acceptLoan borrower offerCid borrowerColl
+  parallelStream <- createStream lender borrower regulator valuationAgent tbill
+  parallelMark <- publishInitial valuationAgent parallelStream 0.5
+  submitMustFail lender do exerciseCmd loanCid IssueMarginCall with valuationCid = parallelMark
+  wrongAssetStream <- createStream lender borrower regulator valuationAgent "Other Asset"
+  wrongAssetMark <- publishInitial valuationAgent wrongAssetStream 0.5
+  submitMustFail lender do exerciseCmd loanCid IssueMarginCall with valuationCid = wrongAssetMark
+  submitMustFail valuationAgent do
+    createCmd CollateralValuation with
+      valuationAgent; lender; borrower; regulator; collateralAsset = tbill
+      streamId = streamCid; unitPrice = 0.5; observedAt = testStart
+  submitMustFail lender do
+    createCmd CollateralValuation with
+      valuationAgent; lender; borrower; regulator; collateralAsset = tbill
+      streamId = streamCid; unitPrice = 0.5; observedAt = testStart
+  submitMustFail borrower do
+    createCmd CollateralValuation with
+      valuationAgent; lender; borrower; regulator; collateralAsset = tbill
+      streamId = streamCid; unitPrice = 0.5; observedAt = testStart
+
 testMarginCallTopUpAndRepay : Script ()
 testMarginCallTopUpAndRepay = script do
   setTime testStart
-  (lender, borrower, regulator, valuationAgent, (lenderCash, borrowerCash, borrowerColl)) <- setup
-  offerCid <- makeOffer lender borrower regulator valuationAgent lenderCash
+  ((lender, borrower, regulator, valuationAgent, _), (initialMark, lenderCash, borrowerCash, borrowerColl)) <- setup
+  offerCid <- makeOffer lender borrower regulator valuationAgent lenderCash initialMark
   loanCid <- acceptLoan borrower offerCid borrowerColl
-
-  breachMark <- makeValuation valuationAgent lender borrower regulator valuationAgent tbill 0.5
-  calledLoanCid <- submit lender do
-    exerciseCmd loanCid IssueMarginCall with valuationCid = breachMark
+  breachMark <- publishPrice valuationAgent initialMark 0.5
+  calledLoanCid <- submit lender do exerciseCmd loanCid IssueMarginCall with valuationCid = breachMark
   Some calledLoan <- queryContractId borrower calledLoanCid
   Some call <- pure calledLoan.marginCall
   call.unitPrice === 0.5
   call.deadline === addRelTime call.issuedAt (seconds 60)
-
-  oversized <- submit borrower do
-    createCmd CollateralHolding with owner = borrower; asset = tbill; quantity = 100.0
-  (exactCid, reserveCid) <- submit borrower do
-    exerciseCmd oversized SplitCollateral with splitQuantity = 50.0
-  Some exactHolding <- queryContractId borrower exactCid
-  exactHolding.quantity === 50.0
-  Some reserveHolding <- queryContractId borrower reserveCid
-  reserveHolding.quantity === 50.0
-
-  healthyMark <- makeValuation valuationAgent lender borrower regulator valuationAgent tbill 0.8
+  oversized <- submit borrower do createCmd CollateralHolding with owner = borrower; asset = tbill; quantity = 100.0
+  (exactCid, reserveCid) <- submit borrower do exerciseCmd oversized SplitCollateral with splitQuantity = 50.0
+  healthyMark <- publishPrice valuationAgent breachMark 0.8
   toppedLoanCid <- submit borrower do
-    exerciseCmd calledLoanCid TopUpCollateral with
-      collateralCid = exactCid
-      topUpQuantity = 50.0
-      valuationCid = healthyMark
+    exerciseCmd calledLoanCid TopUpCollateral with collateralCid = exactCid; topUpQuantity = 50.0; valuationCid = healthyMark
   Some toppedLoan <- queryContractId borrower toppedLoanCid
   toppedLoan.collateralQuantity === 200.0
   toppedLoan.marginCall === None
-
-  closedCid <- submit borrower do
-    exerciseCmd toppedLoanCid Repay with repaymentCid = borrowerCash
+  closedCid <- submit borrower do exerciseCmd toppedLoanCid Repay with repaymentCid = borrowerCash
   Some closed <- queryContractId regulator closedCid
   closed.reason === "Repaid"
   closed.collateralQuantity === 200.0
+  closed.valuationStreamId === calledLoan.valuationStreamId
   collateralQuantities borrower >>= \quantities -> quantities === [50.0, 200.0]
+  Some reserve <- queryContractId borrower reserveCid
+  reserve.quantity === 50.0
 
 testMarginCallDeadlineAndLiquidation : Script ()
 testMarginCallDeadlineAndLiquidation = script do
   setTime testStart
-  (lender, borrower, regulator, valuationAgent, (lenderCash, _, borrowerColl)) <- setup
-  offerCid <- makeOffer lender borrower regulator valuationAgent lenderCash
+  ((lender, borrower, regulator, valuationAgent, _), (initialMark, lenderCash, _, borrowerColl)) <- setup
+  offerCid <- makeOffer lender borrower regulator valuationAgent lenderCash initialMark
   loanCid <- acceptLoan borrower offerCid borrowerColl
-  breachMark <- makeValuation valuationAgent lender borrower regulator valuationAgent tbill 0.5
-  calledLoanCid <- submit lender do
-    exerciseCmd loanCid IssueMarginCall with valuationCid = breachMark
-
-  -- The lender cannot liquidate before expiry, including one second before it.
+  breachMark <- publishPrice valuationAgent initialMark 0.5
+  calledLoanCid <- submit lender do exerciseCmd loanCid IssueMarginCall with valuationCid = breachMark
   submitMustFail lender do exerciseCmd calledLoanCid Liquidate with valuationCid = breachMark
   passTime (seconds 59)
   submitMustFail lender do exerciseCmd calledLoanCid Liquidate with valuationCid = breachMark
-
-  -- At the exact deadline liquidation is allowed when the fresh mark still breaches.
   passTime (seconds 1)
-  closedCid <- submit lender do
-    exerciseCmd calledLoanCid Liquidate with valuationCid = breachMark
+  closedCid <- submit lender do exerciseCmd calledLoanCid Liquidate with valuationCid = breachMark
   query @Loan borrower >>= \loans -> length loans === 0
   Some closed <- queryContractId borrower closedCid
   closed.reason === "Liquidated"
   closed.collateralReleased === False
   collateralQuantities lender >>= \quantities -> quantities === [150.0]
-  query @CollateralHolding borrower >>= \holdings -> length holdings === 0
 
 testResolveMarginCallAfterDeadline : Script ()
 testResolveMarginCallAfterDeadline = script do
   setTime testStart
-  (lender, borrower, regulator, valuationAgent, (lenderCash, _, borrowerColl)) <- setup
-  offerCid <- makeOffer lender borrower regulator valuationAgent lenderCash
+  ((lender, borrower, regulator, valuationAgent, _), (initialMark, lenderCash, _, borrowerColl)) <- setup
+  offerCid <- makeOffer lender borrower regulator valuationAgent lenderCash initialMark
   loanCid <- acceptLoan borrower offerCid borrowerColl
-  breachMark <- makeValuation valuationAgent lender borrower regulator valuationAgent tbill 0.5
-  calledLoanCid <- submit lender do
-    exerciseCmd loanCid IssueMarginCall with valuationCid = breachMark
+  breachMark <- publishPrice valuationAgent initialMark 0.5
+  calledLoanCid <- submit lender do exerciseCmd loanCid IssueMarginCall with valuationCid = breachMark
   passTime (seconds 60)
-  healthyMark <- makeValuation valuationAgent lender borrower regulator valuationAgent tbill 1.0
-  resolvedLoanCid <- submit borrower do
-    exerciseCmd calledLoanCid ResolveMarginCall with valuationCid = healthyMark
+  healthyMark <- publishPrice valuationAgent breachMark 1.0
+  resolvedLoanCid <- submit borrower do exerciseCmd calledLoanCid ResolveMarginCall with valuationCid = healthyMark
   Some resolvedLoan <- queryContractId borrower resolvedLoanCid
   resolvedLoan.marginCall === None
-  resolvedLoan.collateralQuantity === 150.0
 
--- Repayment remains available while a margin call is open. With no call,
--- top-up, resolve, and liquidation all fail atomically.
+testRepayDuringOpenAndExpiredCall : Script ()
+testRepayDuringOpenAndExpiredCall = script do
+  setTime testStart
+  ((lender, borrower, regulator, valuationAgent, _), (initialMark, lenderCash, borrowerCash, borrowerColl)) <- setup
+  offerCid <- makeOffer lender borrower regulator valuationAgent lenderCash initialMark
+  loanCid <- acceptLoan borrower offerCid borrowerColl
+  breachMark <- publishPrice valuationAgent initialMark 0.5
+  calledLoanCid <- submit lender do exerciseCmd loanCid IssueMarginCall with valuationCid = breachMark
+  closedCid <- submit borrower do exerciseCmd calledLoanCid Repay with repaymentCid = borrowerCash
+  Some closed <- queryContractId regulator closedCid
+  closed.reason === "Repaid"
+
+  ((lender2, borrower2, regulator2, valuationAgent2, _), (initialMark2, lenderCash2, borrowerCash2, borrowerColl2)) <- setup
+  offerCid2 <- makeOffer lender2 borrower2 regulator2 valuationAgent2 lenderCash2 initialMark2
+  loanCid2 <- acceptLoan borrower2 offerCid2 borrowerColl2
+  breachMark2 <- publishPrice valuationAgent2 initialMark2 0.5
+  calledLoanCid2 <- submit lender2 do exerciseCmd loanCid2 IssueMarginCall with valuationCid = breachMark2
+  passTime (seconds 60)
+  closedCid2 <- submit borrower2 do exerciseCmd calledLoanCid2 Repay with repaymentCid = borrowerCash2
+  Some closed2 <- queryContractId regulator2 closedCid2
+  closed2.reason === "Repaid"
+
 testNoCallAndRepay : Script ()
 testNoCallAndRepay = script do
   setTime testStart
-  (lender, borrower, regulator, valuationAgent, (lenderCash, borrowerCash, borrowerColl)) <- setup
-  offerCid <- makeOffer lender borrower regulator valuationAgent lenderCash
+  ((lender, borrower, regulator, valuationAgent, _), (initialMark, lenderCash, borrowerCash, borrowerColl)) <- setup
+  offerCid <- makeOffer lender borrower regulator valuationAgent lenderCash initialMark
   loanCid <- acceptLoan borrower offerCid borrowerColl
-  healthyMark <- makeValuation valuationAgent lender borrower regulator valuationAgent tbill 1.0
-  extra <- submit borrower do
-    createCmd CollateralHolding with owner = borrower; asset = tbill; quantity = 50.0
-  submitMustFail borrower do
-    exerciseCmd loanCid TopUpCollateral with
-      collateralCid = extra
-      topUpQuantity = 50.0
-      valuationCid = healthyMark
+  healthyMark <- publishPrice valuationAgent initialMark 1.0
+  extra <- submit borrower do createCmd CollateralHolding with owner = borrower; asset = tbill; quantity = 50.0
+  submitMustFail borrower do exerciseCmd loanCid TopUpCollateral with collateralCid = extra; topUpQuantity = 50.0; valuationCid = healthyMark
   submitMustFail borrower do exerciseCmd loanCid ResolveMarginCall with valuationCid = healthyMark
   passTime (seconds 60)
   submitMustFail lender do exerciseCmd loanCid Liquidate with valuationCid = healthyMark
-
-  -- A borrower may still repay the loan during the call-free lifecycle.
   closedCid <- submit borrower do exerciseCmd loanCid Repay with repaymentCid = borrowerCash
   Some closed <- queryContractId regulator closedCid
   closed.reason === "Repaid"
 
-testRepayDuringOpenMarginCall : Script ()
-testRepayDuringOpenMarginCall = script do
-  setTime testStart
-  (lender, borrower, regulator, valuationAgent, (lenderCash, borrowerCash, borrowerColl)) <- setup
-  offerCid <- makeOffer lender borrower regulator valuationAgent lenderCash
-  loanCid <- acceptLoan borrower offerCid borrowerColl
-  breachMark <- makeValuation valuationAgent lender borrower regulator valuationAgent tbill 0.5
-  calledLoanCid <- submit lender do exerciseCmd loanCid IssueMarginCall with valuationCid = breachMark
-
-  -- Repayment is still available while the call is open; no liquidation-only
-  -- state transition may strand an otherwise valid repayment.
-  closedCid <- submit borrower do exerciseCmd calledLoanCid Repay with repaymentCid = borrowerCash
-  Some closed <- queryContractId regulator closedCid
-  closed.reason === "Repaid"
-  closed.collateralReleased === True
-  query @Loan borrower >>= \loans -> length loans === 0
-  collateralQuantities borrower >>= \quantities -> quantities === [150.0]
-
-testRepayAfterExpiredMarginCall : Script ()
-testRepayAfterExpiredMarginCall = script do
-  setTime testStart
-  (lender, borrower, regulator, valuationAgent, (lenderCash, borrowerCash, borrowerColl)) <- setup
-  offerCid <- makeOffer lender borrower regulator valuationAgent lenderCash
-  loanCid <- acceptLoan borrower offerCid borrowerColl
-  breachMark <- makeValuation valuationAgent lender borrower regulator valuationAgent tbill 0.5
-  calledLoanCid <- submit lender do exerciseCmd loanCid IssueMarginCall with valuationCid = breachMark
-  passTime (seconds 60)
-
-  -- Expiry only enables lender liquidation; it does not revoke repayment.
-  closedCid <- submit borrower do exerciseCmd calledLoanCid Repay with repaymentCid = borrowerCash
-  Some closed <- queryContractId regulator closedCid
-  closed.reason === "Repaid"
-  closed.collateralReleased === True
-  query @Loan borrower >>= \loans -> length loans === 0
-  collateralQuantities borrower >>= \quantities -> quantities === [150.0]
-
 testAuthorizationAndReadVisibility : Script ()
 testAuthorizationAndReadVisibility = script do
   setTime testStart
-  (lender, borrower, regulator, valuationAgent, (lenderCash, borrowerCash, borrowerColl)) <- setup
+  ((lender, borrower, regulator, valuationAgent, _), (initialMark, lenderCash, borrowerCash, borrowerColl)) <- setup
   outsider <- allocateParty "Outsider"
-  offerCid <- makeOffer lender borrower regulator valuationAgent lenderCash
+  offerCid <- makeOffer lender borrower regulator valuationAgent lenderCash initialMark
+  submitMustFail borrower do exerciseCmd offerCid Withdraw
+  submitMustFail outsider do exerciseCmd offerCid Accept with collateralCid = borrowerColl
   loanCid <- acceptLoan borrower offerCid borrowerColl
-
-  -- Loan visibility is bilateral plus regulator observer; the valuer and outsider
-  -- cannot query the active obligation. Valuation marks remain private to their
-  -- signatory and the listed loan observers.
   query @Loan regulator >>= \loans -> length loans === 1
   query @Loan valuationAgent >>= \loans -> length loans === 0
   query @Loan outsider >>= \loans -> length loans === 0
+  breachMark <- publishPrice valuationAgent initialMark 0.5
+  submitMustFail borrower do exerciseCmd loanCid IssueMarginCall with valuationCid = breachMark
+  submitMustFail valuationAgent do exerciseCmd loanCid IssueMarginCall with valuationCid = breachMark
+  submitMustFail regulator do exerciseCmd loanCid IssueMarginCall with valuationCid = breachMark
+  submitMustFail outsider do exerciseCmd loanCid IssueMarginCall with valuationCid = breachMark
+  submitMustFail lender do exerciseCmd loanCid Repay with repaymentCid = borrowerCash
+  submitMustFail regulator do exerciseCmd loanCid Repay with repaymentCid = borrowerCash
 
-  mark <- makeValuation valuationAgent lender borrower regulator valuationAgent tbill 0.5
-  query @CollateralValuation valuationAgent >>= \marks -> length marks === 1
-  query @CollateralValuation lender >>= \marks -> length marks === 1
-  query @CollateralValuation regulator >>= \marks -> length marks === 1
-  query @CollateralValuation outsider >>= \marks -> length marks === 0
-
-  -- Every choice keeps its declared controller, including read-only regulator.
-  submitMustFail borrower do exerciseCmd offerCid Withdraw
-  submitMustFail outsider do exerciseCmd offerCid Accept with collateralCid = borrowerColl
-  submitMustFail borrower do exerciseCmd loanCid IssueMarginCall with valuationCid = mark
-  submitMustFail valuationAgent do exerciseCmd loanCid IssueMarginCall with valuationCid = mark
-  submitMustFail regulator do exerciseCmd loanCid IssueMarginCall with valuationCid = mark
-  submitMustFail outsider do exerciseCmd loanCid IssueMarginCall with valuationCid = mark
-  calledLoanCid <- submit lender do exerciseCmd loanCid IssueMarginCall with valuationCid = mark
-
-  topUpHolding <- submit borrower do
-    createCmd CollateralHolding with owner = borrower; asset = tbill; quantity = 50.0
-  healthyMark <- makeValuation valuationAgent lender borrower regulator valuationAgent tbill 0.8
-  submitMustFail lender do
-    exerciseCmd calledLoanCid TopUpCollateral with
-      collateralCid = topUpHolding
-      topUpQuantity = 50.0
-      valuationCid = healthyMark
-  submitMustFail lender do exerciseCmd calledLoanCid ResolveMarginCall with valuationCid = healthyMark
-  submitMustFail borrower do exerciseCmd calledLoanCid Liquidate with valuationCid = mark
-  submitMustFail lender do exerciseCmd calledLoanCid Repay with repaymentCid = borrowerCash
-  submitMustFail regulator do exerciseCmd calledLoanCid Repay with repaymentCid = borrowerCash
-
-testValuationGuards : Script ()
-testValuationGuards = script do
+testValuationFreshnessAndGuards : Script ()
+testValuationFreshnessAndGuards = script do
   setTime testStart
-  (lender, borrower, regulator, valuationAgent, (lenderCash, _, borrowerColl)) <- setup
-  wrongValuer <- allocateParty "WrongValuer"
+  ((lender, borrower, regulator, valuationAgent, streamCid), (initialMark, lenderCash, _, borrowerColl)) <- setup
+  offerCid <- makeOffer lender borrower regulator valuationAgent lenderCash initialMark
+  loanCid <- acceptLoan borrower offerCid borrowerColl
+  passTime (seconds 301)
+  submitMustFail lender do exerciseCmd loanCid IssueMarginCall with valuationCid = initialMark
+  freshMark <- publishPrice valuationAgent initialMark 0.5
+  wrongAssetStream <- createStream lender borrower regulator valuationAgent "Other Asset"
+  wrongAssetMark <- publishInitial valuationAgent wrongAssetStream 0.5
+  submitMustFail lender do exerciseCmd loanCid IssueMarginCall with valuationCid = wrongAssetMark
   wrongLender <- allocateParty "WrongLender"
   wrongBorrower <- allocateParty "WrongBorrower"
   wrongRegulator <- allocateParty "WrongRegulator"
-  offerCid <- makeOffer lender borrower regulator valuationAgent lenderCash
-  loanCid <- acceptLoan borrower offerCid borrowerColl
-
-  wrongValuerMark <- makeValuation wrongValuer lender borrower regulator wrongValuer tbill 0.5
-  submitMustFail lender do exerciseCmd loanCid IssueMarginCall with valuationCid = wrongValuerMark
-  wrongAssetMark <- makeValuation valuationAgent lender borrower regulator valuationAgent "Other Asset" 0.5
-  submitMustFail lender do exerciseCmd loanCid IssueMarginCall with valuationCid = wrongAssetMark
-  wrongLenderMark <- makeValuation valuationAgent wrongLender borrower regulator valuationAgent tbill 0.5
-  submitMustFail lender do exerciseCmd loanCid IssueMarginCall with valuationCid = wrongLenderMark
-  wrongBorrowerMark <- makeValuation valuationAgent lender wrongBorrower regulator valuationAgent tbill 0.5
-  submitMustFail lender do exerciseCmd loanCid IssueMarginCall with valuationCid = wrongBorrowerMark
-  wrongRegulatorMark <- makeValuation valuationAgent lender borrower wrongRegulator valuationAgent tbill 0.5
-  submitMustFail lender do exerciseCmd loanCid IssueMarginCall with valuationCid = wrongRegulatorMark
-
-  -- A healthy mark cannot open a call even though its provenance is correct.
-  healthyMark <- makeValuation valuationAgent lender borrower regulator valuationAgent tbill 1.0
-  submitMustFail lender do exerciseCmd loanCid IssueMarginCall with valuationCid = healthyMark
-
-  -- Future observations are rejected before the LTV check.
+  wrongAgent <- allocateParty "WrongAgent"
+  wrongStream <- createStream wrongLender wrongBorrower wrongRegulator wrongAgent tbill
+  wrongMark <- publishInitial wrongAgent wrongStream 0.5
+  submitMustFail lender do exerciseCmd loanCid IssueMarginCall with valuationCid = wrongMark
   now <- getTime
-  futureMark <- makeValuationAt valuationAgent lender borrower regulator valuationAgent tbill 0.5
-    (addRelTime now (seconds 1))
+  futureMark <- submitMulti [lender, borrower, valuationAgent] [] do
+    createCmd CollateralValuation with
+      valuationAgent; lender; borrower; regulator; collateralAsset = tbill
+      streamId = streamCid; unitPrice = 0.5; observedAt = addRelTime now (seconds 1)
   submitMustFail lender do exerciseCmd loanCid IssueMarginCall with valuationCid = futureMark
-
-  -- The same kind of mark becomes stale after 301 seconds.
-  staleMark <- makeValuationAt valuationAgent lender borrower regulator valuationAgent tbill 0.5 now
-  passTime (seconds 301)
-  submitMustFail lender do exerciseCmd loanCid IssueMarginCall with valuationCid = staleMark
+  submitMustFail valuationAgent do
+    createCmd CollateralValuation with
+      valuationAgent; lender; borrower; regulator; collateralAsset = tbill
+      streamId = streamCid; unitPrice = 0.5; observedAt = testStart
+  Some current <- queryContractId lender freshMark
+  current.unitPrice === 0.5
 
 testDuplicateCallAndReusedContracts : Script ()
 testDuplicateCallAndReusedContracts = script do
   setTime testStart
-  (lender, borrower, regulator, valuationAgent, (lenderCash, _, borrowerColl)) <- setup
-  offerCid <- makeOffer lender borrower regulator valuationAgent lenderCash
+  ((lender, borrower, regulator, valuationAgent, _), (initialMark, lenderCash, _, borrowerColl)) <- setup
+  offerCid <- makeOffer lender borrower regulator valuationAgent lenderCash initialMark
   loanCid <- acceptLoan borrower offerCid borrowerColl
-  firstMark <- makeValuation valuationAgent lender borrower regulator valuationAgent tbill 0.5
+  firstMark <- publishPrice valuationAgent initialMark 0.5
   calledLoanCid <- submit lender do exerciseCmd loanCid IssueMarginCall with valuationCid = firstMark
   Some calledLoan <- queryContractId borrower calledLoanCid
   Some firstCall <- pure calledLoan.marginCall
-
-  -- A second issue consumes no state and cannot extend the original deadline.
-  secondMark <- makeValuation valuationAgent lender borrower regulator valuationAgent tbill 0.5
+  secondMark <- publishPrice valuationAgent firstMark 0.5
   submitMustFail lender do exerciseCmd calledLoanCid IssueMarginCall with valuationCid = secondMark
   Some stillCalledLoan <- queryContractId borrower calledLoanCid
   Some stillFirstCall <- pure stillCalledLoan.marginCall
   stillFirstCall.deadline === firstCall.deadline
-  submitMustFail lender do exerciseCmd loanCid IssueMarginCall with valuationCid = secondMark
-
-  -- Top up once, then the consumed exact holding cannot be reused on a new call.
-  topUpHolding <- submit borrower do
-    createCmd CollateralHolding with owner = borrower; asset = tbill; quantity = 50.0
-  healthyMark <- makeValuation valuationAgent lender borrower regulator valuationAgent tbill 0.8
-  toppedLoanCid <- submit borrower do
-    exerciseCmd calledLoanCid TopUpCollateral with
-      collateralCid = topUpHolding
-      topUpQuantity = 50.0
-      valuationCid = healthyMark
-  secondCallLoanCid <- submit lender do
-    exerciseCmd toppedLoanCid IssueMarginCall with valuationCid = firstMark
-  submitMustFail borrower do
-    exerciseCmd secondCallLoanCid TopUpCollateral with
-      collateralCid = topUpHolding
-      topUpQuantity = 50.0
-      valuationCid = healthyMark
+  topUpHolding <- submit borrower do createCmd CollateralHolding with owner = borrower; asset = tbill; quantity = 50.0
+  healthyMark <- publishPrice valuationAgent secondMark 0.8
+  toppedLoanCid <- submit borrower do exerciseCmd calledLoanCid TopUpCollateral with collateralCid = topUpHolding; topUpQuantity = 50.0; valuationCid = healthyMark
+  secondBreach <- publishPrice valuationAgent healthyMark 0.5
+  secondCallLoanCid <- submit lender do exerciseCmd toppedLoanCid IssueMarginCall with valuationCid = secondBreach
+  healthyAgain <- publishPrice valuationAgent secondBreach 0.8
+  submitMustFail borrower do exerciseCmd secondCallLoanCid TopUpCollateral with collateralCid = topUpHolding; topUpQuantity = 50.0; valuationCid = healthyAgain
 
 testTopUpRollbackAndSplit : Script ()
 testTopUpRollbackAndSplit = script do
   setTime testStart
-  (lender, borrower, regulator, valuationAgent, (lenderCash, _, borrowerColl)) <- setup
-  outsider <- allocateParty "Outsider"
-  offerCid <- makeOffer lender borrower regulator valuationAgent lenderCash
+  ((lender, borrower, regulator, valuationAgent, _), (initialMark, lenderCash, _, borrowerColl)) <- setup
+  offerCid <- makeOffer lender borrower regulator valuationAgent lenderCash initialMark
   loanCid <- acceptLoan borrower offerCid borrowerColl
-  breachMark <- makeValuation valuationAgent lender borrower regulator valuationAgent tbill 0.5
+  breachMark <- publishPrice valuationAgent initialMark 0.5
   calledLoanCid <- submit lender do exerciseCmd loanCid IssueMarginCall with valuationCid = breachMark
-
-  -- An oversized wallet cannot be fetched as a 50-unit deposit; the failed
-  -- choice leaves it intact and the call open.
-  oversized <- submit borrower do
-    createCmd CollateralHolding with owner = borrower; asset = tbill; quantity = 100.0
-  healthyMark <- makeValuation valuationAgent lender borrower regulator valuationAgent tbill 0.8
-  submitMustFail borrower do
-    exerciseCmd calledLoanCid TopUpCollateral with
-      collateralCid = oversized
-      topUpQuantity = 50.0
-      valuationCid = healthyMark
+  oversized <- submit borrower do createCmd CollateralHolding with owner = borrower; asset = tbill; quantity = 100.0
+  healthyMark <- publishPrice valuationAgent breachMark 0.8
+  submitMustFail borrower do exerciseCmd calledLoanCid TopUpCollateral with collateralCid = oversized; topUpQuantity = 50.0; valuationCid = healthyMark
   Some stillOversized <- queryContractId borrower oversized
   stillOversized.quantity === 100.0
-
-  -- A borrower-owned wrong-asset holding and an outsider-owned holding are both rejected.
-  wrongAsset <- submit borrower do
-    createCmd CollateralHolding with owner = borrower; asset = "Other Asset"; quantity = 50.0
-  submitMustFail borrower do
-    exerciseCmd calledLoanCid TopUpCollateral with
-      collateralCid = wrongAsset
-      topUpQuantity = 50.0
-      valuationCid = healthyMark
-  wrongOwner <- submit outsider do
-    createCmd CollateralHolding with owner = outsider; asset = tbill; quantity = 50.0
-  submitMustFail borrower do
-    exerciseCmd calledLoanCid TopUpCollateral with
-      collateralCid = wrongOwner
-      topUpQuantity = 50.0
-      valuationCid = healthyMark
-
-  -- Splitting in a private owner-only transaction supplies the exact amount.
-  (exactCid, reserveCid) <- submit borrower do
-    exerciseCmd oversized SplitCollateral with splitQuantity = 50.0
-  toppedLoanCid <- submit borrower do
-    exerciseCmd calledLoanCid TopUpCollateral with
-      collateralCid = exactCid
-      topUpQuantity = 50.0
-      valuationCid = healthyMark
+  wrongAsset <- submit borrower do createCmd CollateralHolding with owner = borrower; asset = "Other Asset"; quantity = 50.0
+  submitMustFail borrower do exerciseCmd calledLoanCid TopUpCollateral with collateralCid = wrongAsset; topUpQuantity = 50.0; valuationCid = healthyMark
+  outsider <- allocateParty "Outsider"
+  wrongOwner <- submit outsider do createCmd CollateralHolding with owner = outsider; asset = tbill; quantity = 50.0
+  submitMustFail borrower do exerciseCmd calledLoanCid TopUpCollateral with collateralCid = wrongOwner; topUpQuantity = 50.0; valuationCid = healthyMark
+  (exactCid, reserveCid) <- submit borrower do exerciseCmd oversized SplitCollateral with splitQuantity = 50.0
+  toppedLoanCid <- submit borrower do exerciseCmd calledLoanCid TopUpCollateral with collateralCid = exactCid; topUpQuantity = 50.0; valuationCid = healthyMark
   Some toppedLoan <- queryContractId borrower toppedLoanCid
   toppedLoan.collateralQuantity === 200.0
   toppedLoan.marginCall === None
   Some reserve <- queryContractId borrower reserveCid
   reserve.quantity === 50.0
 
+testMaturityOfferAndAcceptBoundaries : Script ()
+testMaturityOfferAndAcceptBoundaries = script do
+  setTime testStart
+  ((lender, borrower, regulator, valuationAgent, _), (initialMark, lenderCash, _, borrowerColl)) <- setup
+  -- Creation and acceptance are both valid strictly before maturity.
+  offerCid <- makeOfferAt lender borrower regulator valuationAgent lenderCash initialMark shortMaturity
+  loanCid <- acceptLoan borrower offerCid borrowerColl
+  queryContractId borrower loanCid >>= \loan -> case loan of Some l -> l.maturity === shortMaturity; None -> abort "missing loan"
+
+  ((lender2, borrower2, regulator2, valuationAgent2, _), (initialMark2, lenderCash2, _, borrowerColl2)) <- setup
+  offerCid2 <- makeOfferAt lender2 borrower2 regulator2 valuationAgent2 lenderCash2 initialMark2 shortMaturity
+  passTime (seconds 60)
+  submitMustFail borrower2 do exerciseCmd offerCid2 Accept with collateralCid = borrowerColl2
+  cashAtExact <- submit lender2 do createCmd CashHolding with owner = lender2; amount = 100.0
+  submitMustFail lender2 do
+    exerciseCmd cashAtExact MakeOffer with
+      borrower = borrower2; regulator = regulator2; valuationAgent = valuationAgent2; valuationCid = initialMark2
+      principal = 100.0; interest = 5.0; collateralAsset = tbill; collateralQuantity = 150.0
+      maturity = shortMaturity; liquidationThresholdLtv = 90.0; marginCallWindowSeconds = 60
+  passTime (seconds 1)
+  cashAfter <- submit lender2 do createCmd CashHolding with owner = lender2; amount = 100.0
+  submitMustFail lender2 do
+    exerciseCmd cashAfter MakeOffer with
+      borrower = borrower2; regulator = regulator2; valuationAgent = valuationAgent2; valuationCid = initialMark2
+      principal = 100.0; interest = 5.0; collateralAsset = tbill; collateralQuantity = 150.0
+      maturity = shortMaturity; liquidationThresholdLtv = 90.0; marginCallWindowSeconds = 60
+
+testMaturityMarginChoiceBoundaries : Script ()
+testMaturityMarginChoiceBoundaries = script do
+  setTime testStart
+  ((lender, borrower, regulator, valuationAgent, _), (initialMark, lenderCash, _, borrowerColl)) <- setup
+  offerCid <- makeOfferAt lender borrower regulator valuationAgent lenderCash initialMark shortMaturity
+  loanCid <- acceptLoan borrower offerCid borrowerColl
+  breachMark <- publishPrice valuationAgent initialMark 0.5
+  calledLoanCid <- submit lender do exerciseCmd loanCid IssueMarginCall with valuationCid = breachMark
+  passTime (seconds 60)
+  submitMustFail borrower do exerciseCmd calledLoanCid ResolveMarginCall with valuationCid = breachMark
+  passTime (seconds 1)
+  submitMustFail borrower do exerciseCmd calledLoanCid ResolveMarginCall with valuationCid = breachMark
+
+  ((lender2, borrower2, regulator2, valuationAgent2, _), (initialMark2, lenderCash2, _, borrowerColl2)) <- setup
+  now <- getTime
+  let maturity2 = addRelTime now (seconds 60)
+  offerCid2 <- makeOfferAt lender2 borrower2 regulator2 valuationAgent2 lenderCash2 initialMark2 maturity2
+  loanCid2 <- acceptLoan borrower2 offerCid2 borrowerColl2
+  breachMark2 <- publishPrice valuationAgent2 initialMark2 0.5
+  passTime (seconds 60)
+  submitMustFail lender2 do exerciseCmd loanCid2 IssueMarginCall with valuationCid = breachMark2
+
+testOverdueLiquidation : Script ()
+testOverdueLiquidation = script do
+  setTime testStart
+  ((lender, borrower, regulator, valuationAgent, _), (initialMark, lenderCash, _, borrowerColl)) <- setup
+  offerCid <- makeOfferAt lender borrower regulator valuationAgent lenderCash initialMark shortMaturity
+  loanCid <- acceptLoan borrower offerCid borrowerColl
+  submitMustFail lender do exerciseCmd loanCid LiquidateOverdue
+  passTime (seconds 60)
+  submitMustFail lender do exerciseCmd loanCid LiquidateOverdue
+  passTime (seconds 1)
+  closedCid <- submit lender do exerciseCmd loanCid LiquidateOverdue
+  Some closed <- queryContractId borrower closedCid
+  closed.reason === "LiquidatedAtMaturity"
+  closed.collateralReleased === False
+  collateralQuantities lender >>= \quantities -> quantities === [150.0]
+  query @Loan borrower >>= \loans -> length loans === 0
+
+testOverdueLiquidationWithOpenCall : Script ()
+testOverdueLiquidationWithOpenCall = script do
+  setTime testStart
+  ((lender, borrower, regulator, valuationAgent, _), (initialMark, lenderCash, _, borrowerColl)) <- setup
+  offerCid <- makeOfferAt lender borrower regulator valuationAgent lenderCash initialMark (addRelTime testStart (seconds 120))
+  loanCid <- acceptLoan borrower offerCid borrowerColl
+  breachMark <- publishPrice valuationAgent initialMark 0.5
+  calledLoanCid <- submit lender do exerciseCmd loanCid IssueMarginCall with valuationCid = breachMark
+  healthyMark <- publishPrice valuationAgent breachMark 1.0
+  Some healthy <- queryContractId borrower healthyMark
+  healthy.unitPrice === 1.0
+  passTime (seconds 120)
+  submitMustFail lender do exerciseCmd calledLoanCid LiquidateOverdue
+  passTime (seconds 1)
+  closedCid <- submit lender do exerciseCmd calledLoanCid LiquidateOverdue
+  Some closed <- queryContractId borrower closedCid
+  closed.reason === "LiquidatedAtMaturity"
+  collateralQuantities lender >>= \quantities -> quantities === [150.0]
+
+testTopUpCannotCrossMaturity : Script ()
+testTopUpCannotCrossMaturity = script do
+  setTime testStart
+  maturity <- pure (addRelTime testStart (seconds 120))
+  ((lender, borrower, regulator, valuationAgent, _), (initialMark, lenderCash, _, borrowerColl)) <- setup
+  offerCid <- makeOfferAt lender borrower regulator valuationAgent lenderCash initialMark maturity
+  loanCid <- acceptLoan borrower offerCid borrowerColl
+  breachMark <- publishPrice valuationAgent initialMark 0.5
+  calledLoanCid <- submit lender do exerciseCmd loanCid IssueMarginCall with valuationCid = breachMark
+  extra <- submit borrower do createCmd CollateralHolding with owner = borrower; asset = tbill; quantity = 50.0
+  healthyMark <- publishPrice valuationAgent breachMark 0.8
+  passTime (seconds 120)
+  submitMustFail borrower do exerciseCmd calledLoanCid TopUpCollateral with collateralCid = extra; topUpQuantity = 50.0; valuationCid = healthyMark
+  Some stillLoan <- queryContractId borrower calledLoanCid
+  (stillLoan.marginCall /= None) === True
+  passTime (seconds 1)
+  _ <- submit lender do exerciseCmd calledLoanCid LiquidateOverdue
+  query @Loan borrower >>= \loans -> length loans === 0
+
 testValidationGuards : Script ()
 testValidationGuards = script do
   setTime testStart
-  (lender, borrower, regulator, valuationAgent, (lenderCash, _, borrowerColl)) <- setup
-
+  ((lender, borrower, regulator, valuationAgent, _), (initialMark, lenderCash, _, borrowerColl)) <- setup
   submitMustFail lender do
     exerciseCmd lenderCash MakeOffer with
-      borrower; regulator; valuationAgent
-      principal = 200.0
-      interest = 5.0
-      collateralAsset = tbill
-      collateralQuantity = 150.0
-      maturity = "2030-02-01"
-      liquidationThresholdLtv = 90.0
-      marginCallWindowSeconds = 60
-
-  offerCid <- makeOffer lender borrower regulator valuationAgent lenderCash
-  wrongColl <- submit borrower do
-    createCmd CollateralHolding with owner = borrower; asset = tbill; quantity = 100.0
+      borrower; regulator; valuationAgent; valuationCid = initialMark
+      principal = 200.0; interest = 5.0; collateralAsset = tbill; collateralQuantity = 150.0
+      maturity = maturityTime; liquidationThresholdLtv = 90.0; marginCallWindowSeconds = 60
+  offerCid <- makeOffer lender borrower regulator valuationAgent lenderCash initialMark
+  wrongColl <- submit borrower do createCmd CollateralHolding with owner = borrower; asset = tbill; quantity = 100.0
   submitMustFail borrower do exerciseCmd offerCid Accept with collateralCid = wrongColl
-
-  -- A matching holding can still be accepted after the failed transaction.
-  goodColl <- submit borrower do
-    createCmd CollateralHolding with owner = borrower; asset = tbill; quantity = 150.0
+  goodColl <- submit borrower do createCmd CollateralHolding with owner = borrower; asset = tbill; quantity = 150.0
   loanCid <- acceptLoan borrower offerCid goodColl
   shortCash <- submit borrower do createCmd CashHolding with owner = borrower; amount = 50.0
   submitMustFail borrower do exerciseCmd loanCid Repay with repaymentCid = shortCash
-  Some stillLoan <- queryContractId borrower loanCid
-  stillLoan.collateralQuantity === 150.0
 
 testOfferAndSplitGuards : Script ()
 testOfferAndSplitGuards = script do
   setTime testStart
-  lender <- allocateParty "Lender"
-  borrower <- allocateParty "Borrower"
-  regulator <- allocateParty "Regulator"
-  valuationAgent <- allocateParty "ValuationAgent"
-  wrongValuationAgent <- allocateParty "WrongValuationAgent"
-  lenderCash <- submit lender do createCmd CashHolding with owner = lender; amount = 100.0
-
+  ((lender, borrower, regulator, valuationAgent, _), (initialMark, lenderCash, _, _)) <- setup
   submitMustFail lender do
     exerciseCmd lenderCash MakeOffer with
       borrower; regulator; valuationAgent
-      principal = 200.0
-      interest = 5.0
-      collateralAsset = tbill
-      collateralQuantity = 150.0
-      maturity = "2030-02-01"
-      liquidationThresholdLtv = 90.0
-      marginCallWindowSeconds = 60
-
-  -- The valuation agent is an independent participant, never the lender.
-  submitMustFail lender do
-    exerciseCmd lenderCash MakeOffer with
-      borrower; regulator; valuationAgent = lender
+      valuationCid = initialMark
       principal = 100.0
       interest = 5.0
-      collateralAsset = tbill
+      collateralAsset = ""
       collateralQuantity = 150.0
-      maturity = "2030-02-01"
+      maturity = maturityTime
       liquidationThresholdLtv = 90.0
       marginCallWindowSeconds = 60
-
-  offerCid <- submit lender do
-    exerciseCmd lenderCash MakeOffer with
-      borrower; regulator; valuationAgent = wrongValuationAgent
-      principal = 100.0
-      interest = 5.0
-      collateralAsset = tbill
-      collateralQuantity = 150.0
-      maturity = "2030-02-01"
-      liquidationThresholdLtv = 90.0
-      marginCallWindowSeconds = 60
-  query @LoanOffer borrower >>= \offers -> length offers === 1
-
   cash <- submit borrower do createCmd CashHolding with owner = borrower; amount = 105.0
   submitMustFail borrower do exerciseCmd cash Split with splitAmount = 0.0
   submitMustFail borrower do exerciseCmd cash Split with splitAmount = 105.0
   submitMustFail borrower do exerciseCmd cash Split with splitAmount = 200.0
-
   collateral <- submit borrower do createCmd CollateralHolding with owner = borrower; asset = tbill; quantity = 100.0
   submitMustFail borrower do exerciseCmd collateral SplitCollateral with splitQuantity = 0.0
   submitMustFail borrower do exerciseCmd collateral SplitCollateral with splitQuantity = 100.0
