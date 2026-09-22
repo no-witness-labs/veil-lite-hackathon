@@ -60,7 +60,7 @@ export function ValuationPanel({
         </div>
         <div style={{ display: 'flex', alignItems: 'end', gap: 12, marginTop: 18 }}>
           <div style={{ flex: 1 }}>
-            <div style={{ ...label, marginBottom: 8 }}>Unit price · USDC</div>
+            <div style={{ ...label, marginBottom: 8 }}>Unit price · simulated USDC</div>
             <input
               type="number"
               min="0.01"
@@ -79,7 +79,7 @@ export function ValuationPanel({
           <div style={label}>Latest visible mark</div>
           {latest ? (
             <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 16, marginTop: 6 }}>
-              <div style={{ ...mono, fontSize: 20, fontWeight: 600, color: '#14171f' }}>{latest.unitPrice.toFixed(2)} USDC/unit</div>
+              <div style={{ ...mono, fontSize: 20, fontWeight: 600, color: '#14171f' }}>{latest.unitPrice.toFixed(2)} simulated USDC/unit</div>
               <div style={{ ...mono, fontSize: 10, color: '#8a929e', textAlign: 'right' }}>{formatObserved(latest.observedAt)}</div>
             </div>
           ) : (
@@ -95,7 +95,7 @@ export function ValuationPanel({
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 9 }}>
               {marks.slice(0, 4).map((mark) => (
                 <div key={mark.contractId} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, fontSize: 12, color: '#5b6472' }}>
-                  <span style={{ ...mono, fontWeight: 600, color: '#14171f' }}>{Number(mark.args.unitPrice).toFixed(2)} USDC/unit</span>
+                  <span style={{ ...mono, fontWeight: 600, color: '#14171f' }}>{Number(mark.args.unitPrice).toFixed(2)} simulated USDC/unit</span>
                   <span style={{ ...mono, fontSize: 10, color: '#9aa1ad' }}>{formatObserved(mark.args.observedAt ?? '')}</span>
                 </div>
               ))}

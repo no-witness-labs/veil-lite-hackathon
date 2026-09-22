@@ -83,15 +83,15 @@ export function CreateOfferForm({
       <div style={{ padding: 28 }}>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18 }}>
           <div>
-            <div style={labelStyle}>Principal · USDC</div>
+            <div style={labelStyle}>Principal · simulated USDC</div>
             <input type="number" min="0" value={draft.principal} onChange={num('principal')} style={inputStyle} />
           </div>
           <div>
-            <div style={labelStyle}>Interest · USDC</div>
+            <div style={labelStyle}>Interest · simulated USDC</div>
             <input type="number" min="0" value={draft.interest} onChange={num('interest')} style={inputStyle} />
           </div>
           <div>
-            <div style={labelStyle}>Collateral · T-Bill/MMF units</div>
+            <div style={labelStyle}>Collateral · simulated T-Bill/MMF units</div>
             <input type="number" min="0" value={draft.collateral} onChange={num('collateral')} style={inputStyle} />
           </div>
           <div>
@@ -116,7 +116,7 @@ export function CreateOfferForm({
           <div>
             <div style={{ ...labelStyle, marginBottom: 0 }}>Collateral value @ mark</div>
             <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 17, fontWeight: 600, color: '#14171f', marginTop: 4 }}>
-              {collateralValue !== undefined && Number.isFinite(collateralValue) ? `${collateralValue.toFixed(2)} USDC` : '—'}
+              {collateralValue !== undefined && Number.isFinite(collateralValue) ? `${collateralValue.toFixed(2)} simulated USDC` : '—'}
             </div>
           </div>
           <div>
@@ -131,7 +131,7 @@ export function CreateOfferForm({
           <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 5 }}>Ledger-attested mark</div>
           {assessment.mark ? (
             <>
-              <b>{assessment.mark.unitPrice.toFixed(2)} USDC/unit</b> · observed {formatObserved(assessment.mark.observedAt)}<br />
+              <b>{assessment.mark.unitPrice.toFixed(2)} simulated USDC/unit</b> · observed {formatObserved(assessment.mark.observedAt)}<br />
               {assessment.message}
             </>
           ) : assessment.message}

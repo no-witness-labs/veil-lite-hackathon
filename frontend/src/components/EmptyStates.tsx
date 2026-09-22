@@ -103,7 +103,7 @@ export function ShockBanner({ unitPrice, observedAt, valuationAgent }: { unitPri
     >
       <div style={{ width: 8, height: 8, borderRadius: 999, background: '#d94b3a', flex: 'none' }} />
       <div style={{ fontSize: 13, color: '#a23b2e', lineHeight: 1.45 }}>
-        <b>Ledger-attested collateral mark: {unitPrice.toFixed(2)} USDC/unit.</b> LTV at this mark exceeds the
+        <b>Ledger-attested collateral mark: {unitPrice.toFixed(2)} simulated USDC/unit.</b> LTV at this mark exceeds the
         facility threshold. Observed {observed}
         {agent ? ` by ${agent}.` : '.'}
       </div>

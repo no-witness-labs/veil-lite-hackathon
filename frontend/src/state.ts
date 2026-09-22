@@ -36,7 +36,7 @@ export interface Tone {
   dot?: string
 }
 
-export const fmtMoney = (n: number) => `${n} USDC`
+export const fmtMoney = (n: number) => `${n} simulated USDC`
 
 function parseLedgerTime(value: string): Date {
   const normalized = /^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T00:00:00.000Z` : value
@@ -67,10 +67,12 @@ export function daysTo(iso: string): number {
 }
 
 /** The contract that defines the party's current view: the most recently
- * created LoanOffer / Loan / LoanClosed. Lets the demo be re-run cleanly. */
-export function currentDeal(contracts: Contract[]): Contract | undefined {
+ * created issuer-matching LoanOffer / Loan / LoanClosed. Lets the demo be
+ * re-run cleanly while keeping an accidental foreign issuer out of the UI. */
+export function currentDeal(contracts: Contract[], issuer?: string): Contract | undefined {
   const relevant = contracts.filter(
-    (c) => c.template === 'LoanOffer' || c.template === 'Loan' || c.template === 'LoanClosed',
+    (c) => (c.template === 'LoanOffer' || c.template === 'Loan' || c.template === 'LoanClosed')
+      && (issuer === undefined || c.args.issuer === issuer),
   )
   if (relevant.length === 0) return undefined
   return relevant.reduce((a, b) => (b.offset > a.offset ? b : a))
@@ -228,19 +230,19 @@ export const ROLE_DOT: Record<Role, string> = {
 
 export const EXPLAINER: Record<Role, { sees: string; can: string }> = {
   lender: {
-    sees: 'The complete contract, its ledger-attested collateral mark, and any open margin-call deadline.',
+    sees: 'The complete contract, its ledger-attested collateral mark, and any open margin-call deadline. The configured demo issuer also sees the holding and loan lifecycle.',
     can: 'Create or withdraw offers, issue a margin call on a fresh breach, and liquidate after the deadline.',
   },
   borrower: {
-    sees: 'The offer extended to you, your locked collateral, a fresh attested mark, and any margin-call deadline.',
+    sees: 'The offer extended to you, your locked collateral, a fresh attested mark, and any margin-call deadline. The configured demo issuer also sees the holding and loan lifecycle.',
     can: 'Accept an offer, top up an open call with an exact holding, resolve a recovered call, or repay.',
   },
   regulator: {
-    sees: 'The full contract and ledger-attested valuations, via observer rights explicitly granted by the parties.',
+    sees: 'The full contract and ledger-attested valuations, via observer rights explicitly granted by the parties. The configured demo issuer is a stakeholder on holdings and loans.',
     can: 'Nothing — a regulator observes but cannot transact. Disclosure is opt-in and fully auditable.',
   },
   valuer: {
-    sees: 'Only valuation records you signed. The loan terms, amounts, and margin-call state remain outside your view.',
+    sees: 'Only valuation records you signed. The loan terms, amounts, and margin-call state remain outside your view. The demo issuer can see holdings and loans, but the valuer cannot.',
     can: 'Publish a manually attested unit price for the known demo deal; the ledger enforces freshness and identity checks.',
   },
   outsider: {

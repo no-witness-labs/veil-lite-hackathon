@@ -1,6 +1,6 @@
 # Veil — Confidential Lending on Canton
 
-> HackCanton Season 3 development: private financing with replaceable attested prices, margin calls, collateral top-ups, and enforced maturity.
+> HackCanton Season 3 development: private financing with controlled demo issuance, funded offers, attested prices, margin calls, collateral top-ups, and enforced maturity.
 
 **Earlier demo:** <https://veil-lite-hackathon.vercel.app/>. The Season 3 changes below require a fresh local sandbox; they have not been deployed to this URL.
 
@@ -14,7 +14,7 @@
 - **Pitch video:** <https://no-witness-labs.github.io/veil-lite-hackathon/veil-pitch-video.mp4>
 
 Veil is a deliberately small proof-of-concept for **private repo-style financing against tokenized collateral** on Canton.
-A known borrower pledges tokenized collateral, such as tokenized Treasury bills or money-market fund units, to receive short-term financing from a known lender. The lender privately offers terms, the borrower accepts, collateral is locked, and only the lender, borrower, and optional regulator can see the resulting position.
+A known borrower pledges tokenized collateral, such as tokenized Treasury bills or money-market fund units, to receive short-term financing from a known lender. The lender privately offers terms, the borrower accepts, and collateral is locked. In this sandbox model, the lender, borrower, demo issuer, and optional regulator see the position; the issuer authorizes simulated cash and collateral, with no real asset backing.
 
 ## Why this exists
 
@@ -34,7 +34,7 @@ Concrete demo framing: **private repo-style financing**. The borrower pledges 15
 Build the flow:
 
 1. Lender and borrower already know each other from an off-ledger private credit relationship.
-2. Lender creates a private borrower-specific `LoanOffer`, binding it to the jointly authorized valuation stream and a future repayment timestamp. A fresh current price must show LTV below the agreed liquidation threshold.
+2. Lender consumes issuer-authorized cash to create a private borrower-specific `LoanOffer` holding the reserved principal, binding it to the jointly authorized valuation stream and a future repayment timestamp. A fresh current price must show LTV below the agreed liquidation threshold.
 3. Borrower accepts and opens a loan only while a fresh current price from that same stream still shows LTV below the agreed liquidation threshold.
 4. Borrower's collateral becomes locked/escrowed in the loan state.
 5. Regulator can observe the offer and loan.
@@ -48,18 +48,18 @@ Build the flow:
 
 ## Contract model
 
-Seven Daml templates. Loan states are scoped to lender, borrower, and regulator. The valuation agent sees price attestations but is not a loan observer. These active-contract views are not a claim that historical disclosures can be revoked.
+Seven Daml templates. Loan states are scoped to issuer, lender, borrower, and regulator. The valuation agent sees price attestations but is not a loan observer. These active-contract views are not a claim that historical disclosures can be revoked.
 
 ```text
- Who can see each contract            Lender   Borrower  Regulator  Valuer  Outsider
- ─────────────────────────────────────────────────────────────────────────
- CashHolding        sig: owner          own       own        –        –       –
- CollateralHolding  sig: owner          own       own        –        –       –
- LoanOffer          sig: L  obs: B,R      S         O         O        –       –
- Loan               sig: L,B  obs: R      S         S         O        –       –
- LoanClosed         sig: L,B  obs: R      S         S         O        –       –
- ValuationStream     sig: V,L,B obs: R    S         S         O        S       –
- CollateralValuation sig: V,L,B obs: R    S         S         O        S       –
+ Contract              Issuer   Lender   Borrower   Regulator   Valuer   Outsider
+ ──────────────────────────────────────────────────────────────────────────────
+ CashHolding              S      own       own          –         –        –
+ CollateralHolding        S      own       own          –         –        –
+ LoanOffer                S       S         O           O         –        –
+ Loan                     S       S         S           O         –        –
+ LoanClosed               S       S         S           O         –        –
+ ValuationStream          –       S         S           O         S        –
+ CollateralValuation      –       S         S           O         S        –
    S = signatory (authorizes + sees)   O = observer (sees only)   – = cannot see
 ```
 
@@ -69,11 +69,11 @@ Lifecycle and the money/collateral trail (canonical demo numbers):
   seed ─ Lender wallet: Cash 100      Borrower: Cash 105 · Collateral 150 + reserve 50
 
   Lender ── MakeOffer(100) ─────────────►  LoanOffer            (principal pre-funded,
-            [CashHolding choice]            sig L · obs B,R       escrowed in the offer)
+            [CashHolding choice]          sig I,L · obs B,R       escrowed in the offer)
                                                │
             Borrower ── Accept(collateral) ────┤  locks collateral, draws principal
                                                ▼
-                                            Loan  (collateralLocked)      sig L,B · obs R
+                                            Loan  (collateralLocked)    sig I,L,B · obs R
                                             ├─ borrower +Cash 100 (principal delivered)
                                             └─ collateral 150 → LOCKED (no free holding)
                                                │
@@ -94,8 +94,9 @@ Lifecycle and the money/collateral trail (canonical demo numbers):
 
 State: `none → Offered → Active → Margin call → Active | Liquidated`. Repayment is available from Active or Margin call; withdrawal refunds an unaccepted offer.
 
-Authorization is structural too: the borrower can draw the lender's principal only because the lender
-pre-signed the `LoanOffer`; margin liquidation requires an expired call and a fresh current price from the agreed stream. A separate maturity-default action requires ledger time strictly after the repayment timestamp. Each loan replacement retains both signatories and the regulator observer. Cash and collateral are demo holdings that participants can create, not externally backed tokens.
+Authorization is structural too: the borrower draws principal from an issuer-and-lender-signed `LoanOffer`. The offer itself is escrow; acceptance and withdrawal consume the same contract, so only one can release its principal. Normal spending preserves issuer and supply, and counterparties cannot directly create contracts under the configured issuer without its authority. The trusted issuer can authorize new supply, including privileged direct offer creation; this is controlled demo issuance, not custody or external backing. See the [issuer decision](docs/adr/0002-controlled-issuer-and-funded-offers.md).
+
+Margin liquidation requires an expired call and a fresh current price from the agreed stream. A separate maturity-default action requires ledger time strictly after the repayment timestamp. Each loan replacement retains issuer, lender, and borrower signatures and the regulator observer.
 
 For the full end-to-end picture — build, deploy, the JSON Ledger API, and a step-by-step walkthrough of
 every flow (create offer, accept, repay, liquidate, withdraw, reset) — see **[docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)**.
@@ -147,7 +148,7 @@ genuinely returns nothing** — the privacy claim is proven on-ledger, not mocke
 > your own JDK 17/21.
 
 ```bash
-# 1. Start the sandbox on JDK 17, upload the DAR, allocate the five demo parties,
+# 1. Start the sandbox on JDK 17, upload the DAR, allocate five roles plus issuer,
 #    and write frontend/public/ledger-config.json.
 ./scripts/start-sandbox.sh
 
@@ -167,7 +168,7 @@ npm --prefix frontend run dev
 ```
 
 See **[docs/DEVNET.md](./docs/DEVNET.md)** for the full DevNet setup. The DevNet package name is
-`veil-lite` and the deployable DAR is `.daml/dist/veil-lite-0.4.0.dar`.
+`veil-lite` and the deployable DAR is `.daml/dist/veil-lite-0.5.0.dar`.
 See **[docs/VERCEL.md](./docs/VERCEL.md)** for the Vercel deployment environment variables and smoke checks.
 
 3-minute click path: **Lender** create offer → **Borrower** sees it → **Outsider** sees nothing →
@@ -177,14 +178,14 @@ See **[docs/VERCEL.md](./docs/VERCEL.md)** for the Vercel deployment environment
 
 The UI surfaces the ledger's own evidence, so nothing has to be taken on trust:
 
-- **Party-ID strip** (under the header) — the five roles are distinct on-ledger Canton parties on one participant.
+- **Party-ID strip** (under the header) — five user roles and a separate demo issuer are distinct Canton parties on one participant.
 - **Deal card** — shows the real contract ID and ledger offset behind the position.
 - **Ledger activity feed** — every action lists its committed transaction: `updateId`, ledger offset,
   synchronizer ID, and the contracts created/archived.
 - **Raw ledger view** (collapsible) — the exact JSON each party gets from the `active-contracts` query.
   Switching to **Outsider** makes the strongest point: the same panel is literally `[]`.
-- **Your holdings** — each party's own wallet (cash + tokenized collateral). Holdings are owner-signatory with
-  no observers, so a party sees only its own. The full double-entry settles on-ledger: the borrower starts with
+- **Your holdings** — each party's own wallet (simulated cash + collateral). Holdings require issuer and owner signatures;
+  the issuer sees the inventory, while the other counterparty does not see unspent wallet holdings. The demo flow settles on-ledger: the borrower starts with
   150 collateral + a 50-unit reserve + 105 cash, accepting locks 150 units and delivers 100 principal, and repaying returns the
   collateral while the lender ends with 105 (principal + 5 interest).
 

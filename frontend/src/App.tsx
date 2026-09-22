@@ -4,6 +4,8 @@ import {
   acceptOffer,
   COLLATERAL_ASSET,
   createOffer,
+  getConfigIssue,
+  getIssuer,
   getParties,
   issueMarginCall,
   LIQUIDATION_THRESHOLD_LTV,
@@ -52,6 +54,7 @@ export default function App() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [configOk, setConfigOk] = useState<boolean | null>(null)
+  const [configIssue, setConfigIssue] = useState<string | null>(null)
   const refreshGeneration = useRef(0)
   const activeRole = useRef<Role>(role)
 
@@ -75,6 +78,7 @@ export default function App() {
   useEffect(() => {
     void loadConfig().then((ok) => {
       setConfigOk(ok)
+      setConfigIssue(getConfigIssue())
     })
   }, [])
 
@@ -97,7 +101,7 @@ export default function App() {
     }
   }
 
-  const deal = currentDeal(contracts)
+  const deal = currentDeal(contracts, getIssuer())
   const status = statusOf(deal)
   const holdings = parseHoldings(contracts)
   const valuation = valuationFor(contracts, deal)
@@ -118,7 +122,7 @@ export default function App() {
   const showWaiting = !isOutsider && !isValuer && (role === 'borrower' || role === 'regulator') && status === 'none'
   const showDealCard = !isOutsider && !isValuer && hasDeal && !!deal
   const collateralCandidates = holdings
-    .filter((holding) => holding.kind === 'collateral' && holding.asset === 'Tokenized T-Bill / MMF')
+    .filter((holding) => holding.kind === 'collateral' && holding.asset === COLLATERAL_ASSET)
     .map((holding) => holding.amount)
     .filter((amount) => amount > 0)
     .sort((a, b) => a - b)
@@ -130,6 +134,7 @@ export default function App() {
     : collateralCandidates[0] ?? 0
 
   const onReset = async () => {
+    if (configOk !== true || busy) return
     setBusy(true)
     setError(null)
     try {
@@ -182,8 +187,8 @@ export default function App() {
             </div>
             <button
               onClick={onReset}
-              disabled={busy}
-              style={{ background: '#fff', border: '1px solid #e6e8ec', color: '#5b6472', fontSize: 12, fontWeight: 500, padding: '9px 14px', borderRadius: 8, cursor: busy ? 'wait' : 'pointer' }}
+              disabled={busy || configOk !== true}
+              style={{ background: '#fff', border: '1px solid #e6e8ec', color: '#5b6472', fontSize: 12, fontWeight: 500, padding: '9px 14px', borderRadius: 8, cursor: busy ? 'wait' : configOk === true ? 'pointer' : 'not-allowed' }}
             >
               Reset demo
             </button>
@@ -204,7 +209,7 @@ export default function App() {
                 'Loading ledger configuration.'
               ) : (
                 <>
-                  No ledger configuration found. Start the sandbox or configure the DevNet deployment first:
+                  {configIssue ?? 'No valid ledger configuration found. Start the sandbox or configure the DevNet deployment first.'}
                   <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 13, color: '#14171f', background: '#f7f8fa', borderRadius: 8, padding: '10px 14px', marginTop: 14 }}>
                     ./scripts/start-sandbox.sh
                   </div>
@@ -296,7 +301,7 @@ export default function App() {
 
       {/* a tiny footer note so judges know the privacy is real */}
       <div style={{ maxWidth: 1200, margin: '8px auto 0', padding: '0 32px', fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#bcc2cb' }}>
-        Viewing as {PARTY_NAMES[role]} · live Canton ledger · {contracts.length} visible contract{contracts.length === 1 ? '' : 's'}
+        Viewing as {PARTY_NAMES[role]} · live Canton ledger · {raw.length} visible contract{raw.length === 1 ? '' : 's'}
       </div>
     </div>
   )

@@ -60,6 +60,7 @@ function ledgerConfig() {
     jsonApiUrl: '',
     packageRef: env('VEIL_PACKAGE_REF', '#veil-lite'),
     userId: env('VEIL_LEDGER_USER_ID', '6'),
+    issuer: required('VEIL_PARTY_ISSUER'),
     parties: {
       lender: required('VEIL_PARTY_LENDER'),
       borrower: required('VEIL_PARTY_BORROWER'),
