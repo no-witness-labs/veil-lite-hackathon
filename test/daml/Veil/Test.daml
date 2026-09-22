@@ -27,7 +27,7 @@ setup = do
   borrower <- allocateParty "Borrower"
   regulator <- allocateParty "Regulator"
   valuationAgent <- allocateParty "ValuationAgent"
-  streamCid <- submitMulti [lender, borrower, valuationAgent] [] do
+  streamCid <- (actAs lender <> actAs borrower <> actAs valuationAgent) `submit` do
     createCmd ValuationStream with
       valuationAgent
       lender
@@ -43,7 +43,7 @@ setup = do
 
 createStream : Party -> Party -> Party -> Party -> Text -> Script (ContractId ValuationStream)
 createStream lender borrower regulator valuationAgent asset =
-  submitMulti [lender, borrower, valuationAgent] [] do
+  (actAs lender <> actAs borrower <> actAs valuationAgent) `submit` do
     createCmd ValuationStream with
       valuationAgent
       lender
@@ -371,7 +371,7 @@ testValuationFreshnessAndGuards = script do
   wrongMark <- publishInitial wrongAgent wrongStream 0.5
   submitMustFail lender do exerciseCmd loanCid IssueMarginCall with valuationCid = wrongMark
   now <- getTime
-  futureMark <- submitMulti [lender, borrower, valuationAgent] [] do
+  futureMark <- (actAs lender <> actAs borrower <> actAs valuationAgent) `submit` do
     createCmd CollateralValuation with
       valuationAgent; lender; borrower; regulator; collateralAsset = tbill
       streamId = streamCid; unitPrice = 0.5; observedAt = addRelTime now (seconds 1)

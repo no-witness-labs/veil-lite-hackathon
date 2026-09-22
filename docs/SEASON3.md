@@ -32,7 +32,7 @@ Maturity branch: a loan past its agreed repayment timestamp can be liquidated th
 
 | Policy | Contract behavior |
 | --- | --- |
-| Stream authorization | `ValuationStream` is signed by lender, borrower, and valuer. Its `PublishInitial` choice creates the first price, carrying the stream contract ID. Prices retain all three signatories; the valuer's `Publish` choice can replace a price but cannot change stream identity or counterparties. |
+| Stream authorization | `ValuationStream` is signed by lender, borrower, and valuer. Its `PublishInitial` choice is consuming: it archives the stream and creates the first price carrying the stream contract ID, so a stream can root exactly one price lineage and is not queryable afterwards. Prices retain all three signatories; the valuer's `Publish` choice can replace a price but cannot change stream identity or counterparties. |
 | Source of value | Only the agreed valuer controls price publication. Agent must differ from lender, borrower, and regulator. The lender binds the offer to a fresh current price's stream; borrower accepts that binding. |
 | Privacy | Price records name both counterparties and are visible to them and the regulator. The agent is not an observer of offers, loans, or settlements. |
 | Price freshness | Publication stamps `observedAt` using ledger time. Every use requires `observedAt <= ledger time <= observedAt + 300 seconds`. |
