@@ -18,7 +18,8 @@ export JAVA_HOME
 export PATH="$JAVA_HOME/bin:$HOME/.dpm/bin:$PATH"
 
 echo "→ Java: $(java -version 2>&1 | head -1)"
-[ -f .daml/dist/veil-lite-0.1.0.dar ] || { echo "→ Building DAR"; dpm build; }
+echo "→ Building current DAR"
+dpm build
 
 echo "→ Starting Canton sandbox (logs: log/canton.log)"
 rm -f log/canton.log

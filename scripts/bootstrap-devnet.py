@@ -29,7 +29,7 @@ USER_ID = os.environ.get("VEIL_LEDGER_USER_ID", "6")
 ACCESS_TOKEN = os.environ.get("VEIL_DEVNET_ACCESS_TOKEN")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DAR = os.path.join(ROOT, ".daml", "dist", "veil-lite-0.1.0.dar")
+DAR = os.path.join(ROOT, ".daml", "dist", "veil-lite-0.3.0.dar")
 CONFIG = os.path.join(ROOT, "frontend", "public", "ledger-config.json")
 PACKAGE_REF = "#veil-lite"
 COLLATERAL_ASSET = "Tokenized T-Bill / MMF"
@@ -38,6 +38,7 @@ ROLES = {
     "lender": "veilLiteLender",
     "borrower": "veilLiteBorrower",
     "regulator": "veilLiteRegulator",
+    "valuer": "veilLiteValuer",
     "outsider": "veilLiteOutsider",
 }
 
@@ -201,6 +202,11 @@ def seed_holdings(token, parties):
             "CollateralHolding",
             {"owner": parties["borrower"], "asset": COLLATERAL_ASSET, "quantity": "150"},
         ),
+        (
+            parties["borrower"],
+            "CollateralHolding",
+            {"owner": parties["borrower"], "asset": COLLATERAL_ASSET, "quantity": "50"},
+        ),
     ]
     for party, template_name, args in creates:
         code, resp = submit_create(token, party, template_name, args)
@@ -221,6 +227,39 @@ def write_config(parties):
         json.dump(config, file, indent=2)
         file.write("\n")
     print(f"✓ wrote {CONFIG}")
+
+
+def seed_valuation(token, parties):
+    entries = active_contracts(token, parties["valuer"])
+    events = [e.get("contractEntry", {}).get("JsActiveContract", {}).get("createdEvent", {}) for e in entries]
+    marks = [e for e in events if e.get("templateId", "").endswith(":Veil:CollateralValuation")]
+    if any("streamId" not in e["createArgument"] for e in marks):
+        sys.exit("Legacy valuations found; use a fresh party suffix for version 0.3.0.")
+    if len(marks) > 1 or any(e.get("templateId", "").endswith(":Veil:ValuationStream") for e in events):
+        sys.exit("Ambiguous or unpublished valuation streams; use a fresh party suffix.")
+    if marks:
+        print("✓ valuation stream already seeded; publish a fresh mark in the UI if stale")
+        return
+    command = {
+        "commands": {
+            "commands": [{"CreateAndExerciseCommand": {
+                "templateId": f"{PACKAGE_REF}:Veil:ValuationStream",
+                "createArguments": {
+                    "valuationAgent": parties["valuer"], "lender": parties["lender"],
+                    "borrower": parties["borrower"], "regulator": parties["regulator"],
+                    "collateralAsset": COLLATERAL_ASSET,
+                },
+                "choice": "PublishInitial", "choiceArgument": {"unitPrice": "1"},
+            }}],
+            "commandId": f"devnet-seed-valuation-{os.urandom(4).hex()}",
+            "actAs": [parties["lender"], parties["borrower"], parties["valuer"]],
+            "userId": USER_ID,
+        }
+    }
+    code, resp = api(token, "POST", "/v2/commands/submit-and-wait-for-transaction", json.dumps(command).encode())
+    if code != 200:
+        sys.exit(f"Failed to seed valuation stream (HTTP {code}): {json.dumps(resp)}")
+    print("✓ seeded jointly authorized valuation stream")
 
 
 def main():
@@ -252,6 +291,7 @@ def main():
     print(f"✓ granted CanActAs x{len(parties)} to user {USER_ID}")
 
     seed_holdings(token, parties)
+    seed_valuation(token, parties)
     write_config(parties)
     print("Done. Start the frontend with: npm --prefix frontend run dev")
 

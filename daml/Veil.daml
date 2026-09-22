@@ -1,5 +1,80 @@
 module Veil where
 
+import DA.Time (addRelTime, seconds)
+
+data MarginCallDetails = MarginCallDetails
+  with
+    issuedAt : Time
+    deadline : Time
+    unitPrice : Decimal
+  deriving (Eq, Show)
+
+-- The counterparties authorize one price stream. Descendant prices retain
+-- their signatures, so the valuer alone cannot fabricate a parallel branch.
+template ValuationStream
+  with
+    valuationAgent : Party
+    lender : Party
+    borrower : Party
+    regulator : Party
+    collateralAsset : Text
+  where
+    signatory valuationAgent, lender, borrower
+    observer regulator
+    ensure collateralAsset /= "" && lender /= borrower
+      && valuationAgent /= lender && valuationAgent /= borrower && valuationAgent /= regulator
+
+    choice PublishInitial : ContractId CollateralValuation
+      with
+        unitPrice : Decimal
+      controller valuationAgent
+      do
+        observedAt <- getTime
+        create CollateralValuation with
+          valuationAgent; lender; borrower; regulator; collateralAsset
+          streamId = self
+          unitPrice; observedAt
+
+-- A current price is replaced, never appended. The archived predecessor can
+-- no longer be fetched even inside the five-minute freshness window.
+template CollateralValuation
+  with
+    valuationAgent : Party
+    lender : Party
+    borrower : Party
+    regulator : Party
+    collateralAsset : Text
+    streamId : ContractId ValuationStream
+    unitPrice : Decimal
+    observedAt : Time
+  where
+    signatory valuationAgent, lender, borrower
+    observer regulator
+    ensure unitPrice > 0.0 && collateralAsset /= ""
+
+    choice Publish : ContractId CollateralValuation
+      with
+        unitPrice : Decimal
+      controller valuationAgent
+      do
+        observedAt <- getTime
+        create this with unitPrice; observedAt
+
+-- Check every use, including liquidation after a grace period. A mark must
+-- identify this deal's counterparties and asset and be no more than 5 min old.
+checkedPrice : Party -> Party -> Party -> Party -> Text -> ContractId ValuationStream -> ContractId CollateralValuation -> Update Decimal
+checkedPrice valuationAgent lender borrower regulator collateralAsset valuationStreamId valuationCid = do
+  mark <- fetch valuationCid
+  now <- getTime
+  assertMsg "valuation agent mismatch" (mark.valuationAgent == valuationAgent)
+  assertMsg "valuation counterparties mismatch"
+    (mark.lender == lender && mark.borrower == borrower && mark.regulator == regulator)
+  assertMsg "valuation asset mismatch" (mark.collateralAsset == collateralAsset)
+  assertMsg "valuation stream mismatch" (mark.streamId == valuationStreamId)
+  assertMsg "valuation cannot be from the future" (mark.observedAt <= now)
+  assertMsg "valuation is stale" (now <= addRelTime mark.observedAt (seconds 300))
+  pure mark.unitPrice
+
 -- | Demo cash-like principal asset (e.g. USDC). A "bearer" holding: the owner
 -- is the sole signatory, so it can be spent with only the owner's authority.
 template CashHolding
@@ -17,14 +92,21 @@ template CashHolding
       with
         borrower : Party
         regulator : Party
+        valuationAgent : Party
+        valuationCid : ContractId CollateralValuation
         principal : Decimal
         interest : Decimal
         collateralAsset : Text
         collateralQuantity : Decimal
-        maturity : Text
+        maturity : Time
         liquidationThresholdLtv : Decimal
+        marginCallWindowSeconds : Int
       controller owner
       do
+        now <- getTime
+        assertMsg "offer maturity must be in the future" (now < maturity)
+        mark <- fetch valuationCid
+        _ <- checkedPrice valuationAgent owner borrower regulator collateralAsset mark.streamId valuationCid
         assertMsg "insufficient cash to fund offer" (amount >= principal)
         if amount > principal
           then do
@@ -35,12 +117,15 @@ template CashHolding
           lender = owner
           borrower
           regulator
+          valuationAgent
+          valuationStreamId = mark.streamId
           principal
           interest
           collateralAsset
           collateralQuantity
           maturity
           liquidationThresholdLtv
+          marginCallWindowSeconds
     
     choice Split : (ContractId CashHolding, ContractId CashHolding)
       with
@@ -64,6 +149,18 @@ template CollateralHolding
     signatory owner
     ensure quantity > 0.0
 
+    -- Carve out the intended deposit privately before a Loan choice fetches it.
+    choice SplitCollateral : (ContractId CollateralHolding, ContractId CollateralHolding)
+      with
+        splitQuantity : Decimal
+      controller owner
+      do
+        assertMsg "split quantity must be positive and less than total quantity"
+          (splitQuantity > 0.0 && splitQuantity < quantity)
+        exact <- create CollateralHolding with owner; asset; quantity = splitQuantity
+        remainder <- create CollateralHolding with owner; asset; quantity = quantity - splitQuantity
+        pure (exact, remainder)
+
 -- | Borrower-specific loan offer for a known-counterparty lending flow.
 --
 -- The lender is the signatory because they commit to (and pre-fund) the offered
@@ -74,18 +171,24 @@ template LoanOffer
     lender : Party
     borrower : Party
     regulator : Party
+    valuationAgent : Party
+    valuationStreamId : ContractId ValuationStream
     principal : Decimal
     interest : Decimal
     collateralAsset : Text
     collateralQuantity : Decimal
-    maturity : Text
+    maturity : Time
     liquidationThresholdLtv : Decimal
+    marginCallWindowSeconds : Int
   where
     signatory lender
     observer borrower, regulator
 
     ensure principal > 0.0 && interest >= 0.0 && collateralQuantity > 0.0
-      && liquidationThresholdLtv > 0.0
+      && liquidationThresholdLtv > 0.0 && liquidationThresholdLtv <= 100.0
+      && marginCallWindowSeconds >= 60 && marginCallWindowSeconds <= 86400
+      && lender /= borrower && collateralAsset /= ""
+      && valuationAgent /= lender && valuationAgent /= borrower && valuationAgent /= regulator
 
     -- | Borrower locks matching collateral and draws the principal. The
     -- borrower's CollateralHolding is consumed (encumbered in the loan) and a
@@ -95,6 +198,8 @@ template LoanOffer
         collateralCid : ContractId CollateralHolding
       controller borrower
       do
+        now <- getTime
+        assertMsg "cannot accept an offer at or after maturity" (now < maturity)
         collateral <- fetch collateralCid
         assertMsg "collateral must be owned by the borrower" (collateral.owner == borrower)
         assertMsg "collateral asset mismatch" (collateral.asset == collateralAsset)
@@ -105,12 +210,16 @@ template LoanOffer
           lender
           borrower
           regulator
+          valuationAgent
+          valuationStreamId
           principal
           interest
           collateralAsset
           collateralQuantity
           maturity
           liquidationThresholdLtv
+          marginCallWindowSeconds
+          marginCall = None
           collateralLocked = True
 
     -- | Lender withdraws the unaccepted offer; the pre-funded principal is
@@ -129,23 +238,86 @@ template Loan
     lender : Party
     borrower : Party
     regulator : Party
+    valuationAgent : Party
+    valuationStreamId : ContractId ValuationStream
     principal : Decimal
     interest : Decimal
     collateralAsset : Text
     collateralQuantity : Decimal
-    maturity : Text
+    maturity : Time
     liquidationThresholdLtv : Decimal
+    marginCallWindowSeconds : Int
+    marginCall : Optional MarginCallDetails
     collateralLocked : Bool
   where
     signatory lender, borrower
     observer regulator
 
     ensure principal > 0.0 && interest >= 0.0 && collateralQuantity > 0.0
-      && liquidationThresholdLtv > 0.0
+      && liquidationThresholdLtv > 0.0 && liquidationThresholdLtv <= 100.0
+      && marginCallWindowSeconds >= 60 && marginCallWindowSeconds <= 86400
+      && lender /= borrower && collateralAsset /= "" && collateralLocked
+      && valuationAgent /= lender && valuationAgent /= borrower && valuationAgent /= regulator
+
+    -- Consuming the Loan prevents a parallel call or a reset of its deadline.
+    choice IssueMarginCall : ContractId Loan
+      with
+        valuationCid : ContractId CollateralValuation
+      controller lender
+      do
+        now <- getTime
+        assertMsg "cannot issue a margin call at or after maturity" (now < maturity)
+        assertMsg "a margin call is already open" (marginCall == None)
+        unitPrice <- checkedPrice valuationAgent lender borrower regulator collateralAsset valuationStreamId valuationCid
+        assertMsg "margin call requires an LTV breach"
+          ((principal / (collateralQuantity * unitPrice)) * 100.0 >= liquidationThresholdLtv)
+        let call = MarginCallDetails with
+              issuedAt = now
+              deadline = addRelTime now (seconds marginCallWindowSeconds)
+              unitPrice
+        create this with marginCall = Some call
+
+    choice TopUpCollateral : ContractId Loan
+      with
+        collateralCid : ContractId CollateralHolding
+        topUpQuantity : Decimal
+        valuationCid : ContractId CollateralValuation
+      controller borrower
+      do
+        call <- case marginCall of
+          None -> abort "no margin call is open"
+          Some call -> pure call
+        now <- getTime
+        assertMsg "cannot top up at or after maturity" (now < maturity)
+        assertMsg "margin call deadline has passed" (now < call.deadline)
+        assertMsg "top-up quantity must be positive" (topUpQuantity > 0.0)
+        collateral <- fetch collateralCid
+        assertMsg "top-up must be owned by the borrower" (collateral.owner == borrower)
+        assertMsg "top-up asset mismatch" (collateral.asset == collateralAsset)
+        assertMsg "top-up must use an exact holding; split privately first" (collateral.quantity == topUpQuantity)
+        unitPrice <- checkedPrice valuationAgent lender borrower regulator collateralAsset valuationStreamId valuationCid
+        let totalQuantity = collateralQuantity + topUpQuantity
+        assertMsg "top-up must restore LTV below the threshold"
+          ((principal / (totalQuantity * unitPrice)) * 100.0 < liquidationThresholdLtv)
+        archive collateralCid
+        create this with collateralQuantity = totalQuantity; marginCall = None
+
+    -- A recovered price can cure the call without an unnecessary deposit.
+    choice ResolveMarginCall : ContractId Loan
+      with
+        valuationCid : ContractId CollateralValuation
+      controller borrower
+      do
+        now <- getTime
+        assertMsg "cannot resolve a margin call at or after maturity" (now < maturity)
+        assertMsg "no margin call is open" (marginCall /= None)
+        unitPrice <- checkedPrice valuationAgent lender borrower regulator collateralAsset valuationStreamId valuationCid
+        assertMsg "collateral remains below the required value"
+          ((principal / (collateralQuantity * unitPrice)) * 100.0 < liquidationThresholdLtv)
+        create this with marginCall = None
 
     -- | Borrower repays principal + interest in cash and gets collateral back.
-    -- The repayment cash moves to the lender (any surplus is returned as
-    -- change) and a CollateralHolding is released to the borrower.
+    -- Split privately first: only the exact payment is disclosed to this loan.
     choice Repay : ContractId LoanClosed
       with
         repaymentCid : ContractId CashHolding
@@ -157,16 +329,13 @@ template Loan
         assertMsg "repayment amount mismatch" (cash.amount == repayment)
         archive repaymentCid
         _ <- create CashHolding with owner = lender; amount = repayment
-        if cash.amount > repayment
-          then do
-            _ <- create CashHolding with owner = borrower; amount = cash.amount - repayment
-            pure ()
-          else pure ()
         _ <- create CollateralHolding with owner = borrower; asset = collateralAsset; quantity = collateralQuantity
         create LoanClosed with
           lender
           borrower
           regulator
+          valuationAgent
+          valuationStreamId
           principal
           interest
           collateralAsset
@@ -175,28 +344,48 @@ template Loan
           reason = "Repaid"
           collateralReleased = True
 
-    -- | The lender supplies the current off-ledger collateral mark.
-    -- Liquidation is only authorized when that value puts the loan at or above
-    -- its LTV threshold; the collateral is then seized to the lender.
+    -- | A call must have expired and a fresh attested mark must still show a
+    -- breach. There is no lender-supplied price or grace-period bypass.
     choice Liquidate : ContractId LoanClosed
       with
-        currentCollateralValue : Decimal
+        valuationCid : ContractId CollateralValuation
       controller lender
       do
-        assertMsg "liquidation requires the collateral value to breach the LTV threshold"
-          (currentCollateralValue > 0.0
-            && (principal / currentCollateralValue) * 100.0 >= liquidationThresholdLtv)
+        call <- case marginCall of
+          None -> abort "liquidation requires an open margin call"
+          Some call -> pure call
+        now <- getTime
+        assertMsg "margin call deadline has not passed" (now >= call.deadline)
+        unitPrice <- checkedPrice valuationAgent lender borrower regulator collateralAsset valuationStreamId valuationCid
+        assertMsg "liquidation requires an LTV breach"
+          ((principal / (collateralQuantity * unitPrice)) * 100.0 >= liquidationThresholdLtv)
         _ <- create CollateralHolding with owner = lender; asset = collateralAsset; quantity = collateralQuantity
         create LoanClosed with
           lender
           borrower
           regulator
+          valuationAgent
+          valuationStreamId
           principal
           interest
           collateralAsset
           collateralQuantity
           maturity
           reason = "Liquidated"
+          collateralReleased = False
+
+    -- Repayment default is distinct from a price breach. Repayment can still
+    -- win the race; either consuming choice closes the loan exactly once.
+    choice LiquidateOverdue : ContractId LoanClosed
+      controller lender
+      do
+        now <- getTime
+        assertMsg "loan is not past maturity" (now > maturity)
+        _ <- create CollateralHolding with owner = lender; asset = collateralAsset; quantity = collateralQuantity
+        create LoanClosed with
+          lender; borrower; regulator; valuationAgent; valuationStreamId
+          principal; interest; collateralAsset; collateralQuantity; maturity
+          reason = "LiquidatedAtMaturity"
           collateralReleased = False
 
 -- | Terminal settlement record created when a loan closes, either through
@@ -210,11 +399,13 @@ template LoanClosed
     lender : Party
     borrower : Party
     regulator : Party
+    valuationAgent : Party
+    valuationStreamId : ContractId ValuationStream
     principal : Decimal
     interest : Decimal
     collateralAsset : Text
     collateralQuantity : Decimal
-    maturity : Text
+    maturity : Time
     reason : Text
     collateralReleased : Bool
   where

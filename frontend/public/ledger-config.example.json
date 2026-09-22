@@ -6,6 +6,7 @@
     "lender": "Lender::<participant-fingerprint>",
     "borrower": "Borrower::<participant-fingerprint>",
     "regulator": "Regulator::<participant-fingerprint>",
+    "valuer": "Valuer::<participant-fingerprint>",
     "outsider": "Outsider::<participant-fingerprint>"
   }
 }

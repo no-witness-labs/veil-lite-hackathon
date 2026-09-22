@@ -86,7 +86,9 @@ export function Waiting({ role }: { role: Role }) {
   )
 }
 
-export function ShockBanner() {
+export function ShockBanner({ unitPrice, observedAt, valuationAgent }: { unitPrice: number; observedAt: string; valuationAgent?: string }) {
+  const observed = observedAt ? new Date(observedAt).toLocaleString() : 'unknown time'
+  const agent = valuationAgent ? valuationAgent.split('::')[0] : ''
   return (
     <div
       style={{
@@ -101,8 +103,9 @@ export function ShockBanner() {
     >
       <div style={{ width: 8, height: 8, borderRadius: 999, background: '#d94b3a', flex: 'none' }} />
       <div style={{ fontSize: 13, color: '#a23b2e', lineHeight: 1.45 }}>
-        <b>Collateral price shock.</b> T-Bill/MMF units repriced — LTV now breaches the facility limit. The lender
-        may liquidate.
+        <b>Ledger-attested collateral mark: {unitPrice.toFixed(2)} USDC/unit.</b> LTV at this mark exceeds the
+        facility threshold. Observed {observed}
+        {agent ? ` by ${agent}.` : '.'}
       </div>
     </div>
   )
