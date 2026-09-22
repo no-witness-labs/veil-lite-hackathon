@@ -29,7 +29,7 @@ USER_ID = os.environ.get("VEIL_LEDGER_USER_ID", "6")
 ACCESS_TOKEN = os.environ.get("VEIL_DEVNET_ACCESS_TOKEN")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DAR = os.path.join(ROOT, ".daml", "dist", "veil-lite-0.1.0.dar")
+DAR = os.path.join(ROOT, ".daml", "dist", "veil-lite-0.2.0.dar")
 CONFIG = os.path.join(ROOT, "frontend", "public", "ledger-config.json")
 PACKAGE_REF = "#veil-lite"
 COLLATERAL_ASSET = "Tokenized T-Bill / MMF"
@@ -38,6 +38,7 @@ ROLES = {
     "lender": "veilLiteLender",
     "borrower": "veilLiteBorrower",
     "regulator": "veilLiteRegulator",
+    "valuer": "veilLiteValuer",
     "outsider": "veilLiteOutsider",
 }
 
@@ -200,6 +201,11 @@ def seed_holdings(token, parties):
             parties["borrower"],
             "CollateralHolding",
             {"owner": parties["borrower"], "asset": COLLATERAL_ASSET, "quantity": "150"},
+        ),
+        (
+            parties["borrower"],
+            "CollateralHolding",
+            {"owner": parties["borrower"], "asset": COLLATERAL_ASSET, "quantity": "50"},
         ),
     ]
     for party, template_name, args in creates:

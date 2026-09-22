@@ -23,8 +23,8 @@ Use this path when you want the on-ledger Canton proof.
 From the repo root:
 
 ```bash
-# Builds the DAR if needed, starts Canton on JDK 17, uploads the DAR, allocates
-# the four demo parties, and writes frontend/public/ledger-config.json.
+# Builds the current DAR, starts Canton on JDK 17, uploads the DAR, allocates
+# the five demo parties, and writes frontend/public/ledger-config.json.
 ./scripts/start-sandbox.sh
 ```
 
@@ -39,10 +39,10 @@ Open <http://localhost:5173>.
 
 ## 3. DevNet and Vercel
 
-Use this path for the public hackathon live product. The app runs on Vercel and
+The prior app runs on Vercel and
 talks to the shared Seaport / Five North DevNet through a server-side `/v2`
 proxy. The OIDC client secret stays in Vercel environment variables and never
-reaches the browser.
+reaches the browser. Version 0.2.0 has not been validated on DevNet or deployed by this increment. Use a fresh local sandbox for Season 3 and review [SEASON3.md](SEASON3.md) before planning deployment.
 
 Local DevNet setup:
 
@@ -77,12 +77,12 @@ Vercel deployment setup:
 
 ## 4. What start-sandbox.sh does
 
-1. Pins `JAVA_HOME` to OpenJDK 17 and builds the DAR if missing.
+1. Pins `JAVA_HOME` to OpenJDK 17 and builds the current DAR.
 2. Launches `dpm sandbox` (single-process Canton) in the background.
 3. Waits for `HTTP JSON API Server started`, then for `/readyz` = 200.
 4. Runs `scripts/bootstrap.sh`, which is idempotent:
-   - uploads `.daml/dist/veil-lite-0.1.0.dar`,
-   - allocates `Lender` / `Borrower` / `Regulator` / `Outsider` (reuses existing),
+   - uploads `.daml/dist/veil-lite-0.2.0.dar`,
+   - allocates `Lender` / `Borrower` / `Regulator` / `Valuer` / `Outsider` (reuses existing),
    - writes `frontend/public/ledger-config.json` (gitignored; the UI fetches it at runtime).
 
 To re-bootstrap against an already-running sandbox: `./scripts/bootstrap.sh`.
@@ -96,8 +96,10 @@ To re-bootstrap against an already-running sandbox: `./scripts/bootstrap.sh`.
 | 3 | **Outsider** | (switch tab) | Empty state; expand **Raw ledger view** → literally `[]` |
 | 4 | **Borrower** | Accept offer | Status `Active`, collateral **LOCKED**; activity feed shows the tx |
 | 5 | **Regulator** | (switch tab) | Full deal visible, read-only "Observer — cannot act" badge |
-| 6 | **Borrower** | Repay | Status `Repaid`, collateral **RELEASED** |
-| 7 | *(optional)* **Lender** | Simulate price drop → Liquidate | Breach banner; on-ledger guard permits liquidation |
+| 6 | **Valuer** | Publish unit price 0.62 | Attested price is visible; private loan is absent |
+| 7 | **Lender** | Issue margin call | Ledger deadline; liquidation is blocked before it |
+| 8 | **Borrower** | Add 50 collateral units before deadline | 200 locked units, healthy LTV, call cleared |
+| 9 | **Borrower** | Repay | Status `Repaid`, all 200 units **RELEASED** |
 | — | any | **Reset demo** | Clears the ledger for another run |
 
 **Strongest moment:** view the active deal as Lender, expand **Raw ledger view**,
@@ -109,10 +111,10 @@ The activity feed and the deal card show the real `updateId`, ledger `offset`,
 
 **Holdings / double-entry:** the "Your holdings" panel shows each party's own wallet
 (holdings are owner-signatory with no observers, so a party sees only its own). The
-borrower starts with 150 collateral + 105 cash and the lender with 100 cash; accepting
+borrower starts with 150 collateral + a 50-unit reserve + 105 cash and the lender with 100 cash; accepting
 locks the collateral and delivers 100 principal to the borrower; repaying returns the
 collateral and the lender ends with 105 (principal + 5 interest). "Reset demo" burns and
-re-seeds the canonical holdings so the run is repeatable.
+re-seeds the canonical holdings so the run is repeatable. For the alternative liquidation branch, issue a new call, leave it uncured through its 60-second deadline, and use a fresh breached valuation to liquidate. Browser timers are advisory; Canton enforces the deadline.
 
 ## 6. Stopping
 
@@ -127,7 +129,7 @@ Sandbox state is in-memory, so a restart is always a clean ledger.
 
 For the shared Seaport / Five North DevNet path, use
 [`DEVNET.md`](./DEVNET.md). DevNet uses the `veil-lite` DAML package
-(`.daml/dist/veil-lite-0.1.0.dar`), OIDC client-credentials auth, and a Vite
+(`.daml/dist/veil-lite-0.2.0.dar` for the new local code), OIDC client-credentials auth, and a Vite
 server-side `/v2` proxy so the bearer token and client secret never reach the
 browser.
 
@@ -136,7 +138,7 @@ browser.
 ```bash
 export PATH="$HOME/.dpm/bin:$PATH"
 dpm build
-(cd test && dpm build && dpm test)        # 3 Daml Script tests
+(cd test && dpm build && dpm test)
 npm --prefix frontend run build           # succeeds without a running sandbox
 ```
 
@@ -154,7 +156,7 @@ script already waits for `/readyz`; if you run `bootstrap.sh` by hand, just re-r
 `ledger-config.json` is missing or invalid. For local sandbox mode, run
 `./scripts/start-sandbox.sh` (or `./scripts/bootstrap.sh` if the sandbox is
 already up), then reload the page. For DevNet/Vercel, verify the environment
-variables in [`VERCEL.md`](./VERCEL.md), especially the four `VEIL_PARTY_*`
+variables in [`VERCEL.md`](./VERCEL.md), especially the five `VEIL_PARTY_*`
 values.
 
 ### A role shows nothing / Outsider is empty
@@ -166,8 +168,7 @@ A previous sandbox or dev server is still running:
 `pkill -f canton-open-source` and/or `pkill -f vite`, then start again.
 
 ### Liquidate is disabled
-Liquidation is only permitted when LTV breaches the threshold. Click **Simulate
-price drop** first; the ledger rejects liquidation on a healthy loan.
+Publish a fresh stressed valuation as Valuer, issue a margin call as Lender, and wait for its deadline. Liquidation requires that call to remain open and a fresh mark still showing a breach. Top-up or price recovery can resolve the call.
 
 ### `npm run dev` security note
 A dev-server-only Vite advisory remains (deferred to avoid a breaking `vite@8`

@@ -2,6 +2,8 @@
 
 Veil's Vercel deployment is a live Canton DevNet app.
 
+The existing deployment is the prior version. Season 3 requires package 0.2.0, a new valuer party, and a fresh demo environment; it has not been deployed or tested on DevNet by this change. See [SEASON3.md](SEASON3.md).
+
 ## What Vercel serves
 
 - `frontend/dist` for the Vite React app.
@@ -39,6 +41,7 @@ VEIL_PACKAGE_REF=#veil-lite
 VEIL_PARTY_LENDER=veilLiteLender::1220a14ca128063b8dc9d1ebb0bd22633be9f2168500f4dbc1ecaeb1855b14e5acf8
 VEIL_PARTY_BORROWER=veilLiteBorrower::1220a14ca128063b8dc9d1ebb0bd22633be9f2168500f4dbc1ecaeb1855b14e5acf8
 VEIL_PARTY_REGULATOR=veilLiteRegulator::1220a14ca128063b8dc9d1ebb0bd22633be9f2168500f4dbc1ecaeb1855b14e5acf8
+VEIL_PARTY_VALUER=<newly allocated valuer party id>
 VEIL_PARTY_OUTSIDER=veilLiteOutsider::1220a14ca128063b8dc9d1ebb0bd22633be9f2168500f4dbc1ecaeb1855b14e5acf8
 ```
 
@@ -60,4 +63,5 @@ Both should return `200`. Then open the app and run:
 2. Borrower accepts.
 3. Regulator observes.
 4. Outsider sees an empty raw ledger response.
-5. Borrower repays or lender liquidates.
+5. Valuer publishes a stressed unit price; lender issues a margin call.
+6. Borrower tops up before the deadline and repays, or lender liquidates after the deadline with a fresh breached valuation.

@@ -1,14 +1,18 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ActivityEntry, Contract, Draft, Role, TxResult } from './types'
 import {
   acceptOffer,
   createOffer,
+  issueMarginCall,
   liquidateLoan,
   listActive,
   loadConfig,
   parseHoldings,
+  publishValuation,
   repayLoan,
+  resolveMarginCall,
   resetDemo,
+  topUpCollateral,
   withdrawOffer,
 } from './runtime'
 import {
@@ -18,6 +22,7 @@ import {
   ROLE_DOT,
   ROLE_LABELS,
   currentDeal,
+  valuationFor,
   statusOf,
 } from './state'
 import { RoleTabs } from './components/RoleTabs'
@@ -29,6 +34,7 @@ import { RawInspector } from './components/RawInspector'
 import { PartyBar } from './components/PartyBar'
 import { HoldingsPanel } from './components/HoldingsPanel'
 import { ErrorBanner, OutsiderEmpty, ShockBanner, Waiting } from './components/EmptyStates'
+import { ValuationPanel } from './components/ValuationPanel'
 
 export default function App() {
   const [role, setRole] = useState<Role>('lender')
@@ -36,24 +42,28 @@ export default function App() {
   const [raw, setRaw] = useState<unknown[]>([])
   const [offset, setOffset] = useState(0)
   const [activity, setActivity] = useState<ActivityEntry[]>([])
-  const [shock, setShock] = useState(false)
   const [draft, setDraft] = useState<Draft>(DEFAULT_DRAFT)
   const [busy, setBusy] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [configOk, setConfigOk] = useState<boolean | null>(null)
+  const refreshGeneration = useRef(0)
+  const activeRole = useRef<Role>(role)
 
   const refresh = useCallback(async (forRole: Role) => {
+    const generation = ++refreshGeneration.current
     setLoading(true)
     try {
       const state = await listActive(forRole)
+      if (generation !== refreshGeneration.current || forRole !== activeRole.current) return
       setContracts(state.contracts)
       setRaw(state.raw)
       setOffset(state.offset)
     } catch (e) {
+      if (generation !== refreshGeneration.current || forRole !== activeRole.current) return
       setError(e instanceof Error ? e.message : String(e))
     } finally {
-      setLoading(false)
+      if (generation === refreshGeneration.current) setLoading(false)
     }
   }, [])
 
@@ -85,13 +95,25 @@ export default function App() {
   const deal = currentDeal(contracts)
   const status = statusOf(deal)
   const holdings = parseHoldings(contracts)
+  const valuation = valuationFor(contracts, deal)
 
   const isOutsider = role === 'outsider'
+  const isValuer = role === 'valuer'
   const hasDeal = status !== 'none'
   const showCreateForm = !isOutsider && role === 'lender' && status === 'none'
-  const showWaiting = !isOutsider && (role === 'borrower' || role === 'regulator') && status === 'none'
-  const showDealCard = !isOutsider && hasDeal && !!deal
-  const showShockBanner = !isOutsider && status === 'active' && shock
+  const showWaiting = !isOutsider && !isValuer && (role === 'borrower' || role === 'regulator') && status === 'none'
+  const showDealCard = !isOutsider && !isValuer && hasDeal && !!deal
+  const collateralCandidates = holdings
+    .filter((holding) => holding.kind === 'collateral' && holding.asset === 'Tokenized T-Bill / MMF')
+    .map((holding) => holding.amount)
+    .filter((amount) => amount > 0)
+    .sort((a, b) => a - b)
+  const liquidationThreshold = deal ? Number(deal.args.liquidationThresholdLtv) : Number.NaN
+  const markedLtv = deal && valuation ? Number(deal.args.principal) / (Number(deal.args.collateralQuantity) * valuation.unitPrice) * 100 : 0
+  const showShockBanner = !isOutsider && !isValuer && status === 'active' && Number.isFinite(liquidationThreshold) && Boolean(valuation && markedLtv >= liquidationThreshold)
+  const availableTopUp = deal && valuation && Number.isFinite(liquidationThreshold)
+    ? collateralCandidates.find((amount) => Number(deal.args.principal) / ((Number(deal.args.collateralQuantity) + amount) * valuation.unitPrice) * 100 < liquidationThreshold) ?? 0
+    : collateralCandidates[0] ?? 0
 
   const onReset = async () => {
     setBusy(true)
@@ -99,7 +121,6 @@ export default function App() {
     try {
       await resetDemo()
       setActivity([])
-      setShock(false)
       setDraft(DEFAULT_DRAFT)
       await refresh(role)
     } catch (e) {
@@ -107,6 +128,19 @@ export default function App() {
     } finally {
       setBusy(false)
     }
+  }
+
+  const selectRole = (nextRole: Role) => {
+    if (nextRole === role || busy) return
+    // Clear the previous party's snapshot before the async query starts. The
+    // generation guard above prevents a slow old response from repopulating it.
+    refreshGeneration.current += 1
+    activeRole.current = nextRole
+    setRole(nextRole)
+    setContracts([])
+    setRaw([])
+    setOffset(0)
+    setError(null)
   }
 
   return (
@@ -118,11 +152,11 @@ export default function App() {
             <div style={{ width: 14, height: 14, background: ACCENT, borderRadius: 3, transform: 'rotate(45deg)' }} />
             <div style={{ fontSize: 21, fontWeight: 600, letterSpacing: '-0.01em', color: '#14171f' }}>Veil</div>
             <div style={{ marginLeft: 6, fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#9aa1ad', border: '1px solid #e6e8ec', borderRadius: 999, padding: '4px 9px' }}>
-              Canton · DevNet
+              Canton · Demo
             </div>
           </div>
 
-          <RoleTabs role={role} onSelect={setRole} />
+          <RoleTabs role={role} onSelect={selectRole} disabled={busy} />
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
             <div style={{ textAlign: 'right' }}>
@@ -171,8 +205,16 @@ export default function App() {
             {/* LEFT */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
               {error && <ErrorBanner message={error} onDismiss={() => setError(null)} />}
-              {showShockBanner && <ShockBanner />}
+              {showShockBanner && valuation && <ShockBanner unitPrice={valuation.unitPrice} observedAt={valuation.observedAt} valuationAgent={valuation.valuationAgent} />}
               {isOutsider && <OutsiderEmpty />}
+              {isValuer && (
+                <ValuationPanel
+                  contracts={contracts}
+                  latest={valuation}
+                  onPublish={(price) => act(`Publish valuation ${price.toFixed(2)}`, PARTY_NAMES.valuer, () => publishValuation(price))}
+                  busy={busy}
+                />
+              )}
               {showCreateForm && (
                 <CreateOfferForm
                   draft={draft}
@@ -187,7 +229,8 @@ export default function App() {
                   role={role}
                   status={status}
                   deal={deal}
-                  shock={shock}
+                  valuation={valuation}
+                  availableTopUp={availableTopUp}
                   busy={busy}
                   actions={{
                     onWithdraw: () => act('Withdraw offer', PARTY_NAMES.lender, () => withdrawOffer(deal.contractId)),
@@ -196,15 +239,32 @@ export default function App() {
                       act('Repay loan', PARTY_NAMES.borrower, () =>
                         repayLoan(deal.contractId, Number(deal.args.principal) + Number(deal.args.interest)),
                       ),
-                    onLiquidate: (collateralValue: number) =>
-                      act('Liquidate collateral', PARTY_NAMES.lender, () => liquidateLoan(deal.contractId, collateralValue)),
-                    onSimulateShock: () => setShock(true),
+                    onLiquidate: () =>
+                      act('Liquidate collateral', PARTY_NAMES.lender, () => {
+                        if (!valuation) throw new Error('No ledger valuation is visible. Publish a fresh mark before liquidating.')
+                        return liquidateLoan(deal.contractId, valuation.contractId)
+                      }),
+                    onIssueMarginCall: () =>
+                      act('Issue margin call', PARTY_NAMES.lender, () => {
+                        if (!valuation) throw new Error('No ledger valuation is visible. Publish a fresh breached mark first.')
+                        return issueMarginCall(deal.contractId, valuation.contractId)
+                      }),
+                    onTopUp: (quantity) =>
+                      act(`Top up collateral · ${quantity} units`, PARTY_NAMES.borrower, () => {
+                        if (!valuation) throw new Error('No ledger valuation is visible. Publish a fresh mark before topping up.')
+                        return topUpCollateral(deal.contractId, quantity, valuation.contractId)
+                      }),
+                    onResolveMarginCall: () =>
+                      act('Resolve margin call', PARTY_NAMES.borrower, () => {
+                        if (!valuation) throw new Error('No ledger valuation is visible. Publish a fresh healthy mark first.')
+                        return resolveMarginCall(deal.contractId, valuation.contractId)
+                      }),
                   }}
                 />
               )}
 
-              {!isOutsider && <HoldingsPanel role={role} holdings={holdings} />}
-              {!isOutsider && <ActivityFeed entries={activity} />}
+              {!isOutsider && !isValuer && <HoldingsPanel role={role} holdings={holdings} />}
+              {!isOutsider && !isValuer && <ActivityFeed entries={activity} />}
               <RawInspector role={role} raw={raw} offset={offset} />
             </div>
 

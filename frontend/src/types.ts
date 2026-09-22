@@ -1,4 +1,4 @@
-export type Role = 'lender' | 'borrower' | 'regulator' | 'outsider'
+export type Role = 'lender' | 'borrower' | 'regulator' | 'valuer' | 'outsider'
 
 export type Status = 'none' | 'offered' | 'active' | 'repaid' | 'liquidated'
 
@@ -8,6 +8,14 @@ export type TemplateName =
   | 'LoanClosed'
   | 'CashHolding'
   | 'CollateralHolding'
+  | 'CollateralValuation'
+
+/** The valuation record attached to an active margin-call workflow. */
+export interface MarginCall {
+  issuedAt: string
+  deadline: string
+  unitPrice: string
+}
 
 /** The Daml record fields across the deal templates and the holdings. */
 export interface DealArgs {
@@ -15,10 +23,16 @@ export interface DealArgs {
   lender?: string
   borrower?: string
   regulator?: string
+  valuationAgent?: string
   principal?: string
   interest?: string
   collateralAsset?: string
   collateralQuantity?: string
+  liquidationThresholdLtv?: string
+  marginCallWindowSeconds?: string | number
+  marginCall?: MarginCall | null
+  unitPrice?: string
+  observedAt?: string
   maturity?: string
   collateralLocked?: boolean
   reason?: string
@@ -52,6 +66,20 @@ export interface Draft {
   interest: number
   collateral: number
   maturity: string
+}
+
+/** Ledger-attested collateral mark. Valuers can see these records without
+ * receiving the private loan contracts that they are used to price. */
+export interface Valuation {
+  contractId: string
+  unitPrice: number
+  observedAt: string
+  valuationAgent: string
+  lender: string
+  borrower: string
+  regulator: string
+  collateralAsset: string
+  offset: number
 }
 
 /** Parsed result of a committed ledger transaction — the on-ledger evidence. */

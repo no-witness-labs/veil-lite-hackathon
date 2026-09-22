@@ -21,7 +21,7 @@ const DEFAULTS: LedgerConfig = {
   jsonApiUrl: 'http://127.0.0.1:6864',
   packageRef: '#veil-lite',
   userId: 'veil',
-  parties: { lender: '', borrower: '', regulator: '', outsider: '' },
+  parties: { lender: '', borrower: '', regulator: '', valuer: '', outsider: '' },
 }
 
 let cfg: LedgerConfig = DEFAULTS
@@ -57,12 +57,13 @@ const KNOWN_TEMPLATES: TemplateName[] = [
   'LoanClosed',
   'CashHolding',
   'CollateralHolding',
+  'CollateralValuation',
 ]
 
 export const COLLATERAL_ASSET = 'Tokenized T-Bill / MMF'
 
 /** Canonical demo seed (kept in sync with scripts/bootstrap.sh). */
-const SEED = { lenderCash: 100, borrowerCash: 105, borrowerCollateral: 150 }
+const SEED = { lenderCash: 100, borrowerCash: 105, borrowerCollateral: 150, borrowerReserve: 50 }
 
 let commandSeq = 0
 function nextCommandId(prefix: string): string {
@@ -178,13 +179,49 @@ async function findCash(party: string, minAmount: number): Promise<string> {
     .filter((x) => x.kind === 'cash' && x.amount >= minAmount)
     .sort((a, b) => a.amount - b.amount)[0]
   if (!h) throw new Error(`No cash holding ≥ ${minAmount} available — use "Reset demo" to re-seed holdings.`)
+  if (h.amount > minAmount) {
+    await submit(
+      party,
+      exercise(template('CashHolding'), h.contractId, 'Split', { splitAmount: String(minAmount) }),
+      'split-cash',
+    )
+    const exact = parseHoldings((await listActive(party)).contracts).find(
+      (candidate) => candidate.kind === 'cash' && candidate.amount === minAmount,
+    )
+    if (!exact) throw new Error(`Cash split committed, but no ${minAmount} unit holding was returned.`)
+    return exact.contractId
+  }
   return h.contractId
 }
 
-async function findCollateral(party: string, asset: string): Promise<string> {
+/** Find an exact quantity. When a wallet has a larger bearer holding, split it
+ * first so the spend remains explicit and no action consumes a user's entire
+ * reserve by accident. */
+async function findCollateral(party: string, asset: string, quantity?: number): Promise<string> {
   const { contracts } = await listActive(party)
-  const h = parseHoldings(contracts).find((x) => x.kind === 'collateral' && x.asset === asset)
-  if (!h) throw new Error(`No ${asset} collateral holding available — use "Reset demo" to re-seed holdings.`)
+  const collateral = parseHoldings(contracts).filter((x) => x.kind === 'collateral' && x.asset === asset)
+  const h = quantity === undefined
+    ? collateral[0]
+    : collateral.find((x) => x.amount === quantity) ?? collateral.find((x) => x.amount > quantity)
+  if (!h) {
+    const requested = quantity === undefined ? '' : ` of exactly ${quantity} units`
+    throw new Error(`No ${asset} collateral holding${requested} available — use "Reset demo" to re-seed holdings.`)
+  }
+  if (quantity !== undefined && h.amount !== quantity) {
+    const split = await submit(
+      party,
+      exercise(template('CollateralHolding'), h.contractId, 'SplitCollateral', { splitQuantity: String(quantity) }),
+      'split-collateral',
+    )
+    // Splitting is a separate transaction. Re-read the party's view and use
+    // the exact output, which keeps subsequent choices deterministic.
+    void split
+    const refreshed = parseHoldings((await listActive(party)).contracts).find(
+      (candidate) => candidate.kind === 'collateral' && candidate.asset === asset && candidate.amount === quantity,
+    )
+    if (!refreshed) throw new Error(`Collateral split committed, but no ${quantity} unit holding was returned.`)
+    return refreshed.contractId
+  }
   return h.contractId
 }
 
@@ -196,12 +233,14 @@ export async function createOffer(draft: Draft): Promise<TxResult> {
     exercise(template('CashHolding'), cashCid, 'MakeOffer', {
       borrower: cfg.parties.borrower,
       regulator: cfg.parties.regulator,
+      valuationAgent: cfg.parties.valuer,
       principal: String(draft.principal),
       interest: String(draft.interest),
       collateralAsset: COLLATERAL_ASSET,
       collateralQuantity: String(draft.collateral),
       maturity: draft.maturity,
       liquidationThresholdLtv: String(LIQUIDATION_THRESHOLD_LTV),
+      marginCallWindowSeconds: String(MARGIN_CALL_WINDOW_SECONDS),
     }),
     'offer',
   )
@@ -209,7 +248,13 @@ export async function createOffer(draft: Draft): Promise<TxResult> {
 
 /** Borrower accepts, locking their collateral holding into the loan. */
 export async function acceptOffer(offerCid: string): Promise<TxResult> {
-  const collateralCid = await findCollateral(cfg.parties.borrower, COLLATERAL_ASSET)
+  const { contracts } = await listActive(cfg.parties.borrower)
+  const offer = contracts.find((c) => c.contractId === offerCid && c.template === 'LoanOffer')
+  const requestedQuantity = Number(offer?.args.collateralQuantity)
+  if (!Number.isFinite(requestedQuantity) || requestedQuantity <= 0) {
+    throw new Error('Offer collateral quantity is missing or invalid; refresh the lender offer before accepting.')
+  }
+  const collateralCid = await findCollateral(cfg.parties.borrower, COLLATERAL_ASSET, requestedQuantity)
   return submit(cfg.parties.borrower, exercise(template('LoanOffer'), offerCid, 'Accept', { collateralCid }), 'accept')
 }
 
@@ -222,35 +267,110 @@ export async function repayLoan(loanCid: string, repayment: number): Promise<TxR
   return submit(cfg.parties.borrower, exercise(template('Loan'), loanCid, 'Repay', { repaymentCid }), 'repay')
 }
 
-/** Lender liquidates, supplying the current collateral value. The ledger rejects
- * this unless the resulting LTV breaches the loan's threshold; collateral is seized. */
-export const liquidateLoan = (cid: string, currentCollateralValue: number) =>
-  submit(
-    cfg.parties.lender,
-    exercise(template('Loan'), cid, 'Liquidate', { currentCollateralValue: String(currentCollateralValue) }),
-    'liquidate',
-  )
+export const MARGIN_CALL_WINDOW_SECONDS = 60
 
-/** Seed the canonical demo holdings: lender 100 cash, borrower 105 cash + 150 collateral. */
+/** The valuer creates a shared, timestamped mark. This is a manually attested
+ * demo value, not an oracle claim; no loan read is needed to publish it. */
+export const publishValuation = (unitPrice: number): Promise<TxResult> => {
+  if (!Number.isFinite(unitPrice) || unitPrice <= 0) throw new Error('Valuation price must be greater than zero.')
+  return submit(
+    cfg.parties.valuer,
+    create(template('CollateralValuation'), {
+      valuationAgent: cfg.parties.valuer,
+      lender: cfg.parties.lender,
+      borrower: cfg.parties.borrower,
+      regulator: cfg.parties.regulator,
+      collateralAsset: COLLATERAL_ASSET,
+      unitPrice: String(unitPrice),
+      observedAt: new Date().toISOString(),
+    }),
+    'valuation',
+  )
+}
+
+export const issueMarginCall = (loanCid: string, valuationCid: string): Promise<TxResult> =>
+  submit(cfg.parties.lender, exercise(template('Loan'), loanCid, 'IssueMarginCall', { valuationCid }), 'margin-call')
+
+export async function topUpCollateral(loanCid: string, topUpQuantity: number, valuationCid: string): Promise<TxResult> {
+  if (!Number.isFinite(topUpQuantity) || topUpQuantity <= 0) throw new Error('Top-up quantity must be greater than zero.')
+  const collateralCid = await findCollateral(cfg.parties.borrower, COLLATERAL_ASSET, topUpQuantity)
+  return submit(
+    cfg.parties.borrower,
+    exercise(template('Loan'), loanCid, 'TopUpCollateral', {
+      collateralCid,
+      topUpQuantity: String(topUpQuantity),
+      valuationCid,
+    }),
+    'top-up',
+  )
+}
+
+export const resolveMarginCall = (loanCid: string, valuationCid: string): Promise<TxResult> =>
+  submit(cfg.parties.borrower, exercise(template('Loan'), loanCid, 'ResolveMarginCall', { valuationCid }), 'resolve-call')
+
+/** Liquidation uses only a ledger valuation CID. The lender never supplies a
+ * private mark directly; freshness, deadline, counterparties, and LTV are
+ * checked by the Loan choice. */
+export const liquidateLoan = (cid: string, valuationCid: string): Promise<TxResult> =>
+  submit(cfg.parties.lender, exercise(template('Loan'), cid, 'Liquidate', { valuationCid }), 'liquidate')
+
+/** Seed the canonical demo holdings: lender 100 cash, borrower 105 cash plus
+ * the locked-offer quantity (150) and a separate 50-unit top-up reserve. */
 export async function seedDemo(): Promise<void> {
   await submit(cfg.parties.lender, create(template('CashHolding'), { owner: cfg.parties.lender, amount: String(SEED.lenderCash) }), 'seed')
   await submit(cfg.parties.borrower, create(template('CashHolding'), { owner: cfg.parties.borrower, amount: String(SEED.borrowerCash) }), 'seed')
   await submit(cfg.parties.borrower, create(template('CollateralHolding'), { owner: cfg.parties.borrower, asset: COLLATERAL_ASSET, quantity: String(SEED.borrowerCollateral) }), 'seed')
+  await submit(cfg.parties.borrower, create(template('CollateralHolding'), { owner: cfg.parties.borrower, asset: COLLATERAL_ASSET, quantity: String(SEED.borrowerReserve) }), 'seed')
+}
+
+async function submitReset(actAs: string[], command: unknown, prefix: string): Promise<TxResult> {
+  const res = await api<any>('/v2/commands/submit-and-wait-for-transaction', {
+    commands: {
+      commands: [command],
+      commandId: nextCommandId(`reset-${prefix}`),
+      actAs,
+      userId: cfg.userId,
+    },
+  })
+  const tx = res.transaction ?? {}
+  const created: TxResult['created'] = []
+  const archived: TxResult['archived'] = []
+  for (const ev of tx.events ?? []) {
+    if (ev.CreatedEvent)
+      created.push({ template: templateName(ev.CreatedEvent.templateId), contractId: ev.CreatedEvent.contractId })
+    if (ev.ArchivedEvent)
+      archived.push({ template: templateName(ev.ArchivedEvent.templateId), contractId: ev.ArchivedEvent.contractId })
+  }
+  return { updateId: tx.updateId ?? '', offset: tx.offset ?? 0, synchronizerId: tx.synchronizerId ?? '', created, archived }
 }
 
 /** Clear the ledger and re-seed canonical holdings so the demo can be re-run.
- * Deal contracts are cleared with lender authority (a near-zero mark forces the
- * liquidation guard during cleanup); holdings are archived by their owner. */
+ * Reset is an explicit cooperative demo cleanup. It archives active loans with
+ * both signatories rather than bypassing the margin-call deadline/Liquidate
+ * choice, then burns known holdings and valuation records before seeding. */
 export async function resetDemo(): Promise<void> {
   let { contracts } = await listActive(cfg.parties.lender)
   for (const c of contracts) {
     if (c.template === 'LoanOffer') await withdrawOffer(c.contractId)
-    else if (c.template === 'Loan') await liquidateLoan(c.contractId, 0.01)
+    else if (c.template === 'Loan') {
+      await submitReset(
+        [cfg.parties.lender, cfg.parties.borrower],
+        exercise(template('Loan'), c.contractId, 'Archive'),
+        'archive-loan',
+      )
+    }
   }
   ;({ contracts } = await listActive(cfg.parties.lender))
   for (const c of contracts) {
     if (c.template === 'LoanClosed')
       await submit(cfg.parties.lender, exercise(template('LoanClosed'), c.contractId, 'Dismiss'), 'dismiss')
+  }
+  // Valuations are signed only by the valuer, so archive them in that party's
+  // view after deal contracts have been removed.
+  const { contracts: marks } = await listActive(cfg.parties.valuer)
+  for (const c of marks) {
+    if (c.template === 'CollateralValuation')
+      await submit(cfg.parties.valuer, exercise(template('CollateralValuation'), c.contractId, 'Archive'), 'burn-valuation')
   }
   // Burn every holding (each archived by its owner) before re-seeding.
   for (const party of [cfg.parties.lender, cfg.parties.borrower]) {

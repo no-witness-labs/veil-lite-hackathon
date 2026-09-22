@@ -64,6 +64,7 @@ function ledgerConfig() {
       lender: required('VEIL_PARTY_LENDER'),
       borrower: required('VEIL_PARTY_BORROWER'),
       regulator: required('VEIL_PARTY_REGULATOR'),
+      valuer: required('VEIL_PARTY_VALUER'),
       outsider: required('VEIL_PARTY_OUTSIDER'),
     },
   }

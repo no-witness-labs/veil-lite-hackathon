@@ -25,7 +25,18 @@ export const withdrawOffer = (offerCid: string): Promise<TxResult> =>
 export const repayLoan = (loanCid: string, repayment: number): Promise<TxResult> =>
   ledger.repayLoan(loanCid, repayment)
 
-export const liquidateLoan = (loanCid: string, currentCollateralValue: number): Promise<TxResult> =>
-  ledger.liquidateLoan(loanCid, currentCollateralValue)
+export const publishValuation = (unitPrice: number): Promise<TxResult> => ledger.publishValuation(unitPrice)
+
+export const issueMarginCall = (loanCid: string, valuationCid: string): Promise<TxResult> =>
+  ledger.issueMarginCall(loanCid, valuationCid)
+
+export const topUpCollateral = (loanCid: string, topUpQuantity: number, valuationCid: string): Promise<TxResult> =>
+  ledger.topUpCollateral(loanCid, topUpQuantity, valuationCid)
+
+export const resolveMarginCall = (loanCid: string, valuationCid: string): Promise<TxResult> =>
+  ledger.resolveMarginCall(loanCid, valuationCid)
+
+export const liquidateLoan = (loanCid: string, valuationCid: string): Promise<TxResult> =>
+  ledger.liquidateLoan(loanCid, valuationCid)
 
 export const resetDemo = (): Promise<void> => ledger.resetDemo()

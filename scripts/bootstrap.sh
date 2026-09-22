@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # Bootstrap the running Canton sandbox for the Veil demo:
 #   1. upload the Veil DAR
-#   2. allocate the four demo parties (idempotent)
-#   3. write frontend/src/ledger-config.json for the UI
+#   2. allocate the five demo parties (idempotent)
+#   3. write frontend/public/ledger-config.json for the UI
 #
 # Usage: scripts/bootstrap.sh [JSON_API_URL]
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BASE="${1:-http://127.0.0.1:6864}"
-DAR="$ROOT/.daml/dist/veil-lite-0.1.0.dar"
+DAR="$ROOT/.daml/dist/veil-lite-0.2.0.dar"
 CONFIG="$ROOT/frontend/public/ledger-config.json"
 USER_ID="veil"
 
@@ -51,6 +51,7 @@ echo "→ Allocating parties"
 LENDER="$(allocate Lender)"
 BORROWER="$(allocate Borrower)"
 REGULATOR="$(allocate Regulator)"
+VALUER="$(allocate Valuer)"
 OUTSIDER="$(allocate Outsider)"
 
 mkdir -p "$(dirname "$CONFIG")"
@@ -63,6 +64,7 @@ cat > "$CONFIG" <<JSON
     "lender": "$LENDER",
     "borrower": "$BORROWER",
     "regulator": "$REGULATOR",
+    "valuer": "$VALUER",
     "outsider": "$OUTSIDER"
   }
 }
@@ -71,13 +73,14 @@ JSON
 echo "→ Wrote $CONFIG"
 
 # Seed canonical demo holdings (kept in sync with SEED in frontend/src/ledger.ts):
-# lender 100 cash, borrower 105 cash + 150 collateral. Idempotent: skip if the
+# lender 100 cash, borrower 105 cash + 150 collateral and a 50-unit reserve.
+# Idempotent: skip if the
 # borrower already holds collateral.
 COLLATERAL_ASSET="Tokenized T-Bill / MMF"
 
 create_holding() {
   # $1 = acting party, $2 = JSON createArguments, $3 = template entity
-  curl -s -o /dev/null -X POST "$BASE/v2/commands/submit-and-wait-for-transaction" \
+  curl --fail-with-body -sS -o /dev/null -X POST "$BASE/v2/commands/submit-and-wait-for-transaction" \
     -H "Content-Type: application/json" \
     -d "{\"commands\":{\"commands\":[{\"CreateCommand\":{\"templateId\":\"#veil-lite:Veil:$3\",\"createArguments\":$2}}],\"commandId\":\"seed-$3-$RANDOM\",\"actAs\":[\"$1\"],\"userId\":\"$USER_ID\"}}"
 }
@@ -96,6 +99,7 @@ else
   create_holding "$LENDER"   "{\"owner\":\"$LENDER\",\"amount\":\"100\"}"   CashHolding
   create_holding "$BORROWER" "{\"owner\":\"$BORROWER\",\"amount\":\"105\"}" CashHolding
   create_holding "$BORROWER" "{\"owner\":\"$BORROWER\",\"asset\":\"$COLLATERAL_ASSET\",\"quantity\":\"150\"}" CollateralHolding
+  create_holding "$BORROWER" "{\"owner\":\"$BORROWER\",\"asset\":\"$COLLATERAL_ASSET\",\"quantity\":\"50\"}" CollateralHolding
 fi
 
 echo "✓ Bootstrap complete"

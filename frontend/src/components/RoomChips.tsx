@@ -6,7 +6,7 @@ import { ACCENT, PARTY_DEFS } from '../state'
 export function RoomChips({ role }: { role: Role }) {
   return (
     <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-      {PARTY_DEFS.map((p) => {
+      {PARTY_DEFS.filter((p) => p.key !== 'valuer').map((p) => {
         const isYou = p.key === role
         return (
           <div
@@ -54,6 +54,14 @@ export function RoomChips({ role }: { role: Role }) {
           </div>
         )
       })}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 13px', border: '1px solid #eaf7f4', borderRadius: 10, background: '#f8fdfc' }}>
+        <div style={{ width: 26, height: 26, borderRadius: 7, background: '#eaf7f4', color: '#197d69', fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>VA</div>
+        <div style={{ fontSize: 11, color: '#197d69', lineHeight: 1.3 }}>
+          Valuer signs marks
+          <br />
+          and cannot see this loan
+        </div>
+      </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 13px', border: '1px dashed #dfe2e7', borderRadius: 10, opacity: 0.8 }}>
         <div style={{ width: 26, height: 26, borderRadius: 7, background: '#f4f5f7', color: '#bcc2cb', fontFamily: "'IBM Plex Mono',monospace", fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           ?

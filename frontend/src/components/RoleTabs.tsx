@@ -1,9 +1,9 @@
 import type { Role } from '../types'
 import { ROLE_LABELS } from '../state'
 
-const ROLES: Role[] = ['lender', 'borrower', 'regulator', 'outsider']
+const ROLES: Role[] = ['lender', 'borrower', 'regulator', 'valuer', 'outsider']
 
-export function RoleTabs({ role, onSelect }: { role: Role; onSelect: (r: Role) => void }) {
+export function RoleTabs({ role, onSelect, disabled = false }: { role: Role; onSelect: (r: Role) => void; disabled?: boolean }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#eef0f3', borderRadius: 10, padding: 4 }}>
       {ROLES.map((k) => {
@@ -12,6 +12,7 @@ export function RoleTabs({ role, onSelect }: { role: Role; onSelect: (r: Role) =
           <button
             key={k}
             onClick={() => onSelect(k)}
+            disabled={disabled}
             style={{
               border: 'none',
               background: active ? '#fff' : 'transparent',
@@ -20,7 +21,8 @@ export function RoleTabs({ role, onSelect }: { role: Role; onSelect: (r: Role) =
               fontSize: 13,
               padding: '8px 16px',
               borderRadius: 7,
-              cursor: 'pointer',
+              cursor: disabled ? 'wait' : 'pointer',
+              opacity: disabled && !active ? 0.6 : 1,
               boxShadow: active ? '0 1px 2px rgba(20,23,31,0.10)' : 'none',
               transition: 'all .15s',
             }}
