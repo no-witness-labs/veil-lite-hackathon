@@ -87,7 +87,8 @@ template CashHolding
 
     -- | Lender funds a borrower-specific offer directly from cash. The funded
     -- principal leaves the lender here and is delivered to the borrower on
-    -- Accept (or refunded on Withdraw), so an offer is always pre-funded.
+    -- Accept (or refunded on Withdraw). This choice pre-funds the offer;
+    -- self-issued demo templates do not prove external asset provenance.
     choice MakeOffer : ContractId LoanOffer
       with
         borrower : Party
@@ -106,7 +107,10 @@ template CashHolding
         now <- getTime
         assertMsg "offer maturity must be in the future" (now < maturity)
         mark <- fetch valuationCid
-        _ <- checkedPrice valuationAgent owner borrower regulator collateralAsset mark.streamId valuationCid
+        unitPrice <- checkedPrice valuationAgent owner borrower regulator collateralAsset mark.streamId valuationCid
+        assertMsg "collateral quantity must be positive" (collateralQuantity > 0.0)
+        assertMsg "offer LTV must be below the liquidation threshold"
+          ((principal / (collateralQuantity * unitPrice)) * 100.0 < liquidationThresholdLtv)
         assertMsg "insufficient cash to fund offer" (amount >= principal)
         if amount > principal
           then do
@@ -196,10 +200,14 @@ template LoanOffer
     choice Accept : ContractId Loan
       with
         collateralCid : ContractId CollateralHolding
+        valuationCid : ContractId CollateralValuation
       controller borrower
       do
         now <- getTime
         assertMsg "cannot accept an offer at or after maturity" (now < maturity)
+        unitPrice <- checkedPrice valuationAgent lender borrower regulator collateralAsset valuationStreamId valuationCid
+        assertMsg "acceptance LTV must be below the liquidation threshold"
+          ((principal / (collateralQuantity * unitPrice)) * 100.0 < liquidationThresholdLtv)
         collateral <- fetch collateralCid
         assertMsg "collateral must be owned by the borrower" (collateral.owner == borrower)
         assertMsg "collateral asset mismatch" (collateral.asset == collateralAsset)

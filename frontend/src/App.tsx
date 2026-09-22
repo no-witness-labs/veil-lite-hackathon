@@ -2,8 +2,11 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ActivityEntry, Contract, Draft, Role, TxResult } from './types'
 import {
   acceptOffer,
+  COLLATERAL_ASSET,
   createOffer,
+  getParties,
   issueMarginCall,
+  LIQUIDATION_THRESHOLD_LTV,
   liquidateLoan,
   liquidateOverdueLoan,
   listActive,
@@ -23,6 +26,7 @@ import {
   ROLE_DOT,
   ROLE_LABELS,
   currentDeal,
+  valuationCandidates,
   valuationFor,
   statusOf,
 } from './state'
@@ -97,6 +101,15 @@ export default function App() {
   const status = statusOf(deal)
   const holdings = parseHoldings(contracts)
   const valuation = valuationFor(contracts, deal)
+  const dealValuations = valuationCandidates(contracts, deal)
+  const parties = getParties()
+  const availableValuations = valuationCandidates(contracts).filter((mark) =>
+    mark.valuationAgent === parties.valuer
+      && mark.lender === parties.lender
+      && mark.borrower === parties.borrower
+      && mark.regulator === parties.regulator
+      && mark.collateralAsset === COLLATERAL_ASSET
+  )
 
   const isOutsider = role === 'outsider'
   const isValuer = role === 'valuer'
@@ -219,6 +232,8 @@ export default function App() {
               {showCreateForm && (
                 <CreateOfferForm
                   draft={draft}
+                  valuations={availableValuations}
+                  liquidationThresholdLtv={LIQUIDATION_THRESHOLD_LTV}
                   onChange={(field, value) => setDraft((d) => ({ ...d, [field]: value }) as Draft)}
                   onSubmit={() => act('Create offer', PARTY_NAMES.lender, () => createOffer(draft))}
                   busy={busy}
@@ -231,6 +246,7 @@ export default function App() {
                   status={status}
                   deal={deal}
                   valuation={valuation}
+                  valuationCandidates={dealValuations}
                   availableTopUp={availableTopUp}
                   busy={busy}
                   actions={{

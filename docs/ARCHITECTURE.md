@@ -14,7 +14,7 @@ action does on and off the ledger. For the contract visibility/lifecycle diagram
  3. JSON Ledger API v2  HTTP :6864   (gRPC Ledger API :6865)  the on/off-chain boundary
  2. Canton sandbox      participant + sequencer + mediator +  runs contracts, enforces
        synchronizer (dpm sandbox, in-memory, auth off)        privacy + authorization
- 1. Contracts           daml/Veil.daml → veil-lite-0.3.0.dar  the rules (on-ledger)
+ 1. Contracts           daml/Veil.daml → veil-lite-0.4.0.dar  the rules (on-ledger)
 ```
 
 ## 1. Contracts (on-ledger)
@@ -39,7 +39,7 @@ Two properties are enforced by Canton, not the app:
 ## 2. Build & package
 
 ```bash
-dpm build                       # daml/Veil.daml → .daml/dist/veil-lite-0.3.0.dar
+dpm build                       # daml/Veil.daml → .daml/dist/veil-lite-0.4.0.dar
 (cd test && dpm build && dpm test)
 ```
 
@@ -92,17 +92,17 @@ liquidation threshold 90%.
 - **Terms:** `maturity` is an RFC3339 UTC timestamp and `valuationCid` identifies a fresh current price from the agreed stream. The offer stores that price's immutable `streamId`; a later parallel stream cannot replace it.
 - **Off-chain:** read the lender's `CashHolding` with `amount ≥ principal` (`findCash`), then
   `ExerciseCommand` `#veil-lite:Veil:CashHolding` · `MakeOffer` (terms), `actAs: [Lender]`.
-- **On-ledger** (authority: cash owner = lender): assert `amount ≥ principal`; **archive** the
+- **On-ledger** (authority: cash owner = lender): require a fresh scoped price and LTV strictly below the liquidation threshold; assert `amount ≥ principal`; **archive** the
   `CashHolding`; create change if any; **create `LoanOffer`** (sig lender, obs borrower+regulator).
 - **After:** principal is escrowed (lender cash consumed). Status **Offered**. Borrower/regulator
   can see the offer; outsider cannot.
 
 ### Accept — `LoanOffer.Accept` (the atomic, two-party one)
 - **Trigger:** borrower clicks Accept → `acceptOffer(offerCid)`.
-- **Off-chain:** read the borrower's `CollateralHolding` (`findCollateral`), then `ExerciseCommand`
-  `#veil-lite:Veil:LoanOffer` · `Accept {collateralCid}`, `actAs: [Borrower]`.
+- **Off-chain:** read the current valuation for the offer's exact stream and the borrower's `CollateralHolding` (`findCollateral`), then `ExerciseCommand`
+  `#veil-lite:Veil:LoanOffer` · `Accept {collateralCid, valuationCid}`, `actAs: [Borrower]`.
 - **On-ledger** (authority: controller **borrower** + offer signatory **lender**):
-  require ledger time strictly before maturity;
+  require ledger time strictly before maturity and a fresh current price from the agreed stream showing LTV strictly below the liquidation threshold;
   fetch & validate the collateral (owner/asset/quantity); **archive `CollateralHolding`** (collateral
   LOCKED); **create borrower `CashHolding(principal)`** (principal delivered from escrow); **create
   `Loan`** (sig lender+borrower, obs regulator, `collateralLocked=True`). The offer is consumed.
@@ -110,6 +110,7 @@ liquidation threshold 90%.
   lender signed the `LoanOffer` the choice is exercised on. Locking the borrower's collateral needs
   borrower authority — present as the controller. One atomic transaction.
 - **After:** Status **Active**. Borrower wallet: `Cash 100` (+ existing `Cash 105`), 150 collateral locked and 50 reserve available. Lender wallet: empty (funded).
+- **Price changes:** a fall after offer creation can block acceptance. The offer remains withdrawable, and recovery on the same stream can make it acceptable again. A rejected acceptance leaves the offer and collateral unconsumed and delivers no principal.
 
 ### Repay — `Loan.Repay`
 - **Trigger:** borrower clicks Repay → `repayLoan(loanCid, principal+interest)`.
@@ -162,9 +163,10 @@ liquidation threshold 90%.
 ```text
 Borrower clicks "Accept offer"  (App.tsx)
   → ledger.acceptOffer(offerCid)
+      → resolve current agreed-stream valuation     READ: ACS as borrower → current mark cid
       → findCollateral(borrower)                    READ: ACS as borrower → 150-unit cid
       → POST /v2/commands/submit-and-wait-for-transaction
-           ExerciseCommand LoanOffer.Accept {collateralCid}, actAs:[Borrower]
+           ExerciseCommand LoanOffer.Accept {collateralCid, valuationCid}, actAs:[Borrower]
   → Vite proxy → Canton :6864
       → runs Accept ON-LEDGER (borrower + lender authority):
           archive CollateralHolding (LOCKED) · create borrower CashHolding(100) · create Loan

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { Contract, Role, Status, Valuation } from '../types'
-import { STATUS_TONE, dealNumbers, fmtMoney, fmtUtcTime, lockTone, ltvTone, marginCallOf } from '../state'
+import { assessValuation, STATUS_TONE, dealNumbers, fmtMoney, fmtUtcTime, lockTone, ltvTone, marginCallOf } from '../state'
 import { Stepper } from './Stepper'
 import { RoomChips } from './RoomChips'
 
@@ -36,6 +36,7 @@ export function DealCard({
   status,
   deal,
   valuation,
+  valuationCandidates,
   availableTopUp,
   busy,
   actions,
@@ -44,6 +45,7 @@ export function DealCard({
   status: Status
   deal: Contract
   valuation?: Valuation
+  valuationCandidates: Valuation[]
   availableTopUp: number
   busy: boolean
   actions: DealActions
@@ -59,6 +61,9 @@ export function DealCard({
   const marginCall = marginCallOf(deal)
   const deadlineMs = marginCall ? Date.parse(marginCall.deadline) : Number.NaN
   const maturityMs = deal.args.maturity ? Date.parse(deal.args.maturity) : Number.NaN
+  const acceptanceAssessment = status === 'offered'
+    ? assessValuation(valuationCandidates, principal, collateral, liquidationThreshold ?? Number.NaN, now)
+    : undefined
   useEffect(() => {
     if ((status !== 'active' && status !== 'offered') || !Number.isFinite(maturityMs)) return undefined
     const timer = window.setInterval(() => setNow(Date.now()), 1000)
@@ -84,7 +89,7 @@ export function DealCard({
 
   const fObserver = role === 'regulator'
   const fLenderWithdraw = role === 'lender' && status === 'offered'
-  const fBorrowerAccept = role === 'borrower' && status === 'offered' && beforeMaturity
+  const fBorrowerAccept = role === 'borrower' && status === 'offered' && beforeMaturity && acceptanceAssessment?.status === 'healthy'
   const fBorrowerRepay = role === 'borrower' && status === 'active'
   const fLenderIssue = role === 'lender' && status === 'active' && beforeMaturity && !marginCall && markBreach
   const fBorrowerTopUp = role === 'borrower' && status === 'active' && beforeMaturity && Boolean(marginCall) && beforeDeadline && markBreach && topUpRestores
@@ -192,7 +197,7 @@ export function DealCard({
             {fObserver && <ObserverBadge />}
             {fLenderWithdraw && <ActionButton label="Withdraw offer" onClick={actions.onWithdraw} busy={busy} variant="danger-outline" />}
             {fBorrowerAccept && <ActionButton label="Accept offer" onClick={actions.onAccept} busy={busy} variant="primary" />}
-            {role === 'borrower' && status === 'offered' && !beforeMaturity && <DisabledButton label="Offer expired at maturity" />}
+            {role === 'borrower' && status === 'offered' && !fBorrowerAccept && <DisabledButton label={!beforeMaturity ? 'Offer expired at maturity' : `Cannot accept — ${acceptanceAssessment?.message ?? 'matching valuation unavailable'}`} />}
             {fBorrowerRepay && <ActionButton label={`Repay ${fmtMoney(repayment)}`} onClick={actions.onRepay} busy={busy} variant="success" />}
             {role === 'lender' && status === 'active' && !marginCall && !fLenderIssue && !fLenderOverdue && <DisabledButton label={markFresh ? (markBreach ? 'Issue margin call' : 'Healthy — no call') : 'Fresh mark required'} />}
             {fLenderIssue && <ActionButton label="Issue margin call" onClick={actions.onIssueMarginCall} busy={busy} variant="danger-outline" />}

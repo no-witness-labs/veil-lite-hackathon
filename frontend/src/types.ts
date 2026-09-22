@@ -86,6 +86,17 @@ export interface Valuation {
   offset: number
 }
 
+export type ValuationStatus = 'missing' | 'ambiguous' | 'invalid' | 'future' | 'stale' | 'healthy' | 'at-threshold' | 'breached'
+
+export interface ValuationAssessment {
+  status: ValuationStatus
+  message: string
+  mark?: Valuation
+  collateralValue?: number
+  ltv?: number
+  ageMs?: number
+}
+
 /** Parsed result of a committed ledger transaction — the on-ledger evidence. */
 export interface TxResult {
   updateId: string

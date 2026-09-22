@@ -2,7 +2,7 @@
 // status is derived from the contracts the active party can actually see on the
 // ledger rather than from local UI state. Price marks and margin-call details
 // are read from the contracts visible to the active party.
-import type { Contract, Draft, MarginCall, Role, Status, Valuation } from './types'
+import type { Contract, Draft, MarginCall, Role, Status, Valuation, ValuationAssessment } from './types'
 
 export const ACCENT = '#2748d8'
 
@@ -91,11 +91,12 @@ export function marginCallOf(deal: Contract | undefined): MarginCall | undefined
   return { issuedAt: call.issuedAt, deadline: call.deadline, unitPrice: String(call.unitPrice) }
 }
 
-export function valuationFor(contracts: Contract[], deal?: Contract): Valuation | undefined {
-  if (deal && typeof deal.args.valuationStreamId !== 'string') return undefined
-  const marks = contracts
+export function valuationCandidates(contracts: Contract[], deal?: Contract): Valuation[] {
+  if (deal && typeof deal.args.valuationStreamId !== 'string') return []
+  return contracts
     .filter((contract) => {
       if (contract.template !== 'CollateralValuation') return false
+      if (typeof contract.args.streamId !== 'string') return false
       if (deal && contract.args.streamId !== deal.args.valuationStreamId) return false
       if (!deal) return true
       return contract.args.collateralAsset === deal.args.collateralAsset
@@ -121,10 +122,49 @@ export function valuationFor(contracts: Contract[], deal?: Contract): Valuation 
       }
     })
     .filter((mark): mark is Valuation => Boolean(mark))
+}
+
+export function valuationFor(contracts: Contract[], deal?: Contract): Valuation | undefined {
+  const marks = valuationCandidates(contracts, deal)
   // A stream has exactly one active mark because Publish consumes and replaces
   // its predecessor. Treat a missing or parallel mark as an invalid current
   // valuation instead of silently choosing by offset.
   return marks.length === 1 && marks[0].streamId ? marks[0] : undefined
+}
+
+export function assessValuation(
+  candidates: Valuation[],
+  principal: number,
+  collateral: number,
+  threshold: number,
+  now = Date.now(),
+): ValuationAssessment {
+  if (candidates.length === 0) return { status: 'missing', message: 'No matching ledger valuation mark is available.' }
+  if (candidates.length > 1) return { status: 'ambiguous', message: 'Multiple matching valuation marks are visible; reset or publish a single current mark.' }
+
+  const mark = candidates[0]
+  const observedMs = Date.parse(mark.observedAt)
+  const ageMs = now - observedMs
+  if (!Number.isFinite(observedMs)) return { status: 'invalid', message: 'The valuation timestamp is invalid; publish a fresh mark.', mark }
+  if (ageMs < 0) return { status: 'future', message: 'The valuation is future-dated; synchronize the browser and ledger clocks.', mark, ageMs }
+  if (ageMs > 5 * 60 * 1000) return { status: 'stale', message: 'The valuation is stale; publish a fresh mark before proceeding.', mark, ageMs }
+
+  if (!Number.isFinite(mark.unitPrice) || mark.unitPrice <= 0 || !Number.isFinite(principal) || principal <= 0 || !Number.isFinite(collateral) || collateral <= 0 || !Number.isFinite(threshold) || threshold <= 0) {
+    return { status: 'invalid', message: 'Enter positive principal and collateral terms with a valid liquidation threshold.', mark, ageMs }
+  }
+  const collateralValue = collateral * mark.unitPrice
+  const ltv = collateralValue > 0 ? (principal / collateralValue) * 100 : Number.POSITIVE_INFINITY
+  if (!Number.isFinite(collateralValue) || !Number.isFinite(ltv)) {
+    return { status: 'invalid', message: 'The valuation cannot price these collateral terms.', mark, collateralValue, ltv, ageMs }
+  }
+  const difference = ltv - threshold
+  if (Math.abs(difference) <= 1e-9) {
+    return { status: 'at-threshold', message: `Current LTV is exactly ${threshold.toFixed(1)}%; the ledger requires it to remain strictly below the threshold.`, mark, collateralValue, ltv, ageMs }
+  }
+  if (difference > 0) {
+    return { status: 'breached', message: `Current LTV is ${ltv.toFixed(1)}%, above the ${threshold.toFixed(1)}% liquidation threshold.`, mark, collateralValue, ltv, ageMs }
+  }
+  return { status: 'healthy', message: `Fresh mark supports ${ltv.toFixed(1)}% LTV, below the ${threshold.toFixed(1)}% threshold.`, mark, collateralValue, ltv, ageMs }
 }
 
 export const STATUS_TONE: Record<Status, Tone> = {
