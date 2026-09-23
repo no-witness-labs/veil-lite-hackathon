@@ -3,13 +3,30 @@
 ## Starting point and ownership
 
 Baseline: [`2455470f2521b1ce295252178f11507f8c881321`](https://github.com/no-witness-labs/veil-lite-hackathon/commit/2455470f2521b1ce295252178f11507f8c881321), prior to the September 18 delivery window.
-Development began September 22, 2026. The margin-call increment merged in PR #36 and origination guards in PR #38. The current sandbox follow-up is `feat/season3-funded-escrow`.
+Development began September 22, 2026. The margin-call increment merged in PR #36, origination guards in PR #38, and controlled issuance/funded offers in [PR #39](https://github.com/no-witness-labs/veil-lite-hackathon/pull/39), merged by `hadelive` at `e25da2561ce1c330aaf7bb6ce38e296f9e67dcba`.
 
 The baseline already contained private offers, demo cash/collateral holdings, acceptance, repayment, lender-supplied liquidation prices, a role UI, and an earlier deployment/video. Those are prior work. PRs #24 (token standard), #32 (validation), and #34 (maturity) also predate this season. This branch adapts #34's ledger-time maturity policy to the new margin workflow; it does not claim that original idea or PR as new work or merge those PRs wholesale.
 
 New scope: a jointly authorized valuation stream with consuming price updates, controlled demo issuance and funded offers, origination risk checks, timed margin calls, exact collateral top-ups, recovery resolution, maturity integration, UI integration, automated PR checks, and regression evidence. Track proposal: **Track 2 — Financial Applications**.
 
 Proposed user: operations staff at a lender financing a known treasury counterparty against tokenized collateral. This is a product hypothesis; no institutional pilot or external user validation is claimed.
+
+## Team presentation and review pack
+
+- [Team presentation (PDF)](SEASON3-PRESENTATION.pdf), [browser slides](SEASON3-PRESENTATION.html), and [editable source](SEASON3-PRESENTATION.md): why Veil, proposed Track 2 fit, prior work versus this increment, current evidence, and the invited team's role.
+- [Three-minute demo script](SEASON3-DEMO-SCRIPT.md): fresh-sandbox preflight, exact role/click sequence, timing, and recovery branches.
+- [Audit handoff](SEASON3-AUDIT-HANDOFF.md): trust boundaries, invariants to challenge, named regression scripts, and reproduction commands.
+
+The deck uses the repository's existing Marp format. To regenerate its HTML and
+PDF from the Markdown source (Chrome and Marp CLI required):
+
+```bash
+npx --yes @marp-team/marp-cli@4.5.1 docs/SEASON3-PRESENTATION.md --html -o docs/SEASON3-PRESENTATION.html
+npx --yes @marp-team/marp-cli@4.5.1 docs/SEASON3-PRESENTATION.md --html --pdf --allow-local-files -o docs/SEASON3-PRESENTATION.pdf
+```
+
+When sharing the generated HTML separately, include its `assets/season3-funded-offer.png`
+file alongside it. The PDF contains the screenshot and can be shared alone.
 
 ## End-to-end demo
 
@@ -98,7 +115,7 @@ The GitHub `CI` workflow builds the frontend and Daml packages and runs the Daml
 
 The [first GitHub CI run](https://github.com/no-witness-labs/veil-lite-hackathon/actions/runs/35696187576) on September 22 could not start either job: GitHub reported an account billing lock. Remote CI remains unverified until the account owner resolves that lock and reruns the workflow. This is separate from the passing local checks above.
 
-The project owner authorized proceeding without CI; PRs #36 and #38 merged with an admin bypass. The current 0.5.0 increment uses local builds, contract regression tests, and browser checks against Canton sandbox; neither CI availability nor DevNet access is a prerequisite.
+The project owner authorized proceeding without CI; PRs #36, #38, and #39 merged with an admin bypass. On PR #39, neither CI job started because of the same account billing lock. The 0.5.0 increment uses local builds, contract regression tests, and browser checks against Canton sandbox; neither CI availability nor DevNet access is a prerequisite.
 
 These are local demo checks, not independent audit results or DevNet validation.
 
