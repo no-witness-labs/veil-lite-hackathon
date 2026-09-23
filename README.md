@@ -6,6 +6,16 @@
 
 **Current scope, baseline, policies, and review handoff:** [Season 3](docs/SEASON3.md).
 
+## Season 3 team pack
+
+- **Team presentation:** [PDF](docs/SEASON3-PRESENTATION.pdf) · [browser slides](docs/SEASON3-PRESENTATION.html) · [editable Markdown](docs/SEASON3-PRESENTATION.md).
+- **Repeatable three-minute demo:** [script and preflight](docs/SEASON3-DEMO-SCRIPT.md).
+- **Invited Canton reviewers:** [audit scope, invariants, and reproduction commands](docs/SEASON3-AUDIT-HANDOFF.md).
+
+The presentation covers why we chose to improve Veil, the proposed Track 2 fit,
+the Season 3 changes, verified local behavior, and what remains before a pilot.
+The pack does not claim external audit, customer validation, or a current hosted deployment.
+
 ## Prior submission links (pre-Season 3)
 
 - **Repository:** <https://github.com/no-witness-labs/veil-lite-hackathon>
@@ -111,9 +121,9 @@ every flow (create offer, accept, repay, liquidate, withdraw, reset) — see **[
 - Real institution onboarding/compliance workflows.
 - Mainnet/TestNet deployment guarantees.
 
-## Submission requirements
+## Earlier Encode submission requirements
 
-This project explicitly tracks the Encode submission requirements in [`docs/SUBMISSION-CHECKLIST.md`](./docs/SUBMISSION-CHECKLIST.md):
+The earlier Encode submission tracked these requirements in [`docs/SUBMISSION-CHECKLIST.md`](./docs/SUBMISSION-CHECKLIST.md). For the current Season 3 scope and evidence, use the team pack above.
 
 - **Public repository** — publish this directory as a public GitHub repo with setup/demo docs.
 - **Presentation deck** — create a concise 7–10 slide deck covering problem, solution, why Canton, demo flow, architecture, current status, and roadmap.
