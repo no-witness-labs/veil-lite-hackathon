@@ -1,0 +1,425 @@
+{
+  "implementation": "e25da2561ce1c330aaf7bb6ce38e296f9e67dcba",
+  "checkout": "9855d4a399162a2f115b2762e9c40f7f4b08a5ae",
+  "recordedAt": "2026-09-23T03:59:43.066Z",
+  "environment": "local Canton sandbox; one participant; authentication disabled; simulated assets",
+  "recordings": [
+    {
+      "kind": "main",
+      "duration": 180,
+      "scenes": [
+        {
+          "scheduled": 0,
+          "completed": 5.05,
+          "label": "Reset canonical local demo",
+          "cashPlusOfferReserve": 205,
+          "freePlusLockedCollateral": 200
+        },
+        {
+          "scheduled": 20,
+          "completed": 21.47,
+          "label": "Reserve principal in funded offer",
+          "offerContractId": "0043f72b765d23ae2c164ea877ecd0db416555219c46ea8a311ca9e8c619a6a738ca121220a84df0f48356f8fb8138d231c2ce97c96add04119f30e0848f3b568d0718cbd5",
+          "cashPlusOfferReserve": 205,
+          "freePlusLockedCollateral": 200
+        },
+        {
+          "scheduled": 42,
+          "completed": 44.89,
+          "label": "Borrower accepts",
+          "loanContractId": "0044d207e73cd9df7d95e7ca1062a545736e4bcd4d5ce625e243659f6c9cad90dcca1212201ad5f1bcc82628f761e01e9bff033fb19e382d26afd4d9f1dbb37eb51791fd68",
+          "cashPlusOfferReserve": 205,
+          "freePlusLockedCollateral": 200
+        },
+        {
+          "scheduled": 58,
+          "completed": 59.79,
+          "label": "Outsider query is empty",
+          "activeContracts": [],
+          "emptyResponseInFrame": true
+        },
+        {
+          "scheduled": 68,
+          "completed": 70.55,
+          "label": "Valuer publishes manual stress mark",
+          "valuationContractId": "002dfa8a8f916649f0765854ba7cf45d1f596afdf9dd20a09f73916beec090c7dfca1212201f2adc6c4b2172b15590ecc5d60af176e40cc7a408c794285cb02207d5a1fbdc",
+          "streamId": "007ef9edf70ffa9085d32eef991ddc5c91d4cee6b57e24dc971ee83f34763d0703ca121220eb0250d7106f36c410e9fe1ede6d80397282297452655e7431612ad5835e5e5a"
+        },
+        {
+          "scheduled": 84,
+          "completed": 87.13,
+          "label": "Lender opens 60-second margin call",
+          "loanContractId": "005f59c0d69eede213ecee5669c1df570274cb818ad6270addb08b6ad4604f2457ca121220de0215ca3051c6a147ae0e8f47d3aab037bc7f11ac97f2831bdae03c9a7cd491",
+          "marginCall": {
+            "issuedAt": "2026-09-23T04:18:57.336329Z",
+            "deadline": "2026-09-23T04:19:57.336329Z",
+            "unitPrice": "0.6200000000"
+          }
+        },
+        {
+          "scheduled": 96,
+          "completed": 98.77,
+          "label": "Borrower tops up exact 50-unit reserve",
+          "loanContractId": "006b13b2d43a5f62ec3a095b502aff1429077a55b6a49d41a47ef4f0c09d0c8131ca12122002fa67398d72401ec8fe936b470554005c804a4edd1cfaa63dc6fd4fb3b59673",
+          "collateralLocked": 200,
+          "cashPlusOfferReserve": 205,
+          "freePlusLockedCollateral": 200
+        },
+        {
+          "scheduled": 116,
+          "completed": 117.46,
+          "label": "Repayment returns all collateral",
+          "closedContractId": "0012f74744da8db24383d185114fd52626100db5f0ea663bca52978ed879b03256ca1212201b441afb3cbc62b7612dc44debbf5666e590fa27e9458a8c64e0da6d09a54be2",
+          "returnedCollateral": 200,
+          "lenderCash": 105,
+          "cashPlusOfferReserve": 205,
+          "freePlusLockedCollateral": 200
+        },
+        {
+          "scheduled": 132,
+          "completed": 134.04,
+          "label": "Regulator observes settlement",
+          "regulatorSettlements": 1,
+          "issuerSettlements": 1,
+          "valuerSettlements": 0
+        },
+        {
+          "scheduled": 154,
+          "completed": 156.51,
+          "label": "Inspect transaction evidence",
+          "transactionsCaptured": 16
+        },
+        {
+          "scheduled": 163,
+          "completed": 164.08,
+          "label": "Inspect raw party response",
+          "rawResponsePreserved": true
+        },
+        {
+          "scheduled": 173,
+          "completed": 174.21,
+          "label": "Return to closed deal",
+          "finalReason": "Repaid"
+        }
+      ],
+      "transactions": [
+        {
+          "updateId": "12203f975d959507416c49e3564051c0c562fb796c939d79dc2044f66e14fd2e3da4",
+          "offset": 423
+        },
+        {
+          "updateId": "1220efc3048753cc8c29c76d967d73f62bae52b2d767bd7c6a09ba1c8891fcaa92aa",
+          "offset": 426
+        },
+        {
+          "updateId": "1220ee2007552efa0b787f0a6d571daa04cc93f80a0694be8898391cf113f028a9db",
+          "offset": 429
+        },
+        {
+          "updateId": "1220ebadea97cee0b43edc6ec3d9376145990827175c3f160522b99960c2fd195adf",
+          "offset": 432
+        },
+        {
+          "updateId": "122082887ed232000a170655632383fceee89ff77ce4c1a3e989162dd841107cbe52",
+          "offset": 435
+        },
+        {
+          "updateId": "12200b63b1e975ee85bccc61a4acba18ee8e95f43067b1bfa9fbfdfd1c8d400b8580",
+          "offset": 438
+        },
+        {
+          "updateId": "12203b77d6a5fb4caf2c98dee65738d4effedb975b17ac8862b8c6f36716b4230382",
+          "offset": 441
+        },
+        {
+          "updateId": "12203355dbc1589f58c98806010743601f0ca8eb25f4b83f242fe93d022b6c207b35",
+          "offset": 444
+        },
+        {
+          "updateId": "122041436d1bfb8a1a5195ca601cc776a535631a49e43c31f7d1c3ccc3f0840418fc",
+          "offset": 447
+        },
+        {
+          "updateId": "1220182fb3b64336c336d8364a3e9e308648a80577edfa0b0d7116d45d8655fbadb1",
+          "offset": 450
+        },
+        {
+          "updateId": "12203a33953809b54b0be72f97677cd1c3bd040986fde9dd8f0c0b4ca8b6b0c01412",
+          "offset": 453
+        },
+        {
+          "updateId": "122058c66b72d7435df1442428cf0918d80644c61fc64d6cd3821863dc6048aa20e0",
+          "offset": 456
+        },
+        {
+          "updateId": "122040dfaa18ffada72118741fbaaedf3882589ce3ea2fa1ab36f54d2504b6a14e6c",
+          "offset": 459
+        },
+        {
+          "updateId": "12207a88e8cc9265dd5c4c3aa117ca9614ebdfb0411d91434bd470030c727740ad45",
+          "offset": 462
+        },
+        {
+          "updateId": "1220b8cfdb7935f27492767d8166390a773dfc12e2c3520f0c7bd64825f8ba2a985b",
+          "offset": 465
+        },
+        {
+          "updateId": "12206ce742061d2483a0d168b952d3b3fe417ef2aa81c2ac9a97252d682c0a434e88",
+          "offset": 468
+        }
+      ],
+      "browserErrors": [],
+      "outputVideo": "veil-season3-demo.mp4",
+      "outputDuration": 180,
+      "trimmedPreludeSeconds": 2.32,
+      "sha256": "589990d4cd1b7dafaa777bc17e3aaa5b7702ec1d5dc6687bf75cd2b36d04fee6"
+    },
+    {
+      "kind": "rejection",
+      "duration": 60,
+      "scenes": [
+        {
+          "scheduled": 0,
+          "completed": 0.42,
+          "label": "Healthy funded offer after fresh local preflight",
+          "cashPlusOfferReserve": 205,
+          "freePlusLockedCollateral": 200
+        },
+        {
+          "scheduled": 12,
+          "completed": 14.29,
+          "label": "Publish 0.62 before acceptance",
+          "valuationContractId": "0005ee739cf53eca6ca093e7a7f35c6d7a4e602622d1efcb3248abef0eb78f8a16ca1212209ffcdebd4d159e80585ecf4ef6782e4d85679307cc6cf6d949a3970312c96640",
+          "streamId": "007367f5bb221c4520a1a6cd80a3c87c789b2b898944b2482674518eec14a5f539ca121220b036d89e40a787bf9032f003f9fb8f249b9c87485d6e0a9920104943a0233203"
+        },
+        {
+          "scheduled": 25,
+          "completed": 27.05,
+          "label": "UI rejects unsafe acceptance",
+          "acceptanceDisabled": true,
+          "ltv": 107.5268817204301
+        },
+        {
+          "scheduled": 33,
+          "completed": 33.45,
+          "label": "Ledger rejects direct unsafe command",
+          "status": 400,
+          "unchanged": true,
+          "loansCreated": 0
+        },
+        {
+          "scheduled": 43,
+          "completed": 43.07,
+          "label": "Display actual response and state comparison",
+          "evidencePage": "Actual captured API response and before/after assertions; separate from product UI"
+        }
+      ],
+      "transactions": [
+        {
+          "updateId": "1220f378a414fa8cfe9362887e436bb835be2ad89900a4de45de1b589c904bb991bf",
+          "offset": 354
+        },
+        {
+          "updateId": "12207c8e32b29d1ac9e4a5fac01100f02e43834ee17db71ce96753ccd489a1013c84",
+          "offset": 357
+        },
+        {
+          "updateId": "122034bc1bea9d763bef34cdd895a1bdac7212f82845f9c61e1741ac55905d7e4329",
+          "offset": 360
+        },
+        {
+          "updateId": "122011fbe20baccf19a01da7ce776838eb7b8b7c0c0036a020439a3bb14f54f2b67a",
+          "offset": 363
+        },
+        {
+          "updateId": "1220d4e675351364803b1b3245ad47ebd8ed8de832deb586513b184384f3417ba593",
+          "offset": 366
+        },
+        {
+          "updateId": "1220ed11afcadd2028b3c113ca5acf0777f68722ed8f123fcc8a0a4492f2f697b9eb",
+          "offset": 369
+        },
+        {
+          "updateId": "12204261e084efbe13ef4b7163e1c1edea5b76ed7e0ea294d4b4a440ad7495454ce3",
+          "offset": 372
+        },
+        {
+          "updateId": "1220a371b7fd1a7390f9f7cb09d0145df4cf094627cdcfe950af874cfc32f66d9780",
+          "offset": 375
+        },
+        {
+          "updateId": "1220438a23e66f5100d20b437c7e2d62b8c159480f02ad37b0338c7a8a0f9c8d725f",
+          "offset": 378
+        },
+        {
+          "updateId": "122071c73cf6a56e743ef39c418b3a8a4bd49c2b816801ae4b3b3d3c0e616289934d",
+          "offset": 381
+        },
+        {
+          "updateId": "12200fa3c21c051689b75d7ecd4e20f6b4f13d9b1c7a4f2a40e1818423d98dbf8a3d",
+          "offset": 384
+        },
+        {
+          "updateId": "1220c4f3942f3b7bd46c5967fe8408bf57a8bf220d864dc632aadfe947031cf21d3e",
+          "offset": 387
+        }
+      ],
+      "browserErrors": [],
+      "rejectionEvidence": {
+        "status": 400,
+        "response": {
+          "code": "DAML_FAILURE",
+          "cause": "Interpretation error: Error: User failure: UNHANDLED_EXCEPTION/DA.Exception.AssertionFailed:AssertionFailed (error category 9): acceptance LTV must be below the liquidation threshold",
+          "correlationId": "4d4e8858-a2e1-4658-bdc0-4fa4b8cdf944",
+          "traceId": "7ea95c2815fcdd6c1b3f2da5141ae3b6",
+          "context": {
+            "participant": "'sandbox'",
+            "error_id": "UNHANDLED_EXCEPTION/DA.Exception.AssertionFailed:AssertionFailed",
+            "exercise_trace": "    in choice 21745d06:Veil:LoanOffer:Accept on contract 0058e71a27 (#0)\n    in exercise command 21745d06:Veil:LoanOffer:Accept on contract 0058e71a27.\n",
+            "category": "9",
+            "tid": "7ea95c2815fcdd6c1b3f2da5141ae3b6",
+            "definite_answer": "false",
+            "commands": "{readAs: [], deduplicationPeriod: {duration: 'PT168H'}, submittedAt: '2026-09-23T04:05:37.962975Z', submissionId: '4d4e8858-a2e1-4658-bdc0-4fa4b8cdf944', actAs: ['Borrower::12202e8c0da08e32081659dff848c38339476e3f5bd1160c39d578560f48cab32b93'], commandId: 'record-unsafe-accept-1790136337949', userId: 'veil', workflowId: }"
+          },
+          "resources": [],
+          "errorCategory": 9,
+          "grpcCodeValue": 9,
+          "retryInfo": null,
+          "definiteAnswer": null
+        },
+        "request": {
+          "commands": {
+            "commands": [
+              {
+                "ExerciseCommand": {
+                  "templateId": "#veil-lite:Veil:LoanOffer",
+                  "contractId": "0058e71a279b7cd04df80a5d934ae114707ebcc7aa23337c5342a3f02e18e547acca1212203597568d55f98dcd605b094238f9cec696785bde967dd89ab505ef876be66aaf",
+                  "choice": "Accept",
+                  "choiceArgument": {
+                    "collateralCid": "00405e0ff1b05034e5441929e5e0ab0a152b2ac23cae62c7c7d2a555c5024ed29dca12122019d1fa83036fc80ffb53da84f66d041c139625e9025da7439514ef0a90e13273",
+                    "valuationCid": "0005ee739cf53eca6ca093e7a7f35c6d7a4e602622d1efcb3248abef0eb78f8a16ca1212209ffcdebd4d159e80585ecf4ef6782e4d85679307cc6cf6d949a3970312c96640"
+                  }
+                }
+              }
+            ],
+            "commandId": "record-unsafe-accept-1790136337949",
+            "actAs": [
+              "Borrower::12202e8c0da08e32081659dff848c38339476e3f5bd1160c39d578560f48cab32b93"
+            ],
+            "userId": "veil"
+          }
+        },
+        "beforeContractIds": [
+          "0005ee739cf53eca6ca093e7a7f35c6d7a4e602622d1efcb3248abef0eb78f8a16ca1212209ffcdebd4d159e80585ecf4ef6782e4d85679307cc6cf6d949a3970312c96640",
+          "002136739b0f84a82998920323a517de97ce0a2b0b6f7fb4e962ba97b5f71adc3eca1212202b727c57203e8f293462ed50e3a515258bdb95ca64a9a3f5d2fa7a8d69013fd1",
+          "00405e0ff1b05034e5441929e5e0ab0a152b2ac23cae62c7c7d2a555c5024ed29dca12122019d1fa83036fc80ffb53da84f66d041c139625e9025da7439514ef0a90e13273",
+          "0058e71a279b7cd04df80a5d934ae114707ebcc7aa23337c5342a3f02e18e547acca1212203597568d55f98dcd605b094238f9cec696785bde967dd89ab505ef876be66aaf",
+          "00eca3177aeaaddd38a8c8857c8b16eef1fd83947b89eb23d5f0c4b3b380125799ca1212209b34cb4598c0f77ba46953eba91690bdf4c5cae72d9176012ce7beff3cecc3b4"
+        ],
+        "afterContractIds": [
+          "0005ee739cf53eca6ca093e7a7f35c6d7a4e602622d1efcb3248abef0eb78f8a16ca1212209ffcdebd4d159e80585ecf4ef6782e4d85679307cc6cf6d949a3970312c96640",
+          "002136739b0f84a82998920323a517de97ce0a2b0b6f7fb4e962ba97b5f71adc3eca1212202b727c57203e8f293462ed50e3a515258bdb95ca64a9a3f5d2fa7a8d69013fd1",
+          "00405e0ff1b05034e5441929e5e0ab0a152b2ac23cae62c7c7d2a555c5024ed29dca12122019d1fa83036fc80ffb53da84f66d041c139625e9025da7439514ef0a90e13273",
+          "0058e71a279b7cd04df80a5d934ae114707ebcc7aa23337c5342a3f02e18e547acca1212203597568d55f98dcd605b094238f9cec696785bde967dd89ab505ef876be66aaf",
+          "00eca3177aeaaddd38a8c8857c8b16eef1fd83947b89eb23d5f0c4b3b380125799ca1212209b34cb4598c0f77ba46953eba91690bdf4c5cae72d9176012ce7beff3cecc3b4"
+        ],
+        "unchanged": true,
+        "loansCreated": 0,
+        "reservedPrincipal": 100,
+        "borrowerCash": 105,
+        "collateralHoldings": [
+          150,
+          50
+        ],
+        "cashPlusOfferReserve": 205,
+        "freePlusLockedCollateral": 200
+      },
+      "outputVideo": "veil-season3-unsafe-acceptance.mp4",
+      "outputDuration": 60,
+      "trimmedPreludeSeconds": 8.16,
+      "sha256": "3380f86008e403c18d305bcf7a706af83ed209ae7b91c0f69f317b024c549daf"
+    }
+  ],
+  "narration": "Synthetic English narration: macOS Samantha, 150 words/minute. Screen recordings are real-time; only pre-roll trimmed. Caption summary band is added below the product viewport. English subtitle timings are approximate.",
+  "audioTimings": {
+    "main": [
+      {
+        "start": 1,
+        "available": 18,
+        "speechDuration": 15.51873
+      },
+      {
+        "start": 21,
+        "available": 20,
+        "speechDuration": 16.866304
+      },
+      {
+        "start": 43,
+        "available": 14,
+        "speechDuration": 12.117823
+      },
+      {
+        "start": 59,
+        "available": 8,
+        "speechDuration": 7.039864
+      },
+      {
+        "start": 69,
+        "available": 14,
+        "speechDuration": 10.82263
+      },
+      {
+        "start": 85,
+        "available": 10,
+        "speechDuration": 9.584218
+      },
+      {
+        "start": 97,
+        "available": 18,
+        "speechDuration": 16.522177
+      },
+      {
+        "start": 117,
+        "available": 14,
+        "speechDuration": 13.120454
+      },
+      {
+        "start": 133,
+        "available": 20,
+        "speechDuration": 16.181315
+      },
+      {
+        "start": 155,
+        "available": 24,
+        "speechDuration": 21.321633
+      }
+    ],
+    "rejection": [
+      {
+        "start": 1,
+        "available": 10,
+        "speechDuration": 9.678912
+      },
+      {
+        "start": 13,
+        "available": 11,
+        "speechDuration": 9.847392
+      },
+      {
+        "start": 26,
+        "available": 6,
+        "speechDuration": 5.314376
+      },
+      {
+        "start": 34,
+        "available": 7,
+        "speechDuration": 6.391746
+      },
+      {
+        "start": 44,
+        "available": 15,
+        "speechDuration": 13.776054
+      }
+    ]
+  }
+}
