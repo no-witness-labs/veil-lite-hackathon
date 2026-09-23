@@ -8,6 +8,7 @@
 
 ## Season 3 team pack
 
+- **Current recordings:** [three-minute walkthrough](docs/veil-season3-demo.mp4) · [unsafe acceptance check](docs/veil-season3-unsafe-acceptance.mp4) · [evidence and recording notes](docs/SEASON3-RECORDINGS.md).
 - **Team presentation:** [PDF](docs/SEASON3-PRESENTATION.pdf) · [browser slides](docs/SEASON3-PRESENTATION.html) · [editable Markdown](docs/SEASON3-PRESENTATION.md).
 - **Repeatable three-minute demo:** [script and preflight](docs/SEASON3-DEMO-SCRIPT.md).
 - **Invited Canton reviewers:** [audit scope, invariants, and reproduction commands](docs/SEASON3-AUDIT-HANDOFF.md).

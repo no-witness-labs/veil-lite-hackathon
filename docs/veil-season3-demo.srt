@@ -1,0 +1,123 @@
+1
+00:00:01,000 --> 00:00:06,321
+This is a fresh local Canton sandbox. One operator switches roles with
+
+2
+00:00:06,321 --> 00:00:11,641
+authentication disabled. Assets are simulated, with no external backing. A trusted issuer
+
+3
+00:00:11,641 --> 00:00:16,519
+controls issuance. Reset reseeds the demo at a price of one.
+
+4
+00:00:21,000 --> 00:00:26,470
+The lender reserves one hundred simulated USDC. Terms are five interest and
+
+5
+00:00:26,470 --> 00:00:31,940
+one hundred fifty collateral units. At price one, loan-to-value is sixty-six point
+
+6
+00:00:31,940 --> 00:00:37,410
+seven percent, below ninety. The offer records its funded principal and ledger
+
+7
+00:00:37,410 --> 00:00:37,866
+offset.
+
+8
+00:00:43,000 --> 00:00:49,059
+The borrower accepts. Canton consumes the offer, locks one hundred fifty collateral
+
+9
+00:00:49,059 --> 00:00:55,118
+units, and delivers one hundred simulated USDC. The fifty-unit reserve stays separate.
+
+10
+00:00:59,000 --> 00:01:04,632
+Outsider is not a stakeholder. Their party-scoped query returns zero contracts and
+
+11
+00:01:04,632 --> 00:01:06,040
+literally empty brackets.
+
+12
+00:01:09,000 --> 00:01:13,478
+Valuer publishes a manual zero point sixty-two mark on the same stream.
+
+13
+00:01:13,478 --> 00:01:17,957
+It is simulated data in this demo, not a live oracle; the
+
+14
+00:01:17,957 --> 00:01:19,823
+loan stays outside that view.
+
+15
+00:01:25,000 --> 00:01:30,477
+At zero point sixty-two, value is ninety-three and loan-to-value about one hundred
+
+16
+00:01:30,477 --> 00:01:34,584
+seven point five percent. Lender opens a sixty-second call.
+
+17
+00:01:37,000 --> 00:01:42,359
+Before deadline, borrower uses exact fifty-unit reserve. Canton consumes it, replaces the
+
+18
+00:01:42,359 --> 00:01:47,717
+loan with two hundred locked units, clears the call, and restores loan-to-value
+
+19
+00:01:47,717 --> 00:01:53,076
+to about eighty point six percent before maturity. Main path does not
+
+20
+00:01:53,076 --> 00:01:53,522
+wait.
+
+21
+00:01:57,000 --> 00:02:02,248
+Borrower repays exactly one hundred five: one hundred principal plus five interest.
+
+22
+00:02:02,248 --> 00:02:07,496
+Loan closes Repaid, two hundred collateral units are released to the borrower,
+
+23
+00:02:07,496 --> 00:02:10,120
+and lender receives one hundred five.
+
+24
+00:02:13,000 --> 00:02:18,110
+The regulator inspects the closed deal but has no action button. The
+
+25
+00:02:18,110 --> 00:02:23,220
+valuer sees valuation records, not the loan. The issuer remains a trusted
+
+26
+00:02:23,220 --> 00:02:28,330
+stakeholder in simulated inventory and lifecycle records. That visibility is deliberate in
+
+27
+00:02:28,330 --> 00:02:29,181
+this demo.
+
+28
+00:02:35,000 --> 00:02:40,330
+The activity feed records transaction IDs, synchronizer IDs, and created or archived
+
+29
+00:02:40,330 --> 00:02:45,661
+contracts. The raw ledger view separately shows the party's active contracts. Final
+
+30
+00:02:45,661 --> 00:02:50,991
+state is Repaid: two hundred units returned and one hundred five paid.
+
+31
+00:02:50,991 --> 00:02:56,322
+This is a local demo, not external settlement or an independent audit.

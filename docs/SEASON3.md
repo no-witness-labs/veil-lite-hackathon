@@ -13,6 +13,7 @@ Proposed user: operations staff at a lender financing a known treasury counterpa
 
 ## Team presentation and review pack
 
+- [Current recordings](SEASON3-RECORDINGS.md): the three-minute local walkthrough, a one-minute unsafe-acceptance check, English subtitles, and captured ledger evidence.
 - [Team presentation (PDF)](SEASON3-PRESENTATION.pdf), [browser slides](SEASON3-PRESENTATION.html), and [editable source](SEASON3-PRESENTATION.md): why Veil, proposed Track 2 fit, prior work versus this increment, current evidence, and the invited team's role.
 - [Three-minute demo script](SEASON3-DEMO-SCRIPT.md): fresh-sandbox preflight, exact role/click sequence, timing, and recovery branches.
 - [Audit handoff](SEASON3-AUDIT-HANDOFF.md): trust boundaries, invariants to challenge, named regression scripts, and reproduction commands.

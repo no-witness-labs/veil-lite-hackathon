@@ -4,6 +4,12 @@ This script is the short, repeatable local walkthrough for the 0.5.0 release. It
 uses a fresh Canton sandbox and the current frontend. It does not use DevNet,
 Seaport, a hosted deployment, or `frontend/.env.local`.
 
+Recorded examples: [main walkthrough](veil-season3-demo.mp4) and
+[unsafe acceptance](veil-season3-unsafe-acceptance.mp4). See the
+[recording notes and captured ledger evidence](SEASON3-RECORDINGS.md) for scope,
+subtitles, and provenance. The rejection recording begins after fresh setup and
+offer funding so that the one-minute clip focuses on the failed acceptance.
+
 ## Preflight (outside the three-minute stopwatch)
 
 1. Start from a clean 0.5.0 sandbox. Ensure `frontend/.env.local` and any other
