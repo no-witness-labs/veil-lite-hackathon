@@ -1,5 +1,13 @@
 export type Role = 'lender' | 'borrower' | 'regulator' | 'valuer' | 'outsider'
 
+export type SessionRole = Role | 'operator'
+
+export interface Session {
+  role: SessionRole
+  userId: string
+  expiresAt: number
+}
+
 export type Status = 'none' | 'offered' | 'active' | 'repaid' | 'liquidated'
 
 export type TemplateName =

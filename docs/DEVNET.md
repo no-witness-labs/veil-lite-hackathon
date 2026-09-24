@@ -1,5 +1,11 @@
 # Running Veil Lite on Canton DevNet
 
+> Historical shared-operator setup. The current app removes shared credential
+> injection and requires each user's JWT. These bootstrap steps do not provision
+> authenticated role users. A future deployment must configure participant trust,
+> the matching public verification key/audience, and restricted Canton user rights.
+> Use the local [authenticated sandbox](AUTH.md) for current development.
+
 Run Veil against the shared Seaport / Five North Canton DevNet instead of the
 local sandbox. The contracts and UI are the same; DevNet adds OIDC auth, a
 remote participant, persistent parties, and a server-side proxy for the browser.

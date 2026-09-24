@@ -35,31 +35,20 @@ npm --prefix frontend install      # first time only
 npm --prefix frontend run dev      # http://localhost:5173
 ```
 
-Open <http://localhost:5173>.
+Open <http://localhost:5173> and sign in with a role token from the gitignored
+`.local/auth/` directory. See [AUTH.md](AUTH.md). Ordinary users cannot switch
+roles; sign out and authenticate again to change identity. Only the operator can
+use **Reset demo**. Its role tabs remain available for a narrated walkthrough.
 
-## 3. DevNet and Vercel
+## 3. DevNet and Vercel (deferred)
 
-The prior app runs on Vercel and
-talks to the shared Seaport / Five North DevNet through a server-side `/v2`
-proxy. The OIDC client secret stays in Vercel environment variables and never
-reaches the browser. Version 0.5.0 has not been validated on DevNet or deployed by this increment. DevNet work is deferred; use a fresh local sandbox for Season 3 and review [SEASON3.md](SEASON3.md) before planning deployment.
-
-Local DevNet setup:
-
-```bash
-cp frontend/.env.local.example frontend/.env.local
-# edit frontend/.env.local and set VEIL_OIDC_CLIENT_SECRET
-set -a; . frontend/.env.local; set +a
-python3 scripts/bootstrap-devnet.py
-npm --prefix frontend run dev
-```
-
-Vercel deployment setup:
-
-- Use repo root as the Vercel project root.
-- Set the environment variables listed in [`VERCEL.md`](./VERCEL.md).
-- Deploy. `vercel.json` builds `frontend/dist`, serves `/ledger-config.json`
-  from a function, and rewrites `/v2/*` through the DevNet proxy function.
+The shared OIDC operator proxy has been removed. A future hosted deployment must
+configure participant trust, restricted Canton users, and the server's public
+verification key and audience. The proxy forwards each user's verified bearer
+token unchanged. Old Seaport client credentials alone cannot run this version.
+See [AUTH.md](AUTH.md); historical deployment instructions are retained in
+[DEVNET.md](DEVNET.md) and [VERCEL.md](VERCEL.md), labelled as historical.
+No hosted ledger deployment is validated by this increment.
 
 ### Ports
 
@@ -90,6 +79,11 @@ To re-bootstrap against an already-running sandbox: `./scripts/bootstrap.sh`.
 
 ## 5. Demo walkthrough (~3 minutes)
 
+For this narrated walkthrough, sign in as **operator** with a fresh token. The
+tabs below change the operator's party view. For user-access isolation, use each
+role's own token in separate browser sessions and click **Refresh** after another
+user acts. Only operator can reset; ordinary users cannot switch tabs.
+
 | Step | Role | Action | What to point at |
 | --- | --- | --- | --- |
 | 1 | **Lender** | Create offer (defaults: 100 / 5 / 150, LTV 66.7%) | Status `Offered`, real contract id + offset on the card |
@@ -101,7 +95,7 @@ To re-bootstrap against an already-running sandbox: `./scripts/bootstrap.sh`.
 | 7 | **Lender** | Issue margin call | Ledger deadline; liquidation is blocked before it |
 | 8 | **Borrower** | Add 50 collateral units before deadline | 200 locked units, healthy LTV, call cleared |
 | 9 | **Borrower** | Repay | Status `Repaid`, all 200 units **RELEASED** |
-| — | any | **Reset demo** | Clears the ledger for another run |
+| — | operator | **Reset demo** | Clears the ledger for another run |
 
 The maturity date means midnight at the start of that date in UTC. New offers and acceptance require a future maturity; the UI shows the enforced deadline. Past maturity, **Liquidate after maturity** is available without a price or margin call. Repayment remains available until the loan closes. This is separate from the margin-call liquidation path.
 
@@ -133,14 +127,6 @@ pkill -f vite                   # stop the dev server
 ```
 
 Sandbox state is in-memory, so a restart is always a clean ledger.
-
-## Canton DevNet
-
-For the shared Seaport / Five North DevNet path, use
-[`DEVNET.md`](./DEVNET.md). DevNet uses the `veil-lite` DAML package
-(`.daml/dist/veil-lite-0.5.0.dar` for the new local code), OIDC client-credentials auth, and a Vite
-server-side `/v2` proxy so the bearer token and client secret never reach the
-browser.
 
 ## 7. Verifying the build (CI-style)
 

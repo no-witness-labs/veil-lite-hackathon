@@ -1,5 +1,12 @@
 # Vercel Deployment
 
+> Historical shared-operator deployment. The current app forwards a verified
+> user's JWT and no longer injects a shared OIDC credential. Old environment
+> variables alone cannot run this version. Configure participant trust, role user
+> rights, `VEIL_AUTH_PUBLIC_KEY` (PEM), and `VEIL_AUTH_AUDIENCE` before evaluating a
+> hosted deployment. Do not upload the local private signing key or tokens to the
+> public app. This increment is validated locally; see [AUTH.md](AUTH.md).
+
 Veil's Vercel deployment is a live Canton DevNet app.
 
 Hosted deployment work is deferred while implementation continues in the local sandbox. Season 3 requires package 0.5.0, valuer and demo issuer parties, and a fresh demo environment; it has not been deployed or tested on DevNet by this change. See [SEASON3.md](SEASON3.md).

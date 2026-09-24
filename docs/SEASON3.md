@@ -13,6 +13,11 @@ Proposed user: operations staff at a lender financing a known treasury counterpa
 
 ## Team presentation and review pack
 
+The current source adds [authenticated role access](AUTH.md) after the recorded
+0.5 walkthrough. Each ordinary role signs in separately; the operator retains
+privileged reset and view switching. Existing recordings and slides describe the
+earlier operator-tab interface and are not authentication evidence.
+
 - [Current recordings](SEASON3-RECORDINGS.md): the three-minute local walkthrough, a one-minute unsafe-acceptance check, English subtitles, and captured ledger evidence.
 - [Team presentation (PDF)](SEASON3-PRESENTATION.pdf), [browser slides](SEASON3-PRESENTATION.html), and [editable source](SEASON3-PRESENTATION.md): why Veil, proposed Track 2 fit, prior work versus this increment, current evidence, and the invited team's role.
 - [Three-minute demo script](SEASON3-DEMO-SCRIPT.md): fresh-sandbox preflight, exact role/click sequence, timing, and recovery branches.
@@ -133,6 +138,6 @@ Our implementation work covers contracts, client integration, role UI, local dem
 - Demo holdings require a configured issuer's authority but are not backed by actual cash or Treasury/MMF assets. No real settlement, custody, or legal repo agreement is established.
 - Lender-only direct offer creation is blocked by the issuer signature. The trusted issuer can still co-authorize direct holdings/offers/loans, so this is an issuance trust boundary, not cryptographic proof of external funding. Cash-plus-reserve conservation applies to normal choices between issuance and reset; the issuer also sees the loan records.
 - Valuations are manually attested by a configured party, not an external oracle or proof of market value. One demo operator controls all role credentials.
-- The local sandbox has authentication disabled. The existing shared DevNet proxy is a demo operator, not production user authorization. No DevNet ledger deployment is performed by this increment; an automatic frontend preview is not evidence of a working 0.5.0 DevNet integration.
+- The current sandbox enforces signed role tokens and Canton user rights; the local credential issuer and demo operator remain trusted. The shared DevNet credential proxy has been removed. No DevNet deployment is performed by this increment; an automatic frontend preview is not evidence of a working hosted integration. See [AUTH.md](AUTH.md).
 - Maturity and margin deadlines use ledger time, subject to the participant's configured time model. Independent signing, custody, and an external valuation source are still required for a real pilot.
 - Single-participant role visibility is distinct from validating privacy between independently operated participants. No security certification or completed external audit is claimed.
