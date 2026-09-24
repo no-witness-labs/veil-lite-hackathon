@@ -10,10 +10,10 @@ action does on and off the ledger. For the contract visibility/lifecycle diagram
 ```text
  5. Browser UI         frontend/src/App.tsx + components      what the judge clicks
  4. Off-chain client   frontend/src/ledger.ts (fetch)         speaks JSON to the ledger
-       Vite dev proxy   /v2 → 127.0.0.1:6864
+       Authenticated proxy   /v2 → 127.0.0.1:6864
  3. JSON Ledger API v2  HTTP :6864   (gRPC Ledger API :6865)  the on/off-chain boundary
  2. Canton sandbox      participant + sequencer + mediator +  runs contracts, enforces
-       synchronizer (dpm sandbox, in-memory, auth off)        privacy + authorization
+       synchronizer (dpm sandbox, in-memory, JWT auth)        privacy + authorization
  1. Contracts           daml/Veil.daml → veil-lite-0.5.0.dar  the rules (on-ledger)
 ```
 
@@ -64,13 +64,16 @@ The sandbox is in-memory: restarting it is a clean ledger.
 
 ## 4. Off-chain interaction model (JSON Ledger API v2)
 
-Everything off-chain talks to the ledger over HTTP on `:6864`. Auth is disabled in dev, so the
-acting party is named in each request (in production this would be a JWT). The client is
+The browser sends an expiring role token to the same-origin proxy. The proxy checks
+the signed identity and requested parties, then forwards the same token to Canton
+on `:6864`. Canton independently verifies the JWT and the user's ledger rights;
+an `actAs` field alone grants no authority. See [AUTH.md](AUTH.md) for role rights
+and the trusted local operator boundary. The client is
 `frontend/src/ledger.ts`, a thin `fetch` wrapper (the npm `@daml/ledger` targets the old v1 API).
 
 - **Reads** — `GET /v2/state/ledger-end` (offset) then `POST /v2/state/active-contracts` filtered
   to a party. You always query **as a party**, so the result is exactly that party's visible set —
-  this is the privacy proof end to end.
+  token permissions also limit which party the caller can name.
 - **Writes** — `POST /v2/commands/submit-and-wait-for-transaction` with a `CreateCommand` or
   `ExerciseCommand` and `actAs: [<party>]`. The ledger runs the choice, enforces authorization, and
   returns the committed transaction (`updateId`, `offset`, `synchronizerId`, created/archived events).

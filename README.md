@@ -145,10 +145,10 @@ The root package contains deployable templates only. The `test/` package depends
 
 ## Run the role-based demo
 
-The demo is a React UI wired to Canton over the JSON Ledger API v2. It can target
-the local sandbox during development or the shared Seaport / Five North DevNet in
-production. Each role queries the ledger as its own party, so the **Outsider tab
-genuinely returns nothing** — the privacy claim is proven on-ledger, not mocked.
+The demo is a React UI wired to an authenticated Canton sandbox over the JSON Ledger
+API v2. Each role signs in with its own expiring token and queries its authorized
+party. The outsider's empty view comes from the ledger. See [role access](docs/AUTH.md)
+for permissions and remaining trust boundaries. Hosted deployment is deferred.
 
 > Quick start below. For full operational detail, the demo walkthrough, and troubleshooting, see the
 > **[Runbook](./docs/RUNBOOK.md)**.
@@ -168,19 +168,15 @@ npm --prefix frontend install
 npm --prefix frontend run dev   # http://localhost:5173
 ```
 
-For Canton DevNet / Seaport:
+Sign in using the required role's token from the gitignored `.local/auth/` directory.
+Tokens stay in browser memory. Ordinary accounts have a fixed role; only the demo
+operator has role-view tabs and **Reset demo**. To demonstrate access isolation,
+use separate role logins. See **[docs/AUTH.md](./docs/AUTH.md)**.
 
-```bash
-dpm build
-cp frontend/.env.local.example frontend/.env.local   # add the Seaport client secret locally
-set -a; . frontend/.env.local; set +a
-python3 scripts/bootstrap-devnet.py
-npm --prefix frontend run dev
-```
-
-See **[docs/DEVNET.md](./docs/DEVNET.md)** for the full DevNet setup. The DevNet package name is
-`veil-lite` and the deployable DAR is `.daml/dist/veil-lite-0.5.0.dar`.
-See **[docs/VERCEL.md](./docs/VERCEL.md)** for the Vercel deployment environment variables and smoke checks.
+The earlier Seaport shared-credential setup cannot authenticate users of this
+version. A future hosted deployment must configure a trusted token issuer and
+restricted Canton users; see **[docs/DEVNET.md](./docs/DEVNET.md)** and
+**[docs/VERCEL.md](./docs/VERCEL.md)**.
 
 3-minute click path: **Lender** create offer → **Borrower** sees it → **Outsider** sees nothing →
 **Borrower** accepts → **Valuer** publishes 0.62 → **Lender** issues margin call → **Borrower** adds 50 units → repays and receives all locked collateral. "Reset demo" clears the demo ledger for another run.
@@ -203,7 +199,9 @@ The UI surfaces the ledger's own evidence, so nothing has to be taken on trust:
 Strongest single demo moment: view the deal as **Lender**, expand the raw ledger view, then switch to
 **Outsider** — the same query returns nothing.
 
-The sandbox runs with auth disabled for local development only.
+Both the web proxy and Canton Ledger API enforce role permissions. This remains
+one participant with a trusted local signing key and privileged demo operator;
+it is not enterprise SSO or privacy against the participant operator.
 
 > **Dev dependencies:** `esbuild` is pinned to `^0.25` (via `overrides`) to clear its dev-server advisory.
 > One dev-server-only Vite advisory remains (fixable only by a major `vite@8` bump, deferred to avoid
@@ -224,12 +222,12 @@ Spring Boot backend, PQS, Keycloak OAuth2, and the Splice token-standard apps (i
 
 | | **Veil (this repo)** | **LocalNet / cn-quickstart** |
 | --- | --- | --- |
-| Runtime | local `dpm sandbox` or shared Seaport DevNet | Docker Compose LocalNet |
+| Runtime | local authenticated `dpm sandbox` | Docker Compose LocalNet |
 | Participants | one (privacy shown per-party on one node) | three (privacy across separate nodes) |
 | Assets | demo `CashHolding` / `CollateralHolding` (on-ledger double-entry) | test Canton Coin / token standard |
-| Auth | none locally; OIDC client-credentials proxy on DevNet/Vercel | Keycloak OAuth2 / shared-secret |
+| Auth | expiring role JWTs and Canton user rights | Keycloak OAuth2 / shared-secret |
 | Extras | hand-rolled JSON Ledger API v2 client + Vercel `/v2` proxy | backend, PQS, wallet, Scan, observability |
-| Start | `./scripts/start-sandbox.sh` or Vercel deployment | `make setup && make build && make start` |
+| Start | `./scripts/start-sandbox.sh` | `make setup && make build && make start` |
 
 Trade-off: the sandbox proves the **privacy model and financing lifecycle** with almost no setup, but privacy is
 demonstrated on a single participant rather than across nodes, and there are no real tokenized assets or production

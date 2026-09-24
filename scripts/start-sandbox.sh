@@ -18,12 +18,14 @@ export JAVA_HOME
 export PATH="$JAVA_HOME/bin:$HOME/.dpm/bin:$PATH"
 
 echo "→ Java: $(java -version 2>&1 | head -1)"
+echo "→ Preparing local JWT authentication material"
+node "$ROOT/scripts/local-auth.mjs" ensure >/dev/null
 echo "→ Building current DAR"
 dpm build
 
 echo "→ Starting Canton sandbox (logs: log/canton.log)"
 rm -f log/canton.log
-dpm sandbox > /tmp/veil-sandbox.log 2>&1 &
+dpm sandbox --config "$ROOT/scripts/auth.conf" > /tmp/veil-sandbox.log 2>&1 &
 SANDBOX_PID=$!
 echo "  sandbox pid $SANDBOX_PID"
 
@@ -34,7 +36,10 @@ until grep -q "HTTP JSON API Server started" log/canton.log 2>/dev/null; do
 done
 # The "started" log line precedes full readiness — wait for /readyz to avoid a
 # race where the first package upload returns HTTP 400.
-until [ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:6864/readyz)" = "200" ]; do
+until [ "$(curl -s -o /dev/null -w '%{http_code}' \
+  -H "@$ROOT/.local/auth/headers/participant_admin.txt" \
+  http://127.0.0.1:6864/readyz)" = "200" ]; do
+  kill -0 "$SANDBOX_PID" 2>/dev/null || { echo "Sandbox process died — see /tmp/veil-sandbox.log" >&2; exit 1; }
   sleep 1
 done
 

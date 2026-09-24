@@ -62,8 +62,8 @@ export function OutsiderEmpty() {
 export function Waiting({ role }: { role: Role }) {
   const text =
     role === 'regulator'
-      ? 'No contract to observe yet. Switch to the Lender role to create an offer and start the demo.'
-      : 'The lender has not yet extended an offer. Switch to the Lender role to create one and start the demo.'
+      ? 'No contract to observe yet. Refresh after the lender creates an offer.'
+      : 'The lender has not yet extended an offer. Refresh after they create one.'
   return (
     <div style={{ ...cardBase, padding: '72px 40px' }}>
       <div

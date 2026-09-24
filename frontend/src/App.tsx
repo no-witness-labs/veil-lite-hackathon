@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import type { ActivityEntry, Contract, Draft, Role, TxResult } from './types'
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
+import { captureSession, clearSession, getSession, signIn, SessionError, type AuthSnapshot } from './auth'
+import type { ActivityEntry, Contract, Draft, Role, Session, TxResult } from './types'
 import {
   acceptOffer,
   COLLATERAL_ASSET,
@@ -42,38 +43,109 @@ import { PartyBar } from './components/PartyBar'
 import { HoldingsPanel } from './components/HoldingsPanel'
 import { ErrorBanner, OutsiderEmpty, ShockBanner, Waiting } from './components/EmptyStates'
 import { ValuationPanel } from './components/ValuationPanel'
+import { SignIn } from './components/SignIn'
 
 export default function App() {
-  const [role, setRole] = useState<Role>('lender')
+  const initialSession = getSession()
+  const initialRole: Role = initialSession?.role === 'operator' || !initialSession ? 'lender' : initialSession.role
+  const [session, setSession] = useState<Session | null>(initialSession)
+  const [role, setRole] = useState<Role>(initialRole)
   const [contracts, setContracts] = useState<Contract[]>([])
   const [raw, setRaw] = useState<unknown[]>([])
   const [offset, setOffset] = useState(0)
   const [activity, setActivity] = useState<ActivityEntry[]>([])
-  const [draft, setDraft] = useState<Draft>(DEFAULT_DRAFT)
+  const [draft, setDraft] = useState<Draft>({ ...DEFAULT_DRAFT })
   const [busy, setBusy] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [authError, setAuthError] = useState<string | null>(null)
+  const [token, setToken] = useState('')
+  const [authBusy, setAuthBusy] = useState(false)
   const [configOk, setConfigOk] = useState<boolean | null>(null)
   const [configIssue, setConfigIssue] = useState<string | null>(null)
   const refreshGeneration = useRef(0)
-  const activeRole = useRef<Role>(role)
+  const authGeneration = useRef(0)
+  const activeRole = useRef<Role>(initialRole)
 
-  const refresh = useCallback(async (forRole: Role) => {
+  const clearLedgerState = useCallback(() => {
+    setContracts([])
+    setRaw([])
+    setOffset(0)
+    setActivity([])
+    setDraft({ ...DEFAULT_DRAFT })
+    setError(null)
+    setLoading(false)
+  }, [])
+
+  const signOut = useCallback((message: string | null = null) => {
+    authGeneration.current += 1
+    refreshGeneration.current += 1
+    clearSession()
+    setSession(null)
+    activeRole.current = 'lender'
+    setRole('lender')
+    setBusy(false)
+    setAuthBusy(false)
+    setToken('')
+    setAuthError(message)
+    clearLedgerState()
+  }, [clearLedgerState])
+
+  const errorStatus = (value: unknown): number | undefined => {
+    if (value instanceof SessionError) return value.status
+    if (value && typeof value === 'object' && 'status' in value) {
+      const status = (value as { status?: unknown }).status
+      return typeof status === 'number' ? status : undefined
+    }
+    return undefined
+  }
+
+  const errorMessage = (value: unknown): string => value instanceof Error ? value.message : String(value)
+
+  const refresh = useCallback(async (forRole: Role, expectedAuthGeneration = authGeneration.current, snapshot?: AuthSnapshot) => {
     const generation = ++refreshGeneration.current
     setLoading(true)
     try {
-      const state = await listActive(forRole)
-      if (generation !== refreshGeneration.current || forRole !== activeRole.current) return
+      const state = await listActive(forRole, snapshot ?? captureSession())
+      if (expectedAuthGeneration !== authGeneration.current || generation !== refreshGeneration.current || forRole !== activeRole.current) return
       setContracts(state.contracts)
       setRaw(state.raw)
       setOffset(state.offset)
     } catch (e) {
-      if (generation !== refreshGeneration.current || forRole !== activeRole.current) return
-      setError(e instanceof Error ? e.message : String(e))
+      if (expectedAuthGeneration !== authGeneration.current || generation !== refreshGeneration.current || forRole !== activeRole.current) return
+      if (errorStatus(e) === 401) {
+        signOut('Your role session expired or was rejected. Sign in again with a fresh token.')
+        return
+      }
+      setError(errorMessage(e))
     } finally {
-      if (generation === refreshGeneration.current) setLoading(false)
+      if (expectedAuthGeneration === authGeneration.current && generation === refreshGeneration.current) setLoading(false)
     }
-  }, [])
+  }, [signOut])
+
+  const submitSignIn = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (authBusy) return
+    const candidate = token
+    setToken('')
+    setAuthBusy(true)
+    setAuthError(null)
+    try {
+      const nextSession = await signIn(candidate)
+      authGeneration.current += 1
+      refreshGeneration.current += 1
+      const nextRole: Role = nextSession.role === 'operator' ? 'lender' : nextSession.role
+      activeRole.current = nextRole
+      setSession(nextSession)
+      setRole(nextRole)
+      clearLedgerState()
+    } catch (e) {
+      setAuthError(errorMessage(e))
+    } finally {
+      setToken('')
+      setAuthBusy(false)
+    }
+  }
 
   useEffect(() => {
     void loadConfig().then((ok) => {
@@ -83,21 +155,45 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    if (configOk) void refresh(role)
-  }, [role, configOk, refresh])
+    if (session && configOk === true) void refresh(role)
+  }, [role, configOk, session, refresh])
+
+  useEffect(() => {
+    if (!session) return
+    const delay = Math.max(0, session.expiresAt * 1000 - Date.now())
+    const timer = window.setTimeout(() => signOut('Your role session expired. Sign in again with a fresh token.'), delay)
+    return () => window.clearTimeout(timer)
+  }, [session, signOut])
 
   // Run a ledger action and record its committed transaction.
-  const act = async (label: string, actor: string, fn: () => Promise<TxResult>) => {
+  const act = async (label: string, actor: string, fn: (snapshot: AuthSnapshot) => Promise<TxResult>) => {
+    if (!session) return
+    const expectedAuthGeneration = authGeneration.current
+    const expectedRole = activeRole.current
+    let snapshot: AuthSnapshot
+    try {
+      snapshot = captureSession()
+    } catch (e) {
+      if (errorStatus(e) === 401) signOut('Your role session expired or was rejected. Sign in again with a fresh token.')
+      else setError(errorMessage(e))
+      return
+    }
     setBusy(true)
     setError(null)
     try {
-      const result = await fn()
+      const result = await fn(snapshot)
+      if (expectedAuthGeneration !== authGeneration.current || expectedRole !== activeRole.current) return
       setActivity((a) => [{ key: result.updateId || `tx-${a.length}`, action: label, actor, result }, ...a])
-      await refresh(role)
+      await refresh(expectedRole, expectedAuthGeneration, snapshot)
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      if (expectedAuthGeneration !== authGeneration.current || expectedRole !== activeRole.current) return
+      if (errorStatus(e) === 401) {
+        signOut('Your role session expired or was rejected. Sign in again with a fresh token.')
+        return
+      }
+      setError(errorMessage(e))
     } finally {
-      setBusy(false)
+      if (expectedAuthGeneration === authGeneration.current && expectedRole === activeRole.current) setBusy(false)
     }
   }
 
@@ -134,23 +230,39 @@ export default function App() {
     : collateralCandidates[0] ?? 0
 
   const onReset = async () => {
-    if (configOk !== true || busy) return
+    if (session?.role !== 'operator' || configOk !== true || busy) return
+    const expectedAuthGeneration = authGeneration.current
+    const expectedRole = activeRole.current
+    let snapshot: AuthSnapshot
+    try {
+      snapshot = captureSession()
+    } catch (e) {
+      if (errorStatus(e) === 401) signOut('Your role session expired or was rejected. Sign in again with a fresh token.')
+      else setError(errorMessage(e))
+      return
+    }
     setBusy(true)
     setError(null)
     try {
-      await resetDemo()
+      await resetDemo(snapshot)
+      if (expectedAuthGeneration !== authGeneration.current || expectedRole !== activeRole.current) return
       setActivity([])
-      setDraft(DEFAULT_DRAFT)
-      await refresh(role)
+      setDraft({ ...DEFAULT_DRAFT })
+      await refresh(expectedRole, expectedAuthGeneration, snapshot)
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      if (expectedAuthGeneration !== authGeneration.current || expectedRole !== activeRole.current) return
+      if (errorStatus(e) === 401) {
+        signOut('Your role session expired or was rejected. Sign in again with a fresh token.')
+        return
+      }
+      setError(errorMessage(e))
     } finally {
-      setBusy(false)
+      if (expectedAuthGeneration === authGeneration.current && expectedRole === activeRole.current) setBusy(false)
     }
   }
 
   const selectRole = (nextRole: Role) => {
-    if (nextRole === role || busy) return
+    if (session?.role !== 'operator' || nextRole === role || busy) return
     // Clear the previous party's snapshot before the async query starts. The
     // generation guard above prevents a slow old response from repopulating it.
     refreshGeneration.current += 1
@@ -161,6 +273,10 @@ export default function App() {
     setOffset(0)
     setError(null)
   }
+
+  if (!session) return <SignIn token={token} error={authError} busy={authBusy} onTokenChange={setToken} onSubmit={submitSignIn} />
+
+  const isOperator = session.role === 'operator'
 
   return (
     <div style={{ minHeight: '100vh', paddingBottom: 64 }}>
@@ -173,9 +289,14 @@ export default function App() {
             <div style={{ marginLeft: 6, fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#9aa1ad', border: '1px solid #e6e8ec', borderRadius: 999, padding: '4px 9px' }}>
               Canton · Demo
             </div>
+            {isOperator && (
+              <div style={{ fontFamily: "'IBM Plex Mono',monospace", fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#8a5d10', background: '#fdf3e0', border: '1px solid #f2d79d', borderRadius: 999, padding: '4px 9px' }}>
+                Demo operator
+              </div>
+            )}
           </div>
 
-          <RoleTabs role={role} onSelect={selectRole} disabled={busy} />
+          {isOperator && <RoleTabs role={role} onSelect={selectRole} disabled={busy} />}
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
             <div style={{ textAlign: 'right' }}>
@@ -185,12 +306,28 @@ export default function App() {
                 <div style={{ fontSize: 14, fontWeight: 600, color: '#14171f' }}>{ROLE_LABELS[role]}</div>
               </div>
             </div>
+            {isOperator && (
+              <button
+                onClick={onReset}
+                disabled={busy || configOk !== true}
+                style={{ background: '#fff', border: '1px solid #e6e8ec', color: '#5b6472', fontSize: 12, fontWeight: 500, padding: '9px 14px', borderRadius: 8, cursor: busy ? 'wait' : configOk === true ? 'pointer' : 'not-allowed' }}
+              >
+                Reset demo
+              </button>
+            )}
             <button
-              onClick={onReset}
-              disabled={busy || configOk !== true}
-              style={{ background: '#fff', border: '1px solid #e6e8ec', color: '#5b6472', fontSize: 12, fontWeight: 500, padding: '9px 14px', borderRadius: 8, cursor: busy ? 'wait' : configOk === true ? 'pointer' : 'not-allowed' }}
+              onClick={() => { if (!busy && !loading) void refresh(role) }}
+              disabled={busy || loading || configOk !== true}
+              style={{ background: '#fff', border: '1px solid #e6e8ec', color: '#5b6472', fontSize: 12, fontWeight: 500, padding: '9px 14px', borderRadius: 8, cursor: busy || loading ? 'wait' : 'pointer' }}
             >
-              Reset demo
+              Refresh
+            </button>
+            <button
+              onClick={() => signOut()}
+              disabled={busy}
+              style={{ background: '#fff', border: '1px solid #e6e8ec', color: '#5b6472', fontSize: 12, fontWeight: 500, padding: '9px 14px', borderRadius: 8, cursor: busy ? 'wait' : 'pointer' }}
+            >
+              Sign out
             </button>
           </div>
         </div>
@@ -230,7 +367,7 @@ export default function App() {
                 <ValuationPanel
                   contracts={contracts}
                   latest={valuation}
-                  onPublish={(price) => act(`Publish valuation ${price.toFixed(2)}`, PARTY_NAMES.valuer, () => publishValuation(price))}
+                  onPublish={(price) => act(`Publish valuation ${price.toFixed(2)}`, PARTY_NAMES.valuer, (snapshot) => publishValuation(price, snapshot))}
                   busy={busy}
                 />
               )}
@@ -240,7 +377,7 @@ export default function App() {
                   valuations={availableValuations}
                   liquidationThresholdLtv={LIQUIDATION_THRESHOLD_LTV}
                   onChange={(field, value) => setDraft((d) => ({ ...d, [field]: value }) as Draft)}
-                  onSubmit={() => act('Create offer', PARTY_NAMES.lender, () => createOffer(draft))}
+                  onSubmit={() => act('Create offer', PARTY_NAMES.lender, (snapshot) => createOffer(draft, snapshot))}
                   busy={busy}
                 />
               )}
@@ -255,33 +392,33 @@ export default function App() {
                   availableTopUp={availableTopUp}
                   busy={busy}
                   actions={{
-                    onWithdraw: () => act('Withdraw offer', PARTY_NAMES.lender, () => withdrawOffer(deal.contractId)),
-                    onAccept: () => act('Accept offer', PARTY_NAMES.borrower, () => acceptOffer(deal.contractId)),
+                    onWithdraw: () => act('Withdraw offer', PARTY_NAMES.lender, (snapshot) => withdrawOffer(deal.contractId, snapshot)),
+                    onAccept: () => act('Accept offer', PARTY_NAMES.borrower, (snapshot) => acceptOffer(deal.contractId, snapshot)),
                     onRepay: () =>
-                      act('Repay loan', PARTY_NAMES.borrower, () =>
-                        repayLoan(deal.contractId, Number(deal.args.principal) + Number(deal.args.interest)),
+                      act('Repay loan', PARTY_NAMES.borrower, (snapshot) =>
+                        repayLoan(deal.contractId, Number(deal.args.principal) + Number(deal.args.interest), snapshot),
                       ),
                     onLiquidate: () =>
-                      act('Liquidate collateral', PARTY_NAMES.lender, () => {
+                      act('Liquidate collateral', PARTY_NAMES.lender, (snapshot) => {
                         if (!valuation) throw new Error('No ledger valuation is visible. Publish a fresh mark before liquidating.')
-                        return liquidateLoan(deal.contractId, valuation.contractId)
+                        return liquidateLoan(deal.contractId, valuation.contractId, snapshot)
                       }),
                     onLiquidateOverdue: () =>
-                      act('Liquidate after maturity', PARTY_NAMES.lender, () => liquidateOverdueLoan(deal.contractId)),
+                      act('Liquidate after maturity', PARTY_NAMES.lender, (snapshot) => liquidateOverdueLoan(deal.contractId, snapshot)),
                     onIssueMarginCall: () =>
-                      act('Issue margin call', PARTY_NAMES.lender, () => {
+                      act('Issue margin call', PARTY_NAMES.lender, (snapshot) => {
                         if (!valuation) throw new Error('No ledger valuation is visible. Publish a fresh breached mark first.')
-                        return issueMarginCall(deal.contractId, valuation.contractId)
+                        return issueMarginCall(deal.contractId, valuation.contractId, snapshot)
                       }),
                     onTopUp: (quantity) =>
-                      act(`Top up collateral · ${quantity} units`, PARTY_NAMES.borrower, () => {
+                      act(`Top up collateral · ${quantity} units`, PARTY_NAMES.borrower, (snapshot) => {
                         if (!valuation) throw new Error('No ledger valuation is visible. Publish a fresh mark before topping up.')
-                        return topUpCollateral(deal.contractId, quantity, valuation.contractId)
+                        return topUpCollateral(deal.contractId, quantity, valuation.contractId, snapshot)
                       }),
                     onResolveMarginCall: () =>
-                      act('Resolve margin call', PARTY_NAMES.borrower, () => {
+                      act('Resolve margin call', PARTY_NAMES.borrower, (snapshot) => {
                         if (!valuation) throw new Error('No ledger valuation is visible. Publish a fresh healthy mark first.')
-                        return resolveMarginCall(deal.contractId, valuation.contractId)
+                        return resolveMarginCall(deal.contractId, valuation.contractId, snapshot)
                       }),
                   }}
                 />

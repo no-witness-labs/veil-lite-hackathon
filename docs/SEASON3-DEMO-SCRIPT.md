@@ -1,8 +1,10 @@
-# Season 3 — repeatable three-minute demo
+# Season 3 — recorded three-minute demo (before role authentication)
 
-This script is the short, repeatable local walkthrough for the 0.5.0 release. It
-uses a fresh Canton sandbox and the current frontend. It does not use DevNet,
-Seaport, a hosted deployment, or `frontend/.env.local`.
+This is the script used for the recorded 0.5.0 lifecycle demonstration, before
+authenticated role access was added. Its auth-disabled preflight describes that
+recorded version. For the current app, follow [RUNBOOK.md](RUNBOOK.md) and
+[AUTH.md](AUTH.md): sign in as operator for the same tab-based narration, or use
+separate role credentials to demonstrate user-access isolation.
 
 Recorded examples: [main walkthrough](veil-season3-demo.mp4) and
 [unsafe acceptance](veil-season3-unsafe-acceptance.mp4). See the

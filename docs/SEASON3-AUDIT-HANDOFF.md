@@ -76,9 +76,11 @@ The configured issuer is an operational selector: the client filters normal
 deal/holding views to the configured issuer while `Raw ledger view` preserves
 the party-scoped response, including other issuers. That filtering is not a
 global security boundary and does not turn the local configuration into an
-authorization system. The local sandbox has authentication disabled and one
-operator controls every role credential, so the role-tab walkthrough is not
-evidence of privacy between independently operated participants.
+authorization system. The current sandbox adds [signed role tokens and Canton
+user rights](AUTH.md), while the local signing key and demo operator remain
+trusted. The recorded operator-tab walkthrough predates this change and is not
+evidence of authenticated user isolation or privacy between independently
+operated participants.
 
 `Reset demo` is also operator functionality. It cooperatively archives offers,
 loans, settlements, prices, and streams with the required issuer, lender,
