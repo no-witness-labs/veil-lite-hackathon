@@ -139,6 +139,7 @@ try {
     await login('outsider')
     release()
     await idle()
+    await page.getByRole('tab', { name: /^Raw ledger/ }).click()
     await page.getByRole('button', { name: /Raw ledger view/ }).click()
     assert.deepEqual(JSON.parse(await page.locator('pre').innerText()), [])
     await page.unroute('**/v2/state/active-contracts')

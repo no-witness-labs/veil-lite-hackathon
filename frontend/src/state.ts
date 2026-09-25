@@ -1,10 +1,15 @@
-// View derivation — ported from the Claude design's renderVals(), but the loan
-// status is derived from the contracts the active party can actually see on the
-// ledger rather than from local UI state. Price marks and margin-call details
-// are read from the contracts visible to the active party.
+// View derivation. The loan status is derived from the contracts the active
+// party can actually see on the ledger rather than from local UI state — that
+// is what makes the Outsider view genuinely empty. Price marks and margin-call
+// details are read from the contracts visible to the active party.
+//
+// Nothing here emits colour literals: every visual decision is expressed as a
+// semantic `Tone`, which the primitives map onto tokens.
+import type { Tone } from './ui/primitives'
 import type { Contract, Draft, MarginCall, Role, Status, Valuation, ValuationAssessment } from './types'
 
-export const ACCENT = '#2748d8'
+/** Every demo amount is simulated; the unit says so wherever a figure appears. */
+export const UNIT_CASH = 'simulated USDC'
 
 export const PARTY_NAMES: Record<Role, string> = {
   lender: 'Meridian Capital',
@@ -22,6 +27,35 @@ export const ROLE_LABELS: Record<Role, string> = {
   outsider: 'Outsider',
 }
 
+export const ROLE_TONE: Record<Role, Tone> = {
+  lender: 'accent',
+  borrower: 'info',
+  regulator: 'warn',
+  valuer: 'sky',
+  outsider: 'neutral',
+}
+
+/** Swatch colours for the role switcher. Token references, not literals. */
+export const ROLE_SWATCH: Record<Role, string> = {
+  lender: 'var(--accent)',
+  borrower: 'var(--info)',
+  regulator: 'var(--warn)',
+  valuer: 'var(--sky)',
+  outsider: 'var(--ink-300)',
+}
+
+export const ROLE_INITIALS: Record<Role, string> = {
+  lender: 'MC',
+  borrower: 'NT',
+  regulator: 'MS',
+  valuer: 'VA',
+  outsider: '?',
+}
+
+export const ROLES: Role[] = ['lender', 'borrower', 'regulator', 'valuer', 'outsider']
+
+export const isRole = (v: unknown): v is Role => ROLES.includes(v as Role)
+
 export const DEFAULT_DRAFT: Draft = {
   principal: 100,
   interest: 5,
@@ -29,14 +63,15 @@ export const DEFAULT_DRAFT: Draft = {
   maturity: new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10),
 }
 
-export interface Tone {
-  label: string
-  color: string
-  bg: string
-  dot?: string
-}
+/* ------------------------------------------------------------ formatting -- */
 
-export const fmtMoney = (n: number) => `${n} simulated USDC`
+/** Fixed-precision amount for column alignment. Unit is rendered separately. */
+export const fmtAmount = (n: number, dp = 2) =>
+  n.toLocaleString('en-US', { minimumFractionDigits: dp, maximumFractionDigits: dp })
+
+export const fmtPct = (n: number, dp = 1) => `${n.toFixed(dp)}%`
+
+export const fmtMoney = (n: number) => `${fmtAmount(n)} ${UNIT_CASH}`
 
 function parseLedgerTime(value: string): Date {
   const normalized = /^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T00:00:00.000Z` : value
@@ -47,7 +82,7 @@ export function fmtDate(iso: string): string {
   const mo = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
   const d = parseLedgerTime(iso)
   if (Number.isNaN(d.getTime())) return iso
-  return `${d.getUTCDate()} ${mo[d.getUTCMonth()]} ${d.getUTCFullYear()}`
+  return `${String(d.getUTCDate()).padStart(2, '0')} ${mo[d.getUTCMonth()]} ${d.getUTCFullYear()}`
 }
 
 /** Display the exact maturity instant stored on the ledger, in UTC. */
@@ -58,6 +93,13 @@ export function fmtUtcTime(iso: string): string {
   return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())} UTC`
 }
 
+/** A ledger timestamp (mark observation, call deadline) to the second, in UTC. */
+export function fmtTimestamp(value: string): string {
+  if (!value) return 'unknown time'
+  const d = new Date(value)
+  return Number.isNaN(d.getTime()) ? value : d.toISOString().replace('T', ' ').replace(/\.\d+Z$|Z$/, ' UTC')
+}
+
 export function daysTo(iso: string): number {
   const d = parseLedgerTime(iso)
   const today = new Date()
@@ -65,6 +107,19 @@ export function daysTo(iso: string): number {
   if (Number.isNaN(d.getTime())) return Number.NaN
   return Math.round((d.getTime() - todayUtc) / 86400000)
 }
+
+/** Abbreviate a long identifier for display while keeping both ends legible. */
+export function shortId(id: string, head = 8, tail = 6): string {
+  return id.length <= head + tail + 1 ? id : `${id.slice(0, head)}…${id.slice(-tail)}`
+}
+
+/** `Lender::1220b68e…ef1f0a` — hint kept whole, fingerprint abbreviated. */
+export function shortParty(party: string): string {
+  const [hint, fingerprint = ''] = party.split('::')
+  return fingerprint ? `${hint}::${shortId(fingerprint, 8, 4)}` : hint
+}
+
+/* ----------------------------------------------------------- derivation -- */
 
 /** The contract that defines the party's current view: the most recently
  * created issuer-matching LoanOffer / Loan / LoanClosed. Lets the demo be
@@ -170,62 +225,167 @@ export function assessValuation(
 }
 
 export const STATUS_TONE: Record<Status, Tone> = {
-  none: { label: 'No offer', color: '#5b6472', bg: '#f4f5f7' },
-  offered: { label: 'Offered', color: '#2748d8', bg: '#eef2fe' },
-  active: { label: 'Active', color: '#b7791f', bg: '#fdf3e0' },
-  repaid: { label: 'Repaid', color: '#1f7a4d', bg: '#e8f5ee' },
-  liquidated: { label: 'Liquidated', color: '#c0392b', bg: '#fbeae8' },
+  none: 'neutral',
+  offered: 'accent',
+  active: 'warn',
+  repaid: 'ok',
+  liquidated: 'danger',
 }
 
-export function lockTone(status: Status): Tone {
+export const STATUS_LABEL: Record<Status, string> = {
+  none: 'No position',
+  offered: 'Offered',
+  active: 'Active',
+  repaid: 'Repaid',
+  liquidated: 'Liquidated',
+}
+
+/** Collateral escrow state, derived from the lifecycle stage. */
+export function collateralState(status: Status): { label: string; tone: Tone } {
   switch (status) {
     case 'active':
-      return { label: 'LOCKED', color: '#b7791f', bg: '#fdf3e0', dot: '#e09b2d' }
+      return { label: 'Locked', tone: 'warn' }
     case 'repaid':
-      return { label: 'RELEASED', color: '#1f7a4d', bg: '#e8f5ee', dot: '#2ea36a' }
+      return { label: 'Released', tone: 'ok' }
     case 'liquidated':
-      return { label: 'LIQUIDATED', color: '#c0392b', bg: '#fbeae8', dot: '#d94b3a' }
+      return { label: 'Seized', tone: 'danger' }
     default:
-      return { label: 'NOT LOCKED', color: '#8a929e', bg: '#f4f5f7', dot: '#cfd4dc' }
+      return { label: 'Unencumbered', tone: 'neutral' }
   }
 }
 
-export function ltvTone(ltv: number, threshold = 90): Tone {
-  if (ltv < threshold * 0.78) return { label: 'Within limit', color: '#1f7a4d', bg: '#e8f5ee', dot: '#2ea36a' }
-  if (ltv < threshold) return { label: 'Elevated', color: '#b7791f', bg: '#fdf3e0', dot: '#e09b2d' }
-  return { label: 'Breach', color: '#c0392b', bg: '#fbeae8', dot: '#d94b3a' }
+/** LTV band relative to the facility's own liquidation threshold. Elevated
+ * starts at 78% of the threshold, so the warning scales with the terms. */
+export function ltvBand(ltv: number, threshold = 90): { label: string; tone: 'ok' | 'warn' | 'danger' } {
+  if (ltv < threshold * 0.78) return { label: 'Within limit', tone: 'ok' }
+  if (ltv < threshold) return { label: 'Elevated', tone: 'warn' }
+  return { label: 'Breach', tone: 'danger' }
 }
 
-export interface PartyDef {
-  key: Role
-  role: string
-  sub: string
-  initials: string
-  avatarBg: string
-  avatarColor: string
+/** Numbers shown on the position readout, using only the ledger-attested mark. */
+export function dealNumbers(args: { principal: number; interest: number; collateral: number }, unitPrice = 1.0) {
+  const collateralValue = args.collateral * unitPrice
+  const ltv = collateralValue > 0 ? (args.principal / collateralValue) * 100 : 0
+  const repayment = args.principal + args.interest
+  const couponPct = args.principal > 0 ? (args.interest / args.principal) * 100 : 0
+  return { unitPrice, collateralValue, ltv, repayment, couponPct }
 }
 
-export const PARTY_DEFS: PartyDef[] = [
-  { key: 'lender', role: 'Lender', sub: 'Meridian Capital', initials: 'MC', avatarBg: '#eef2fe', avatarColor: '#2748d8' },
-  { key: 'borrower', role: 'Borrower', sub: 'Northwind Treasury', initials: 'NT', avatarBg: '#f0eefb', avatarColor: '#6b46c1' },
-  { key: 'regulator', role: 'Regulator', sub: 'Market Supervisor', initials: 'MS', avatarBg: '#f0eefb', avatarColor: '#7c5cd6' },
-  { key: 'valuer', role: 'Valuer', sub: 'Independent Valuation Agent', initials: 'VA', avatarBg: '#eaf7f4', avatarColor: '#197d69' },
+/* ------------------------------------------------------------- lifecycle -- */
+
+export interface LifecycleStep {
+  key: string
+  label: string
+}
+
+export function lifecycleSteps(status: Status): LifecycleStep[] {
+  return [
+    { key: 'none', label: 'Origination' },
+    { key: 'offered', label: 'Offered' },
+    { key: 'active', label: 'Drawn' },
+    { key: 'closed', label: status === 'liquidated' ? 'Liquidated' : 'Settled' },
+  ]
+}
+
+export const STEP_INDEX: Record<Status, number> = {
+  none: 0,
+  offered: 1,
+  active: 2,
+  repaid: 3,
+  liquidated: 3,
+}
+
+/* ------------------------------------------------------------- viewpoint -- */
+
+/** Structural visibility per template, mirroring the Daml signatory/observer
+ * declarations in daml/Veil.daml. Rendered as the disclosure matrix. */
+export type Visibility = 'signatory' | 'observer' | 'owner' | 'none'
+
+/** Matrix columns: the five querying viewpoints plus the demo issuer, which is
+ * a stakeholder on holdings and loans but never a viewpoint you can select. */
+export type DisclosureColumn = Role | 'issuer'
+
+export const DISCLOSURE_COLUMNS: { key: DisclosureColumn; label: string }[] = [
+  { key: 'lender', label: 'Lender' },
+  { key: 'borrower', label: 'Borrower' },
+  { key: 'regulator', label: 'Regulator' },
+  { key: 'valuer', label: 'Valuer' },
+  { key: 'issuer', label: 'Issuer' },
+  { key: 'outsider', label: 'Outsider' },
 ]
 
-export const SIDEBAR_AVATAR: Record<Role, { bg: string; color: string; initials: string }> = {
-  lender: { bg: '#eef2fe', color: '#2748d8', initials: 'MC' },
-  borrower: { bg: '#f0eefb', color: '#6b46c1', initials: 'NT' },
-  regulator: { bg: '#f0eefb', color: '#7c5cd6', initials: 'MS' },
-  valuer: { bg: '#eaf7f4', color: '#197d69', initials: 'VA' },
-  outsider: { bg: '#f4f5f7', color: '#aeb4be', initials: '?' },
+export interface DisclosureRow {
+  template: string
+  note: string
+  by: Record<DisclosureColumn, Visibility>
 }
 
-export const ROLE_DOT: Record<Role, string> = {
-  lender: ACCENT,
-  borrower: '#6b46c1',
-  regulator: '#7c5cd6',
-  valuer: '#197d69',
-  outsider: '#aeb4be',
+export const DISCLOSURE: DisclosureRow[] = [
+  {
+    template: 'ValuationStream',
+    note: 'Valuer and both principals sign; regulator observes',
+    by: { lender: 'signatory', borrower: 'signatory', regulator: 'observer', valuer: 'signatory', issuer: 'none', outsider: 'none' },
+  },
+  {
+    template: 'CollateralValuation',
+    note: 'Signed mark — the valuer never sees the loan it prices',
+    by: { lender: 'signatory', borrower: 'signatory', regulator: 'observer', valuer: 'signatory', issuer: 'none', outsider: 'none' },
+  },
+  {
+    template: 'CashHolding',
+    note: 'Issuer and owner sign, no observers',
+    by: { lender: 'owner', borrower: 'owner', regulator: 'none', valuer: 'none', issuer: 'signatory', outsider: 'none' },
+  },
+  {
+    template: 'CollateralHolding',
+    note: 'Issuer and owner sign, no observers',
+    by: { lender: 'owner', borrower: 'owner', regulator: 'none', valuer: 'none', issuer: 'signatory', outsider: 'none' },
+  },
+  {
+    template: 'LoanOffer',
+    note: 'Issuer and lender sign; borrower and regulator observe',
+    by: { lender: 'signatory', borrower: 'observer', regulator: 'observer', valuer: 'none', issuer: 'signatory', outsider: 'none' },
+  },
+  {
+    template: 'Loan',
+    note: 'Issuer and both principals sign; regulator observes',
+    by: { lender: 'signatory', borrower: 'signatory', regulator: 'observer', valuer: 'none', issuer: 'signatory', outsider: 'none' },
+  },
+  {
+    template: 'LoanClosed',
+    note: 'Settlement record, same stakeholders',
+    by: { lender: 'signatory', borrower: 'signatory', regulator: 'observer', valuer: 'none', issuer: 'signatory', outsider: 'none' },
+  },
+]
+
+export const VISIBILITY_META: Record<
+  Visibility,
+  { glyph: string; label: string; title: string; tone: Tone }
+> = {
+  signatory: {
+    glyph: 'S',
+    label: 'Signatory',
+    title: 'Signatory — authorises the contract and sees it',
+    tone: 'accent',
+  },
+  observer: {
+    glyph: 'O',
+    label: 'Observer',
+    title: 'Observer — sees the contract but cannot authorise',
+    tone: 'info',
+  },
+  owner: {
+    glyph: 'W',
+    label: 'Own wallet',
+    title: 'Owner — co-signs and sees only its own holdings',
+    tone: 'ok',
+  },
+  none: {
+    glyph: '·',
+    label: 'No visibility',
+    title: 'No visibility — the contract does not exist for this party',
+    tone: 'neutral',
+  },
 }
 
 export const EXPLAINER: Record<Role, { sees: string; can: string }> = {
@@ -249,27 +409,4 @@ export const EXPLAINER: Record<Role, { sees: string; can: string }> = {
     sees: 'Nothing. This party is not a stakeholder on the contract and cannot tell it exists.',
     can: 'Nothing.',
   },
-}
-
-/** Numbers shown on the deal card, using only the latest ledger-attested mark. */
-export function dealNumbers(args: { principal: number; interest: number; collateral: number }, unitPrice = 1.0) {
-  const collateralValue = args.collateral * unitPrice
-  const ltv = collateralValue > 0 ? (args.principal / collateralValue) * 100 : 0
-  const repayment = args.principal + args.interest
-  return { unitPrice, collateralValue, ltv, repayment }
-}
-
-export const STEP_LABELS = (status: Status): string[] => [
-  'No offer',
-  'Offered',
-  'Active',
-  status === 'liquidated' ? 'Liquidated' : 'Repaid',
-]
-
-export const STEP_INDEX: Record<Status, number> = {
-  none: 0,
-  offered: 1,
-  active: 2,
-  repaid: 3,
-  liquidated: 3,
 }

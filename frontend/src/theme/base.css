@@ -1,0 +1,97 @@
+/* Base layer: resets, document typography, and the handful of global element
+ * behaviours (focus, selection, scrollbars) that are not worth a component. */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--surface-page);
+  color: var(--ink-900);
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  /* Numerals line up in columns everywhere — non-negotiable for a desk UI. */
+  font-variant-numeric: tabular-nums;
+}
+
+h1, h2, h3, h4, p, figure {
+  margin: 0;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+/* One consistent, high-contrast focus ring across every interactive element.
+   :focus-visible keeps it off for pointer users without losing keyboard access. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+::selection {
+  background: var(--accent-soft);
+  color: var(--ink-900);
+}
+
+/* Slim scrollbars inside code wells and scrolling panels. */
+.veil-scroll::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.veil-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.veil-scroll::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: var(--radius-pill);
+}
+
+.veil-scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--ink-300);
+  background-clip: content-box;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

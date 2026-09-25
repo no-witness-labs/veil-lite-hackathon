@@ -88,9 +88,9 @@ user acts. Only operator can reset; ordinary users cannot switch tabs.
 | --- | --- | --- | --- |
 | 1 | **Lender** | Create offer (defaults: 100 / 5 / 150, LTV 66.7%) | Status `Offered`, real contract id + offset on the card |
 | 2 | **Borrower** | (switch tab) | The offer is visible to the borrower |
-| 3 | **Outsider** | (switch tab) | Empty state; expand **Raw ledger view** → literally `[]` |
-| 4 | **Borrower** | Accept offer | Status `Active`, collateral **LOCKED**; activity feed shows the tx |
-| 5 | **Regulator** | (switch tab) | Full deal visible, read-only "Observer — cannot act" badge |
+| 3 | **Outsider** | (switch tab) | Empty state; open the **Raw ledger** tab, expand **Raw ledger view** → literally `[]` |
+| 4 | **Borrower** | Accept offer | Status `Active`, collateral **LOCKED**; the **Activity** tab shows the tx |
+| 5 | **Regulator** | (switch tab) | Full deal visible, read-only **Observer** badge |
 | 6 | **Valuer** | Publish unit price 0.62 | Attested price is visible; private loan is absent |
 | 7 | **Lender** | Issue margin call | Ledger deadline; liquidation is blocked before it |
 | 8 | **Borrower** | Add 50 collateral units before deadline | 200 locked units, healthy LTV, call cleared |
@@ -105,14 +105,14 @@ Origination check: create an offer at price 1, publish 0.62 as Valuer before the
 
 Funding check: creating an offer moves the lender's 100 demo cash into the issuer-signed offer reserve. Withdraw it to restore exactly 100, or accept it to deliver exactly 100 to the borrower. The same offer cannot do both. Issuance and reset use demo issuer authority explicitly; normal user actions do not. The issuer is a disclosed stakeholder in the loan and asset records.
 
-**Strongest moment:** view the active deal as Lender, expand **Raw ledger view**,
+**Strongest moment:** view the active deal as Lender, open the **Raw ledger** tab and expand **Raw ledger view**,
 then switch to **Outsider** — the same query returns `[]`. The privacy is enforced
 by Canton, not by the UI.
 
-The activity feed and the deal card show the real `updateId`, ledger `offset`,
+The **Activity** tab and the facility panel show the real `updateId`, ledger `offset`,
 `synchronizerId`, and contract ids, so every action is verifiably on-ledger.
 
-**Holdings / double-entry:** the "Your holdings" panel shows each party's own wallet
+**Holdings / double-entry:** the **Holdings** tab shows each party's own wallet
 (holdings are signed by the owner and demo issuer, so the issuer also sees them). The
 borrower starts with 150 collateral + a 50-unit reserve + 105 cash and the lender with 100 cash; accepting
 locks the collateral and delivers 100 principal to the borrower; repaying returns the
