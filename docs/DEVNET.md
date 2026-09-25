@@ -33,7 +33,7 @@ party namespace (the first segment of the user ID, e.g. `8e0db906-`).
 1. Create six parties whose names end in `veil-issuer`, `veil-lender`,
    `veil-borrower`, `veil-regulator`, `veil-valuer` and `veil-outsider`
    (e.g. `8e0db906-veil-lender`). The console grants your user act-as and read-as.
-2. Build the DAR with `dpm build` and upload `.daml/dist/veil-lite-0.5.0.dar` in the
+2. Build the DAR with `dpm build` and upload `.daml/dist/veil-lite-0.6.0.dar` in the
    Collections tab. Re-uploads need a version bump in `daml.yaml`, and the
    participant checks upgrade compatibility for the same package name.
 

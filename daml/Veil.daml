@@ -157,6 +157,23 @@ template CollateralHolding
     signatory issuer, owner
     ensure quantity > 0.0 && asset /= "" && issuer /= owner
 
+    -- Escrow a replacement holding for an open loan. The lender can see the
+    -- request (and so approve it) without ever fetching the borrower's wallet.
+    choice ProposeSubstitution : ContractId SubstitutionRequest
+      with
+        lender : Party
+        regulator : Party
+        valuationAgent : Party
+        releaseAsset : Text
+        releaseQuantity : Decimal
+        newValuationStreamId : ContractId ValuationStream
+      controller owner
+      do
+        create SubstitutionRequest with
+          issuer; lender; borrower = owner; regulator; valuationAgent
+          releaseAsset; releaseQuantity
+          newAsset = asset; newQuantity = quantity; newValuationStreamId
+
     -- Carve out the intended deposit privately before a Loan choice fetches it.
     choice SplitCollateral : (ContractId CollateralHolding, ContractId CollateralHolding)
       with
@@ -168,6 +185,42 @@ template CollateralHolding
         exact <- create CollateralHolding with issuer; owner; asset; quantity = splitQuantity
         remainder <- create CollateralHolding with issuer; owner; asset; quantity = quantity - splitQuantity
         pure (exact, remainder)
+
+-- | Borrower's request to swap an open loan's collateral for another asset.
+--
+-- The replacement is held here in escrow, with the issuer's signature carried
+-- from the consumed holding. The request names the collateral it expects to
+-- release, so a top-up or an earlier substitution invalidates it. The lender
+-- applies it through Loan.ApplySubstitution or rejects it; either side's exit
+-- returns the escrowed holding exactly once.
+template SubstitutionRequest
+  with
+    issuer : Party
+    lender : Party
+    borrower : Party
+    regulator : Party
+    valuationAgent : Party
+    releaseAsset : Text
+    releaseQuantity : Decimal
+    newAsset : Text
+    newQuantity : Decimal
+    newValuationStreamId : ContractId ValuationStream
+  where
+    signatory issuer, borrower
+    observer lender, regulator
+
+    ensure newQuantity > 0.0 && releaseQuantity > 0.0 && newAsset /= "" && releaseAsset /= ""
+      && newAsset /= releaseAsset && lender /= borrower && issuer /= borrower && issuer /= lender
+
+    choice RejectSubstitution : ContractId CollateralHolding
+      controller lender
+      do
+        create CollateralHolding with issuer; owner = borrower; asset = newAsset; quantity = newQuantity
+
+    choice CancelSubstitution : ContractId CollateralHolding
+      controller borrower
+      do
+        create CollateralHolding with issuer; owner = borrower; asset = newAsset; quantity = newQuantity
 
 -- | Borrower-specific loan offer for a known-counterparty lending flow.
 --
@@ -334,6 +387,36 @@ template Loan
         assertMsg "collateral remains below the required value"
           ((principal / (collateralQuantity * unitPrice)) * 100.0 < liquidationThresholdLtv)
         create this with marginCall = None
+
+    -- | Lender approves a collateral substitution. In one transaction the
+    -- escrowed replacement becomes the locked collateral, the loan is rebound to
+    -- the replacement asset's jointly authorized price stream, and the released
+    -- collateral returns to the borrower. Coverage is re-checked on a fresh mark
+    -- of the new asset; the substitution cannot cure or bypass an open call.
+    choice ApplySubstitution : ContractId Loan
+      with
+        requestCid : ContractId SubstitutionRequest
+        newValuationCid : ContractId CollateralValuation
+      controller lender
+      do
+        now <- getTime
+        assertMsg "cannot substitute at or after maturity" (now < maturity)
+        assertMsg "cannot substitute while a margin call is open" (marginCall == None)
+        request <- fetch requestCid
+        assertMsg "substitution parties mismatch"
+          (request.issuer == issuer && request.lender == lender && request.borrower == borrower
+            && request.regulator == regulator && request.valuationAgent == valuationAgent)
+        assertMsg "substitution no longer matches the locked collateral"
+          (request.releaseAsset == collateralAsset && request.releaseQuantity == collateralQuantity)
+        unitPrice <- checkedPrice valuationAgent lender borrower regulator request.newAsset request.newValuationStreamId newValuationCid
+        assertMsg "substituted collateral must keep LTV below the threshold"
+          ((principal / (request.newQuantity * unitPrice)) * 100.0 < liquidationThresholdLtv)
+        archive requestCid
+        _ <- create CollateralHolding with issuer; owner = borrower; asset = collateralAsset; quantity = collateralQuantity
+        create this with
+          collateralAsset = request.newAsset
+          collateralQuantity = request.newQuantity
+          valuationStreamId = request.newValuationStreamId
 
     -- | Borrower repays principal + interest in cash and gets collateral back.
     -- Split privately first: only the exact payment is disclosed to this loan.

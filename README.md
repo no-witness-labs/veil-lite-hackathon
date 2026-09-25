@@ -14,6 +14,8 @@
 5. **Borrower** → `Top up 50 units`, then `Repay`.
 6. **Regulator** sees the settlement; **Outsider** → `Raw ledger` shows `[]`.
 
+Collateral substitution (between steps 2 and 5, with no margin call open): **Borrower** → `Propose substitution` escrows 160 units of Tokenized MMF against the 150 locked T-Bills → **Valuer** selects `Tokenized MMF` → `Healthy · 1.00` → `Publish mark` → **Lender** → `Approve substitution`. In one transaction Canton rechecks LTV on the MMF price, locks the MMF, rebinds the loan to the MMF price stream, and returns the T-Bills. The lender approves without ever seeing the borrower's wallet.
+
 **Current scope, baseline, policies, and review handoff:** [Season 3](docs/SEASON3.md).
 
 ## Season 3 team pack
@@ -69,7 +71,7 @@ Build the flow:
 
 ## Contract model
 
-Seven Daml templates. Loan states are scoped to issuer, lender, borrower, and regulator. The valuation agent sees price attestations but is not a loan observer. These active-contract views are not a claim that historical disclosures can be revoked.
+Eight Daml templates. Loan states are scoped to issuer, lender, borrower, and regulator. The valuation agent sees price attestations but is not a loan observer. These active-contract views are not a claim that historical disclosures can be revoked.
 
 ```text
  Contract              Issuer   Lender   Borrower   Regulator   Valuer   Outsider
@@ -79,6 +81,7 @@ Seven Daml templates. Loan states are scoped to issuer, lender, borrower, and re
  LoanOffer                S       S         O           O         –        –
  Loan                     S       S         S           O         –        –
  LoanClosed               S       S         S           O         –        –
+ SubstitutionRequest      S       O         S           O         –        –
  ValuationStream          –       S         S           O         S        –
  CollateralValuation      –       S         S           O         S        –
    S = signatory (authorizes + sees)   O = observer (sees only)   – = cannot see

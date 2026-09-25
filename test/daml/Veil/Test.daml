@@ -1142,3 +1142,124 @@ testIssuerVisibilityAndValuerOutsiderBoundaries = script do
   query @LoanClosed regulator >>= \closed -> length closed === 1
   query @LoanClosed valuationAgent >>= \closed -> length closed === 0
   query @LoanClosed outsider >>= \closed -> length closed === 0
+
+mmf : Text
+mmf = "Tokenized MMF"
+
+-- An active loan on the fixture's T-Bill stream plus an agreed MMF stream at
+-- 1.0 and a 160-unit MMF holding the borrower can offer as a replacement.
+substitutionSetup : Script ((Party, Party, Party, Party, Party), (ContractId Loan, ContractId CollateralValuation, ContractId ValuationStream, ContractId CollateralValuation, ContractId CollateralHolding, ContractId CashHolding))
+substitutionSetup = do
+  ((issuer, lender, borrower, regulator, valuationAgent, _), (initialMark, lenderCash, borrowerCash, borrowerColl)) <- setup
+  offerCid <- makeOffer lender borrower regulator valuationAgent lenderCash initialMark
+  loanCid <- acceptLoan borrower offerCid borrowerColl initialMark
+  mmfStream <- createStream lender borrower regulator valuationAgent mmf
+  mmfMark <- publishInitial valuationAgent mmfStream 1.0
+  mmfHolding <- issueCollateral issuer borrower mmf 160.0
+  pure ((issuer, lender, borrower, regulator, valuationAgent), (loanCid, initialMark, mmfStream, mmfMark, mmfHolding, borrowerCash))
+
+proposeSubstitution : Party -> Party -> Party -> Party -> ContractId CollateralHolding -> ContractId ValuationStream -> Decimal -> Script (ContractId SubstitutionRequest)
+proposeSubstitution borrower lender regulator valuationAgent holdingCid streamCid releaseQuantity =
+  submit borrower do
+    exerciseCmd holdingCid ProposeSubstitution with
+      lender; regulator; valuationAgent
+      releaseAsset = tbill
+      releaseQuantity
+      newValuationStreamId = streamCid
+
+testCollateralSubstitutionLifecycle : Script ()
+testCollateralSubstitutionLifecycle = script do
+  setTime testStart
+  ((issuer, lender, borrower, regulator, valuationAgent), (loanCid, tbillMark, mmfStream, mmfMark, mmfHolding, borrowerCash)) <- substitutionSetup
+  outsider <- allocateParty "Outsider"
+  requestCid <- proposeSubstitution borrower lender regulator valuationAgent mmfHolding mmfStream 150.0
+  -- The replacement is escrowed: the borrower no longer holds it freely.
+  collateralQuantities borrower >>= \quantities -> quantities === []
+  query @SubstitutionRequest lender >>= \requests -> length requests === 1
+  query @SubstitutionRequest regulator >>= \requests -> length requests === 1
+  query @SubstitutionRequest valuationAgent >>= \requests -> length requests === 0
+  query @SubstitutionRequest outsider >>= \requests -> length requests === 0
+  -- Only the lender can apply it.
+  submitMustFail borrower do exerciseCmd loanCid ApplySubstitution with requestCid; newValuationCid = mmfMark
+  swappedCid <- submit lender do exerciseCmd loanCid ApplySubstitution with requestCid; newValuationCid = mmfMark
+  Some swapped <- queryContractId regulator swappedCid
+  swapped.collateralAsset === mmf
+  swapped.collateralQuantity === 160.0
+  swapped.valuationStreamId === mmfStream
+  swapped.issuer === issuer
+  -- The released T-Bills are back in the borrower's wallet, with the issuer.
+  released <- query @CollateralHolding borrower
+  [(h.asset, h.quantity, h.issuer) | (_, h) <- released] === [(tbill, 150.0, issuer)]
+  -- Margin actions now price the MMF stream; the old T-Bill mark no longer fits.
+  stressedTbill <- publishPrice valuationAgent tbillMark 0.5
+  submitMustFail lender do exerciseCmd swappedCid IssueMarginCall with valuationCid = stressedTbill
+  stressedMmf <- publishPrice valuationAgent mmfMark 0.6
+  calledCid <- submit lender do exerciseCmd swappedCid IssueMarginCall with valuationCid = stressedMmf
+  healthyMmf <- publishPrice valuationAgent stressedMmf 1.0
+  curedCid <- submit borrower do exerciseCmd calledCid ResolveMarginCall with valuationCid = healthyMmf
+  closedCid <- submit borrower do exerciseCmd curedCid Repay with repaymentCid = borrowerCash
+  Some closed <- queryContractId regulator closedCid
+  closed.collateralAsset === mmf
+  closed.collateralQuantity === 160.0
+  returned <- query @CollateralHolding borrower
+  sort [(h.asset, h.quantity) | (_, h) <- returned] === [(mmf, 160.0), (tbill, 150.0)]
+
+testSubstitutionGuards : Script ()
+testSubstitutionGuards = script do
+  setTime testStart
+  ((issuer, lender, borrower, regulator, valuationAgent), (loanCid, tbillMark, mmfStream, mmfMark, mmfHolding, _)) <- substitutionSetup
+  -- Coverage: 100 principal against 100 MMF at 1.0 is exactly 100% LTV.
+  (small, _) <- submit borrower do exerciseCmd mmfHolding SplitCollateral with splitQuantity = 100.0
+  weakRequest <- proposeSubstitution borrower lender regulator valuationAgent small mmfStream 150.0
+  submitMustFail lender do exerciseCmd loanCid ApplySubstitution with requestCid = weakRequest; newValuationCid = mmfMark
+  -- The rejected request refunds exactly once.
+  refundCid <- submit lender do exerciseCmd weakRequest RejectSubstitution
+  submitMustFail lender do exerciseCmd weakRequest RejectSubstitution
+  Some refund <- queryContractId borrower refundCid
+  (refund.asset, refund.quantity, refund.issuer) === (mmf, 100.0, issuer)
+  -- A mark from the old asset's stream cannot price the replacement.
+  replacement <- issueCollateral issuer borrower mmf 160.0
+  request <- proposeSubstitution borrower lender regulator valuationAgent replacement mmfStream 150.0
+  submitMustFail lender do exerciseCmd loanCid ApplySubstitution with requestCid = request; newValuationCid = tbillMark
+  -- A stale replacement mark is rejected at the 301-second boundary.
+  setTime (addRelTime testStart (seconds 301))
+  submitMustFail lender do exerciseCmd loanCid ApplySubstitution with requestCid = request; newValuationCid = mmfMark
+  freshMmf <- publishPrice valuationAgent mmfMark 1.0
+  freshTbill <- publishPrice valuationAgent tbillMark 1.0
+  -- An open margin call blocks substitution; it must be cured first.
+  stressedTbill <- publishPrice valuationAgent freshTbill 0.6
+  calledCid <- submit lender do exerciseCmd loanCid IssueMarginCall with valuationCid = stressedTbill
+  submitMustFail lender do exerciseCmd calledCid ApplySubstitution with requestCid = request; newValuationCid = freshMmf
+  recoveredTbill <- publishPrice valuationAgent stressedTbill 1.0
+  curedCid <- submit borrower do exerciseCmd calledCid ResolveMarginCall with valuationCid = recoveredTbill
+  -- A request naming collateral the loan no longer holds is stale.
+  staleRequestHolding <- issueCollateral issuer borrower mmf 160.0
+  staleRequest <- proposeSubstitution borrower lender regulator valuationAgent staleRequestHolding mmfStream 999.0
+  submitMustFail lender do exerciseCmd curedCid ApplySubstitution with requestCid = staleRequest; newValuationCid = freshMmf
+  _ <- submit borrower do exerciseCmd staleRequest CancelSubstitution
+  submitMustFail borrower do exerciseCmd staleRequest CancelSubstitution
+  -- The valid request still applies; applying it twice is impossible.
+  swappedCid <- submit lender do exerciseCmd curedCid ApplySubstitution with requestCid = request; newValuationCid = freshMmf
+  submitMustFail lender do exerciseCmd swappedCid ApplySubstitution with requestCid = request; newValuationCid = freshMmf
+  Some swapped <- queryContractId lender swappedCid
+  (swapped.collateralAsset, swapped.collateralQuantity) === (mmf, 160.0)
+  pure ()
+
+testSubstitutionMaturityAndAuthority : Script ()
+testSubstitutionMaturityAndAuthority = script do
+  setTime testStart
+  ((issuer, lender, borrower, regulator, valuationAgent), (loanCid, _, mmfStream, mmfMark, mmfHolding, _)) <- substitutionSetup
+  request <- proposeSubstitution borrower lender regulator valuationAgent mmfHolding mmfStream 150.0
+  -- Only the borrower may cancel; only the lender may reject.
+  submitMustFail lender do exerciseCmd request CancelSubstitution
+  submitMustFail borrower do exerciseCmd request RejectSubstitution
+  -- A lender cannot fabricate a request without the borrower and issuer.
+  submitMustFail lender do
+    createCmd SubstitutionRequest with
+      issuer; lender; borrower; regulator; valuationAgent
+      releaseAsset = tbill; releaseQuantity = 150.0
+      newAsset = mmf; newQuantity = 1000.0; newValuationStreamId = mmfStream
+  setTime maturityTime
+  freshMmf <- publishPrice valuationAgent mmfMark 1.0
+  submitMustFail lender do exerciseCmd loanCid ApplySubstitution with requestCid = request; newValuationCid = freshMmf
+  pure ()

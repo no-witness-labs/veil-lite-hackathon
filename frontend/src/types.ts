@@ -18,6 +18,7 @@ export type TemplateName =
   | 'CollateralHolding'
   | 'ValuationStream'
   | 'CollateralValuation'
+  | 'SubstitutionRequest'
 
 /** The valuation record attached to an active margin-call workflow. */
 export interface MarginCall {
@@ -49,6 +50,12 @@ export interface DealArgs {
   collateralLocked?: boolean
   reason?: string
   collateralReleased?: boolean
+  // Substitution request
+  releaseAsset?: string
+  releaseQuantity?: string
+  newAsset?: string
+  newQuantity?: string
+  newValuationStreamId?: string
   // Holdings
   owner?: string
   amount?: string

@@ -38,10 +38,11 @@ CLIENT_ID = os.environ.get("VEIL_OIDC_CLIENT_ID", "web-app-ui-hackcanton-01-devn
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TOKENS_FILE = os.path.join(ROOT, ".local", "devnet", "tokens.json")
-DAR = os.path.join(ROOT, ".daml", "dist", "veil-lite-0.5.0.dar")
+DAR = os.path.join(ROOT, ".daml", "dist", "veil-lite-0.6.0.dar")
 CONFIG = os.path.join(ROOT, "frontend", "public", "ledger-config.json")
 PACKAGE_REF = "#veil-lite"
-COLLATERAL_ASSET = "Tokenized T-Bill / MMF"
+COLLATERAL_ASSET = "Tokenized T-Bill"
+SUBSTITUTE_ASSET = "Tokenized MMF"
 ROLES = ("issuer", "lender", "borrower", "regulator", "valuer", "outsider")
 
 
@@ -123,7 +124,7 @@ def discover_parties(token, user_id):
 
 def local_package_id():
     with zipfile.ZipFile(DAR) as dar:
-        prefix = "veil-lite-0.5.0-"
+        prefix = "veil-lite-0.6.0-"
         for name in dar.namelist():
             top = name.split("/", 1)[0]
             if top.startswith(prefix):
@@ -192,6 +193,7 @@ def seed_holdings(token, user_id, parties):
         (parties["borrower"], "CashHolding", {"owner": parties["borrower"], "amount": "105"}),
         (parties["borrower"], "CollateralHolding", {"owner": parties["borrower"], "asset": COLLATERAL_ASSET, "quantity": "150"}),
         (parties["borrower"], "CollateralHolding", {"owner": parties["borrower"], "asset": COLLATERAL_ASSET, "quantity": "50"}),
+        (parties["borrower"], "CollateralHolding", {"owner": parties["borrower"], "asset": SUBSTITUTE_ASSET, "quantity": "160"}),
     ]
     for owner, template, args in creates:
         args["issuer"] = parties["issuer"]
@@ -203,22 +205,26 @@ def seed_holdings(token, user_id, parties):
 def seed_valuation(token, user_id, parties):
     events = active_events(token, parties["valuer"])
     marks = [e for e in events if e.get("templateId", "").endswith(":Veil:CollateralValuation")]
-    if len(marks) > 1 or any(e.get("templateId", "").endswith(":Veil:ValuationStream") for e in events):
-        sys.exit("Ambiguous or unpublished valuation streams; reset the demo as operator before re-seeding.")
-    if marks:
-        print("✓ valuation stream already seeded; publish a fresh mark in the UI if stale")
-        return
-    command = {"CreateAndExerciseCommand": {
-        "templateId": f"{PACKAGE_REF}:Veil:ValuationStream",
-        "createArguments": {
-            "valuationAgent": parties["valuer"], "lender": parties["lender"],
-            "borrower": parties["borrower"], "regulator": parties["regulator"],
-            "collateralAsset": COLLATERAL_ASSET,
-        },
-        "choice": "PublishInitial", "choiceArgument": {"unitPrice": "1"},
-    }}
-    submit(token, user_id, [parties["lender"], parties["borrower"], parties["valuer"]], command, "valuation")
-    print("✓ seeded jointly authorized valuation stream")
+    if any(e.get("templateId", "").endswith(":Veil:ValuationStream") for e in events):
+        sys.exit("Unpublished valuation stream found; reset the demo as operator before re-seeding.")
+    for asset in (COLLATERAL_ASSET, SUBSTITUTE_ASSET):
+        current = [e for e in marks if e.get("createArgument", {}).get("collateralAsset") == asset]
+        if len(current) > 1:
+            sys.exit(f"Ambiguous {asset} valuation streams; reset the demo as operator before re-seeding.")
+        if current:
+            print(f"✓ {asset} stream already seeded; publish a fresh mark in the UI if stale")
+            continue
+        command = {"CreateAndExerciseCommand": {
+            "templateId": f"{PACKAGE_REF}:Veil:ValuationStream",
+            "createArguments": {
+                "valuationAgent": parties["valuer"], "lender": parties["lender"],
+                "borrower": parties["borrower"], "regulator": parties["regulator"],
+                "collateralAsset": asset,
+            },
+            "choice": "PublishInitial", "choiceArgument": {"unitPrice": "1"},
+        }}
+        submit(token, user_id, [parties["lender"], parties["borrower"], parties["valuer"]], command, "valuation")
+        print(f"✓ seeded jointly authorized {asset} valuation stream")
 
 
 def write_config(parties):

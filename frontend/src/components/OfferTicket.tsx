@@ -70,7 +70,7 @@ export function OfferTicket({
           <Field label="Interest · simulated USDC" hint={`${fmtPct(coupon)} coupon`}>
             <NumberInput value={draft.interest} onChange={(v) => onChange('interest', v)} />
           </Field>
-          <Field label="Collateral · units" hint="Simulated tokenised T-Bill / MMF">
+          <Field label="Collateral · units" hint="Simulated tokenised T-Bill">
             <NumberInput value={draft.collateral} onChange={(v) => onChange('collateral', v)} />
           </Field>
           <Field label="Maturity · UTC start of day" hint="Acceptance and collateral cures must complete before this.">

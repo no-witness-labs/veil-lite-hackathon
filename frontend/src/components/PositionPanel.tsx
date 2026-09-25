@@ -167,7 +167,7 @@ export function PositionPanel({
             </Tag>
           </div>
           <div style={{ fontSize: 'var(--text-md)', fontWeight: 600 }}>
-            {deal.args.collateralAsset ?? 'Tokenised T-Bill / MMF'} <span className="v-muted">(simulated)</span>
+            {deal.args.collateralAsset ?? 'Tokenized T-Bill'} <span className="v-muted">(simulated)</span>
           </div>
           <div className="v-row" style={{ gap: 'var(--space-5)', marginTop: 'var(--space-3)', flexWrap: 'wrap' }}>
             <Metric label="Quantity" value={fmtAmount(collateral, 0)} unit="units" />
