@@ -7,6 +7,8 @@ const require = createRequire(import.meta.url)
 const { AuthError, authenticate, authorizeLedgerRequest, routePolicy } = require('../api/_auth.js')
 const { proxyLedgerRequest } = require('../api/_ledger.js')
 const sessionHandler = require('../api/session.js')
+const demoLoginHandler = require('../api/demo-login.js')
+const { resetUpstreamCache } = require('../api/_upstream.js')
 
 const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 })
 const publicPem = publicKey.export({ type: 'spki', format: 'pem' })
@@ -31,6 +33,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  resetUpstreamCache()
   for (const key of Object.keys(process.env)) delete process.env[key]
   Object.assign(process.env, originalEnv)
   globalThis.fetch = originalFetch
@@ -218,4 +221,125 @@ test('unknown/admin routes are not proxied and caller bearer is forwarded unchan
   assert.equal(captured.url, 'http://ledger.test/v2/state/ledger-end')
   assert.equal(captured.init.headers.Authorization, `Bearer ${token}`)
   globalThis.fetch = oldFetch
+})
+
+const sharedNodeEnv = {
+  VEIL_UPSTREAM_REFRESH_TOKEN: 'offline-refresh',
+  VEIL_OIDC_TOKEN_URL: 'http://idp.test/token',
+  VEIL_OIDC_CLIENT_ID: 'web-app',
+  VEIL_LEDGER_USER_ID: 'team-ledger-user',
+}
+
+function sharedNodeFetch(captured) {
+  return async (url, init) => {
+    if (url === sharedNodeEnv.VEIL_OIDC_TOKEN_URL) {
+      captured.tokenRequests = (captured.tokenRequests || 0) + 1
+      captured.tokenBody = String(init.body)
+      return new Response(JSON.stringify({ access_token: 'node-access', expires_in: 10800 }), { status: 200 })
+    }
+    captured.ledger = { url, init }
+    return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } })
+  }
+}
+
+test('shared node: role checks run first, then the node token and ledger user replace the role identity', async () => {
+  Object.assign(process.env, sharedNodeEnv)
+  const captured = {}
+  globalThis.fetch = sharedNodeFetch(captured)
+  const token = jwt({ sub: 'veil-lender' })
+
+  const res = response()
+  const body = exerciseBody(['Lender::local'])
+  await proxyLedgerRequest(req(token, 'POST', '/v2/commands/submit-and-wait-for-transaction', body), res, '/v2/commands/submit-and-wait-for-transaction', { target: 'http://ledger.test' })
+  assert.equal(res.statusCode, 200)
+  assert.equal(captured.ledger.init.headers.Authorization, 'Bearer node-access')
+  const forwarded = JSON.parse(captured.ledger.init.body)
+  assert.equal(forwarded.commands.userId, 'team-ledger-user')
+  assert.deepEqual(forwarded.commands.actAs, ['Lender::local'])
+  assert.match(captured.tokenBody, /grant_type=refresh_token/)
+
+  // Cached until close to expiry: a second call does not refresh again.
+  await proxyLedgerRequest(req(token), response(), '/v2/state/ledger-end', { target: 'http://ledger.test' })
+  assert.equal(captured.tokenRequests, 1)
+  assert.equal(captured.ledger.init.headers.Authorization, 'Bearer node-access')
+
+  // The node token can act as every party, so the server must still refuse
+  // a lender acting as the borrower before anything is forwarded.
+  captured.ledger = undefined
+  const denied = response()
+  const forged = exerciseBody(['Borrower::local'])
+  await proxyLedgerRequest(req(token, 'POST', '/v2/commands/submit-and-wait-for-transaction', forged), denied, '/v2/commands/submit-and-wait-for-transaction', { target: 'http://ledger.test' })
+  assert.equal(denied.statusCode, 403)
+  assert.equal(captured.ledger, undefined)
+})
+
+test('shared node: missing upstream settings or a failed refresh fail closed', async () => {
+  Object.assign(process.env, sharedNodeEnv, { VEIL_LEDGER_USER_ID: '' })
+  const res = response()
+  await proxyLedgerRequest(req(jwt()), res, '/v2/state/ledger-end', { target: 'http://ledger.test' })
+  assert.equal(res.statusCode, 503)
+
+  Object.assign(process.env, sharedNodeEnv)
+  let ledgerCalled = false
+  globalThis.fetch = async (url) => {
+    if (url === sharedNodeEnv.VEIL_OIDC_TOKEN_URL) return new Response('{"error":"invalid_grant"}', { status: 400 })
+    ledgerCalled = true
+    return new Response('{}', { status: 200 })
+  }
+  const failed = response()
+  await proxyLedgerRequest(req(jwt()), failed, '/v2/state/ledger-end', { target: 'http://ledger.test' })
+  assert.equal(failed.statusCode, 503)
+  assert.equal(ledgerCalled, false)
+})
+
+const privatePem = privateKey.export({ type: 'pkcs8', format: 'pem' })
+
+function loginReq(body, method = 'POST') {
+  return { method, url: '/api/demo-login', headers: {}, body: body === undefined ? undefined : JSON.stringify(body) }
+}
+
+test('demo login is disabled without a long passcode and signing key', async () => {
+  const res = response()
+  await demoLoginHandler(loginReq(undefined, 'GET'), res)
+  assert.deepEqual(JSON.parse(res.body), { enabled: false, operator: false })
+
+  Object.assign(process.env, { VEIL_DEMO_PASSCODE: 'short', VEIL_AUTH_PRIVATE_KEY: privatePem })
+  const post = response()
+  await demoLoginHandler(loginReq({ role: 'lender', passcode: 'short' }), post)
+  assert.equal(post.statusCode, 404)
+})
+
+test('demo login issues a verifiable five-minute role token only for the right passcode', async () => {
+  Object.assign(process.env, {
+    VEIL_DEMO_PASSCODE: 'judge-passcode-123',
+    VEIL_OPERATOR_PASSCODE: 'operator-passcode-456',
+    VEIL_AUTH_PRIVATE_KEY: privatePem,
+  })
+  const info = response()
+  await demoLoginHandler(loginReq(undefined, 'GET'), info)
+  assert.deepEqual(JSON.parse(info.body), { enabled: true, operator: true })
+
+  const wrong = response()
+  await demoLoginHandler(loginReq({ role: 'lender', passcode: 'nope' }), wrong)
+  assert.equal(wrong.statusCode, 401)
+
+  const ok = response()
+  await demoLoginHandler(loginReq({ role: 'borrower', passcode: 'judge-passcode-123' }), ok)
+  assert.equal(ok.statusCode, 200)
+  const { token } = JSON.parse(ok.body)
+  const auth = authenticate(req(token))
+  assert.equal(auth.role, 'borrower')
+  assert.ok(auth.expiresAt - Math.floor(Date.now() / 1000) <= 300)
+
+  // The judge passcode never grants the operator; the operator passcode does.
+  const escalate = response()
+  await demoLoginHandler(loginReq({ role: 'operator', passcode: 'judge-passcode-123' }), escalate)
+  assert.equal(escalate.statusCode, 401)
+  const operator = response()
+  await demoLoginHandler(loginReq({ role: 'operator', passcode: 'operator-passcode-456' }), operator)
+  assert.equal(authenticate(req(JSON.parse(operator.body).token)).role, 'operator')
+
+  const extra = response()
+  await demoLoginHandler(loginReq({ role: 'lender', passcode: 'judge-passcode-123', sub: 'veil-operator' }), extra)
+  assert.equal(extra.statusCode, 400)
 })

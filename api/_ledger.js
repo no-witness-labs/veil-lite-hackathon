@@ -1,6 +1,7 @@
 const { authenticate, authorizeLedgerRequest, AuthError, knownParties, MAX_BODY_BYTES, respondError, routePolicy } = require('./_auth')
+const { upstreamConfig, upstreamToken } = require('./_upstream')
 
-const DEFAULT_LEDGER_TARGET = 'https://ledger-api.validator.devnet.sandbox.fivenorth.io'
+const DEFAULT_LEDGER_TARGET = 'https://ledger-api-json.participant.hackcanton-01.devnet.naas.noders.services'
 
 function stripTrailingSlash(value) {
   return value.replace(/\/$/, '')
@@ -44,12 +45,14 @@ async function proxyLedgerRequest(req, res, path, options = {}) {
     authenticate(req, source)
     const rawBody = method === 'GET' || method === 'HEAD' ? undefined : await requestBody(req)
     const body = method === 'GET' || method === 'HEAD' ? undefined : parseJsonBody(rawBody)
-    const { auth } = authorizeLedgerRequest(req, path, body, source)
+    const { auth, policy: authorized } = authorizeLedgerRequest(req, path, body, source)
+    const shared = upstreamConfig(source)
+    const bearer = shared ? await upstreamToken(shared) : auth.token
     const target = options.target ? stripTrailingSlash(options.target) : ledgerTarget(source)
     const upstream = await fetch(`${target}${pathWithQuery(req, path)}`, {
       method,
-      headers: upstreamHeaders(req, auth),
-      body: method === 'GET' || method === 'HEAD' ? undefined : rawBody,
+      headers: upstreamHeaders(req, bearer),
+      body: method === 'GET' || method === 'HEAD' ? undefined : upstreamBody(rawBody, body, authorized.path, shared),
     })
     const responseBody = Buffer.from(await upstream.arrayBuffer())
     res.statusCode = upstream.status
@@ -69,16 +72,25 @@ async function proxyLedgerRequest(req, res, path, options = {}) {
   }
 }
 
-function upstreamHeaders(req, auth) {
+function upstreamHeaders(req, bearer) {
   const headers = {}
   const contentType = header(req, 'content-type')
   if (contentType) headers['Content-Type'] = contentType
   const accept = header(req, 'accept')
   if (accept) headers.Accept = accept
-  // Forward the caller's verified token verbatim. There is deliberately no
-  // client-credentials fallback or server-side bearer substitution.
-  headers.Authorization = `Bearer ${auth.token}`
+  // Locally this is the caller's verified role token, so Canton re-checks the
+  // role's user rights. On the shared node it is the team's ledger-user token,
+  // substituted only after the role checks in authorizeLedgerRequest passed.
+  headers.Authorization = `Bearer ${bearer}`
   return headers
+}
+
+/** On the shared node, commands must name the team's ledger user rather than
+ * the role subject the browser session carries. The body is otherwise the
+ * already-validated request, forwarded unchanged. */
+function upstreamBody(rawBody, body, path, shared) {
+  if (!shared || path !== '/v2/commands/submit-and-wait-for-transaction') return rawBody
+  return JSON.stringify({ ...body, commands: { ...body.commands, userId: shared.ledgerUserId } })
 }
 
 function pathWithQuery(req, path) {

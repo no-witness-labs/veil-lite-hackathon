@@ -1,75 +1,58 @@
-# Vercel Deployment
+# Vercel deployment
 
-> Historical shared-operator deployment. The current app forwards a verified
-> user's JWT and no longer injects a shared OIDC credential. Old environment
-> variables alone cannot run this version. Configure participant trust, role user
-> rights, `VEIL_AUTH_PUBLIC_KEY` (PEM), and `VEIL_AUTH_AUDIENCE` before evaluating a
-> hosted deployment. Do not upload the local private signing key or tokens to the
-> public app. This increment is validated locally; see [AUTH.md](AUTH.md).
+The hosted app serves the Vite build from `frontend/dist` and the serverless
+functions in `api/`:
 
-Veil's Vercel deployment is a live Canton DevNet app.
+- `/api/demo-login` exchanges the demo passcode for a five-minute role token;
+- `/api/session` verifies a role token;
+- `/v2/*` checks the role's parties and forwards to the HackCanton DevNet node
+  with the team's ledger-user token (see [DEVNET.md](DEVNET.md) for the trust model);
+- `/ledger-config.json` returns the public party map from environment variables.
 
-Hosted deployment work is deferred while implementation continues in the local sandbox. Season 3 requires package 0.5.0, valuer and demo issuer parties, and a fresh demo environment; it has not been deployed or tested on DevNet by this change. See [SEASON3.md](SEASON3.md).
+Use the repository root as the project root; `vercel.json` sets the install, build,
+output and rewrites.
 
-## What Vercel serves
+## Environment variables
 
-- `frontend/dist` for the Vite React app.
-- `/v2/*` through `api/v2/[...path].js`, which forwards to the DevNet Ledger API
-  and injects an OIDC bearer token server-side.
-- `/ledger-config.json` through `api/ledger-config.js`, which returns the DevNet
-  party map from environment variables.
+Set these for Production (and Preview if previews should reach DevNet). Party IDs
+and URLs are printed by `python3 scripts/bootstrap-devnet.py`.
 
-## Project settings
+| Variable | Secret | Value |
+| --- | --- | --- |
+| `VEIL_LEDGER_TARGET` | no | `https://ledger-api-json.participant.hackcanton-01.devnet.naas.noders.services` |
+| `VEIL_OIDC_TOKEN_URL` | no | `https://keycloak.naas.noders.services/realms/noders-appsfactory/protocol/openid-connect/token` |
+| `VEIL_OIDC_CLIENT_ID` | no | `web-app-ui-hackcanton-01-devnet` |
+| `VEIL_LEDGER_USER_ID` | no | your ledger user ID (JWT subject) |
+| `VEIL_UPSTREAM_REFRESH_TOKEN` | **yes** | `refresh_token` from `.local/devnet/tokens.json` |
+| `VEIL_PACKAGE_REF` | no | `#veil-lite` |
+| `VEIL_PARTY_ISSUER`, `_LENDER`, `_BORROWER`, `_REGULATOR`, `_VALUER`, `_OUTSIDER` | no | full party IDs |
+| `VEIL_AUTH_PRIVATE_KEY` | **yes** | PEM that signs hosted role tokens |
+| `VEIL_AUTH_PUBLIC_KEY` | no | matching public PEM |
+| `VEIL_AUTH_AUDIENCE` | no | `veil-local` |
+| `VEIL_DEMO_PASSCODE` | **yes** | judge passcode, at least 12 characters |
+| `VEIL_OPERATOR_PASSCODE` | **yes** | different operator passcode, at least 12 characters; omit to hide the operator |
 
-Use the repository root as the Vercel project root. The checked-in `vercel.json`
-sets:
-
-```json
-{
-  "installCommand": "npm --prefix frontend ci",
-  "buildCommand": "npm --prefix frontend run build",
-  "outputDirectory": "frontend/dist"
-}
-```
-
-## Required environment variables
-
-Set these in Vercel for Production and Preview:
+Generate a dedicated RSA key pair for the hosted app rather than reusing the local
+sandbox key, for example:
 
 ```bash
-VEIL_LEDGER_TARGET=https://ledger-api.validator.devnet.sandbox.fivenorth.io
-VEIL_OIDC_TOKEN_URL=https://auth.sandbox.fivenorth.io/application/o/token/
-VEIL_OIDC_CLIENT_ID=validator-devnet-m2m
-VEIL_OIDC_CLIENT_SECRET=<secret from Seaport access PDF>
-VEIL_OIDC_AUDIENCE=validator-devnet-m2m
-VEIL_OIDC_SCOPE=daml_ledger_api
-VEIL_LEDGER_USER_ID=6
-VEIL_PACKAGE_REF=#veil-lite
-VEIL_PARTY_LENDER=veilLiteLender::1220a14ca128063b8dc9d1ebb0bd22633be9f2168500f4dbc1ecaeb1855b14e5acf8
-VEIL_PARTY_BORROWER=veilLiteBorrower::1220a14ca128063b8dc9d1ebb0bd22633be9f2168500f4dbc1ecaeb1855b14e5acf8
-VEIL_PARTY_REGULATOR=veilLiteRegulator::1220a14ca128063b8dc9d1ebb0bd22633be9f2168500f4dbc1ecaeb1855b14e5acf8
-VEIL_PARTY_VALUER=<newly allocated valuer party id>
-VEIL_PARTY_ISSUER=<newly allocated demo issuer party id>
-VEIL_PARTY_OUTSIDER=veilLiteOutsider::1220a14ca128063b8dc9d1ebb0bd22633be9f2168500f4dbc1ecaeb1855b14e5acf8
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out .local/devnet/hosted-private.pem
+openssl pkey -in .local/devnet/hosted-private.pem -pubout -out .local/devnet/hosted-public.pem
 ```
 
-Do not use `VITE_` for secrets. Browser code only sees the public
-`/ledger-config.json` response; token exchange happens in the serverless proxy.
+Passcode sign-in is disabled unless both `VEIL_DEMO_PASSCODE` (12+ characters) and
+`VEIL_AUTH_PRIVATE_KEY` are set. Failed attempts are delayed but not rate limited
+across function instances, so use long random passcodes. Never use `VITE_`
+variables for secrets.
 
 ## Smoke checks after deploy
 
-Replace `<url>` with the Vercel deployment URL:
-
 ```bash
-curl -i <url>/ledger-config.json
-curl -i <url>/v2/state/ledger-end
+curl -s <url>/api/demo-login          # {"enabled":true,"operator":true}
+curl -s <url>/ledger-config.json      # party map
+curl -si <url>/v2/state/ledger-end    # 401 without a session
 ```
 
-Both should return `200`. Then open the app and run:
-
-1. Lender creates an offer.
-2. Borrower accepts.
-3. Regulator observes.
-4. Outsider sees an empty raw ledger response.
-5. Valuer publishes a stressed unit price; lender issues a margin call.
-6. Borrower tops up before the deadline and repays, or lender liquidates after the deadline with a fresh breached valuation.
+Then sign in with the passcode and run the demo: lender offer → borrower accept →
+valuer stress price → lender margin call → borrower top-up and repay → regulator
+sees the settlement → outsider's raw ledger is `[]`.

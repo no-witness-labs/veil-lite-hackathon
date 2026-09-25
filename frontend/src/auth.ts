@@ -138,3 +138,42 @@ export async function signIn(token: string): Promise<Session> {
   activeSession = session
   return session
 }
+
+export interface DemoLoginInfo {
+  enabled: boolean
+  operator: boolean
+}
+
+/** Whether this deployment exchanges a demo passcode for a role token. */
+export async function demoLoginInfo(): Promise<DemoLoginInfo> {
+  try {
+    const response = await fetch('/api/demo-login', { headers: { Accept: 'application/json' }, cache: 'no-store' })
+    if (!response.ok) return { enabled: false, operator: false }
+    const payload = (await response.json()) as Record<string, unknown>
+    return { enabled: payload.enabled === true, operator: payload.operator === true }
+  } catch {
+    return { enabled: false, operator: false }
+  }
+}
+
+/** Exchange the demo passcode for a role token, then verify it exactly as a
+ * pasted token would be. The passcode is never kept after this call. */
+export async function signInWithPasscode(role: SessionRole, passcode: string): Promise<Session> {
+  if (!passcode.trim()) throw new SessionError('Enter the demo passcode to sign in.', 400)
+  let response: Response
+  try {
+    response = await fetch('/api/demo-login', {
+      method: 'POST',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ role, passcode }),
+      cache: 'no-store',
+    })
+  } catch (error) {
+    throw new SessionError(`Sign-in service could not be reached: ${error instanceof Error ? error.message : String(error)}`, 503)
+  }
+  if (response.status === 401) throw new SessionError('That passcode was not accepted for this role.', 401)
+  if (!response.ok) throw new SessionError(`Sign-in service failed (HTTP ${response.status}).`, response.status)
+  const payload = (await response.json().catch(() => null)) as { token?: unknown } | null
+  if (typeof payload?.token !== 'string' || !payload.token) throw new SessionError('Sign-in service returned no token.', 502)
+  return signIn(payload.token)
+}

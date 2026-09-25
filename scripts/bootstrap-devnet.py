@@ -1,80 +1,81 @@
 #!/usr/bin/env python3
-"""Bootstrap Veil Lite onto the shared Seaport/Five North Canton DevNet.
+"""Bootstrap Veil onto the shared HackCanton DevNet participant hosted by NODERS.
 
-Reads DevNet credentials from the environment, uploads the DAR, allocates demo
-parties, grants the ledger user CanActAs rights, seeds canonical holdings, and
-writes frontend/public/ledger-config.json.
+Parties are created and the DAR is uploaded in the NODERS node console; this
+script only verifies that setup and seeds the demo state:
+
+  1. exchange the team's offline refresh token for a ledger access token
+  2. find the six `<namespace>veil-<role>` parties among the ledger user's rights
+  3. confirm the locally built DAR's package is on the participant
+  4. seed canonical issuer-signed holdings and the agreed valuation stream
+  5. write frontend/public/ledger-config.json and print the hosted env values
+
+The refresh token is read from VEIL_UPSTREAM_REFRESH_TOKEN, or from
+.local/devnet/tokens.json (the Keycloak token response, kept out of git).
+Tokens are never printed.
 
 Usage:
-  set -a; . frontend/.env.local; set +a
+  dpm build
   python3 scripts/bootstrap-devnet.py
-
-Optional fresh party suffix for DevNet's persistent ledger:
-  python3 scripts/bootstrap-devnet.py run2
 """
+import base64
 import json
 import os
 import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+import zipfile
 
-TOKEN_URL = os.environ.get("VEIL_OIDC_TOKEN_URL")
-LEDGER = os.environ.get("VEIL_LEDGER_TARGET", "https://ledger-api.validator.devnet.sandbox.fivenorth.io").rstrip("/")
-CLIENT_ID = os.environ.get("VEIL_OIDC_CLIENT_ID")
-CLIENT_SECRET = os.environ.get("VEIL_OIDC_CLIENT_SECRET")
-AUDIENCE = os.environ.get("VEIL_OIDC_AUDIENCE", CLIENT_ID or "")
-SCOPE = os.environ.get("VEIL_OIDC_SCOPE", "daml_ledger_api")
-USER_ID = os.environ.get("VEIL_LEDGER_USER_ID", "6")
-ACCESS_TOKEN = os.environ.get("VEIL_DEVNET_ACCESS_TOKEN")
+LEDGER = os.environ.get(
+    "VEIL_LEDGER_TARGET", "https://ledger-api-json.participant.hackcanton-01.devnet.naas.noders.services"
+).rstrip("/")
+TOKEN_URL = os.environ.get(
+    "VEIL_OIDC_TOKEN_URL",
+    "https://keycloak.naas.noders.services/realms/noders-appsfactory/protocol/openid-connect/token",
+)
+CLIENT_ID = os.environ.get("VEIL_OIDC_CLIENT_ID", "web-app-ui-hackcanton-01-devnet")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+TOKENS_FILE = os.path.join(ROOT, ".local", "devnet", "tokens.json")
 DAR = os.path.join(ROOT, ".daml", "dist", "veil-lite-0.5.0.dar")
 CONFIG = os.path.join(ROOT, "frontend", "public", "ledger-config.json")
 PACKAGE_REF = "#veil-lite"
 COLLATERAL_ASSET = "Tokenized T-Bill / MMF"
-
-ROLES = {
-    "issuer": "veilLiteDemoIssuer",
-    "lender": "veilLiteLender",
-    "borrower": "veilLiteBorrower",
-    "regulator": "veilLiteRegulator",
-    "valuer": "veilLiteValuer",
-    "outsider": "veilLiteOutsider",
-}
+ROLES = ("issuer", "lender", "borrower", "regulator", "valuer", "outsider")
 
 
-def get_token():
-    if ACCESS_TOKEN:
-        return ACCESS_TOKEN
-    missing = [
-        name
-        for name, value in {
-            "VEIL_OIDC_TOKEN_URL": TOKEN_URL,
-            "VEIL_OIDC_CLIENT_ID": CLIENT_ID,
-            "VEIL_OIDC_CLIENT_SECRET": CLIENT_SECRET,
-        }.items()
-        if not value
-    ]
-    if missing:
-        sys.exit("Missing DevNet env: " + ", ".join(missing))
+def refresh_token():
+    value = os.environ.get("VEIL_UPSTREAM_REFRESH_TOKEN", "").strip()
+    if value:
+        return value
+    try:
+        with open(TOKENS_FILE, encoding="utf-8") as file:
+            value = json.load(file).get("refresh_token", "")
+    except (OSError, json.JSONDecodeError):
+        value = ""
+    if not value:
+        sys.exit(f"No refresh token: set VEIL_UPSTREAM_REFRESH_TOKEN or create {TOKENS_FILE} (see docs/DEVNET.md).")
+    return value
 
+
+def access_token():
     body = urllib.parse.urlencode(
-        {
-            "grant_type": "client_credentials",
-            "client_id": CLIENT_ID,
-            "client_secret": CLIENT_SECRET,
-            "audience": AUDIENCE,
-            "scope": SCOPE,
-        }
+        {"grant_type": "refresh_token", "client_id": CLIENT_ID, "refresh_token": refresh_token()}
     ).encode()
     req = urllib.request.Request(
-        TOKEN_URL,
-        data=body,
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
-        method="POST",
+        TOKEN_URL, data=body, headers={"Content-Type": "application/x-www-form-urlencoded"}, method="POST"
     )
-    return json.load(urllib.request.urlopen(req, timeout=30))["access_token"]
+    try:
+        with urllib.request.urlopen(req, timeout=30) as res:
+            return json.load(res)["access_token"]
+    except urllib.error.HTTPError as err:
+        sys.exit(f"Token refresh failed (HTTP {err.code}); re-run the Keycloak login in docs/DEVNET.md.")
+
+
+def token_subject(token):
+    segment = token.split(".")[1]
+    return json.loads(base64.urlsafe_b64decode(segment + "=" * (-len(segment) % 4)))["sub"]
 
 
 def api(token, method, path, data=None, content_type="application/json"):
@@ -94,45 +95,50 @@ def api(token, method, path, data=None, content_type="application/json"):
             return err.code, {"raw": body.decode(errors="replace")}
 
 
-def allocate_parties(token, suffix):
-    parties = {}
-    pending = []
-    namespace = None
-    for role, base_hint in ROLES.items():
-        hint = base_hint + suffix
-        code, resp = api(token, "POST", "/v2/parties", json.dumps({"partyIdHint": hint}).encode())
-        party = (resp.get("partyDetails") or {}).get("party")
-        if party and "::" in party:
-            namespace = party.split("::", 1)[1]
-        parties[role] = party
-        pending.append((role, hint, party, code))
+def discover_parties(token, user_id):
+    code, resp = api(token, "GET", f"/v2/users/{urllib.parse.quote(user_id)}/rights")
+    if code != 200:
+        sys.exit(f"Failed to read rights for {user_id} (HTTP {code}): {json.dumps(resp)}")
+    act_as, read_as = set(), set()
+    for right in resp.get("rights", []):
+        kind = right.get("kind", {})
+        for name, target in (("CanActAs", act_as), ("CanReadAs", read_as)):
+            party = (kind.get(name) or {}).get("value", {}).get("party")
+            if party:
+                target.add(party)
 
-    if any(party is None for _, _, party, _ in pending):
-        if namespace is None:
-            _, party_list = api(token, "GET", "/v2/parties")
-            namespace = next(
-                (
-                    p["party"].split("::", 1)[1]
-                    for p in party_list.get("partyDetails", [])
-                    if p.get("isLocal") and "::" in p.get("party", "")
-                ),
-                None,
-            )
-        for role, hint, party, _ in pending:
-            if party is None and namespace:
-                parties[role] = f"{hint}::{namespace}"
-
+    parties, problems = {}, []
+    for role in ROLES:
+        matches = sorted(p for p in act_as if p.split("::", 1)[0].endswith(f"veil-{role}"))
+        if len(matches) != 1:
+            problems.append(f"{role}: expected one act-as party ending in 'veil-{role}', found {len(matches)}")
+            continue
+        parties[role] = matches[0]
+        if matches[0] not in read_as:
+            problems.append(f"{role}: ledger user lacks CanReadAs")
+    if problems:
+        sys.exit("Create the parties in the NODERS node console first:\n  " + "\n  ".join(problems))
     return parties
 
 
-def grant_rights(token, parties):
-    rights = [{"kind": {"CanActAs": {"value": {"party": party}}}} for party in parties.values() if party]
-    return api(
-        token,
-        "POST",
-        f"/v2/users/{USER_ID}/rights",
-        json.dumps({"userId": USER_ID, "rights": rights}).encode(),
-    )
+def local_package_id():
+    with zipfile.ZipFile(DAR) as dar:
+        prefix = "veil-lite-0.5.0-"
+        for name in dar.namelist():
+            top = name.split("/", 1)[0]
+            if top.startswith(prefix):
+                return top[len(prefix):]
+    sys.exit(f"Could not read the package ID from {DAR}")
+
+
+def check_package(token):
+    package_id = local_package_id()
+    code, resp = api(token, "GET", "/v2/packages")
+    if code != 200:
+        sys.exit(f"Failed to list packages (HTTP {code}): {json.dumps(resp)}")
+    if package_id not in resp.get("packageIds", []):
+        sys.exit(f"Package {package_id} is not on the participant. Upload {DAR} in the node console (Collections).")
+    print(f"✓ package {package_id[:12]}… is uploaded")
 
 
 def ledger_end(token):
@@ -142,7 +148,7 @@ def ledger_end(token):
     return resp["offset"]
 
 
-def active_contracts(token, party):
+def active_events(token, party):
     body = {
         "filter": {
             "filtersByParty": {
@@ -159,73 +165,67 @@ def active_contracts(token, party):
     code, resp = api(token, "POST", "/v2/state/active-contracts", json.dumps(body).encode())
     if code != 200:
         sys.exit(f"Failed to read active contracts (HTTP {code}): {json.dumps(resp)}")
-    return resp
+    return [e.get("contractEntry", {}).get("JsActiveContract", {}).get("createdEvent") or {} for e in resp]
 
 
-def already_seeded(token, borrower, issuer):
-    entries = active_contracts(token, borrower)
-    has_collateral = False
-    for entry in entries:
-        event = (entry.get("contractEntry", {}).get("JsActiveContract", {}).get("createdEvent") or {})
-        if event.get("templateId", "").endswith((":Veil:CashHolding", ":Veil:CollateralHolding", ":Veil:LoanOffer", ":Veil:Loan", ":Veil:LoanClosed")) and not event.get("createArgument", {}).get("issuer"):
-            sys.exit("Legacy asset contracts found; use fresh parties for version 0.5.0.")
-        if event.get("templateId", "").endswith(":Veil:CollateralHolding") and event.get("createArgument", {}).get("issuer") == issuer:
-            has_collateral = True
-    return has_collateral
-
-
-def submit_create(token, party, issuer, template_name, create_arguments):
-    command = {
+def submit(token, user_id, act_as, command, label):
+    body = {
         "commands": {
-            "commands": [
-                {
-                    "CreateCommand": {
-                        "templateId": f"{PACKAGE_REF}:Veil:{template_name}",
-                        "createArguments": create_arguments,
-                    }
-                }
-            ],
-            "commandId": f"devnet-seed-{template_name}-{os.urandom(4).hex()}",
-            "actAs": [issuer, party],
-            "userId": USER_ID,
+            "commands": [command],
+            "commandId": f"devnet-seed-{label}-{os.urandom(4).hex()}",
+            "actAs": act_as,
+            "userId": user_id,
         }
     }
-    return api(token, "POST", "/v2/commands/submit-and-wait-for-transaction", json.dumps(command).encode())
+    code, resp = api(token, "POST", "/v2/commands/submit-and-wait-for-transaction", json.dumps(body).encode())
+    if code != 200:
+        sys.exit(f"Failed to seed {label} (HTTP {code}): {json.dumps(resp)}")
 
 
-def seed_holdings(token, parties):
-    if already_seeded(token, parties["borrower"], parties["issuer"]):
+def seed_holdings(token, user_id, parties):
+    events = active_events(token, parties["borrower"])
+    if any(e.get("templateId", "").endswith(":Veil:CollateralHolding") and e.get("createArgument", {}).get("issuer") == parties["issuer"] for e in events):
         print("✓ holdings already seeded")
         return
-
     creates = [
         (parties["lender"], "CashHolding", {"owner": parties["lender"], "amount": "100"}),
         (parties["borrower"], "CashHolding", {"owner": parties["borrower"], "amount": "105"}),
-        (
-            parties["borrower"],
-            "CollateralHolding",
-            {"owner": parties["borrower"], "asset": COLLATERAL_ASSET, "quantity": "150"},
-        ),
-        (
-            parties["borrower"],
-            "CollateralHolding",
-            {"owner": parties["borrower"], "asset": COLLATERAL_ASSET, "quantity": "50"},
-        ),
+        (parties["borrower"], "CollateralHolding", {"owner": parties["borrower"], "asset": COLLATERAL_ASSET, "quantity": "150"}),
+        (parties["borrower"], "CollateralHolding", {"owner": parties["borrower"], "asset": COLLATERAL_ASSET, "quantity": "50"}),
     ]
-    for party, template_name, args in creates:
+    for owner, template, args in creates:
         args["issuer"] = parties["issuer"]
-        code, resp = submit_create(token, party, parties["issuer"], template_name, args)
-        if code != 200:
-            sys.exit(f"Failed to seed {template_name} (HTTP {code}): {json.dumps(resp)}")
+        command = {"CreateCommand": {"templateId": f"{PACKAGE_REF}:Veil:{template}", "createArguments": args}}
+        submit(token, user_id, [parties["issuer"], owner], command, template)
     print("✓ seeded canonical holdings")
+
+
+def seed_valuation(token, user_id, parties):
+    events = active_events(token, parties["valuer"])
+    marks = [e for e in events if e.get("templateId", "").endswith(":Veil:CollateralValuation")]
+    if len(marks) > 1 or any(e.get("templateId", "").endswith(":Veil:ValuationStream") for e in events):
+        sys.exit("Ambiguous or unpublished valuation streams; reset the demo as operator before re-seeding.")
+    if marks:
+        print("✓ valuation stream already seeded; publish a fresh mark in the UI if stale")
+        return
+    command = {"CreateAndExerciseCommand": {
+        "templateId": f"{PACKAGE_REF}:Veil:ValuationStream",
+        "createArguments": {
+            "valuationAgent": parties["valuer"], "lender": parties["lender"],
+            "borrower": parties["borrower"], "regulator": parties["regulator"],
+            "collateralAsset": COLLATERAL_ASSET,
+        },
+        "choice": "PublishInitial", "choiceArgument": {"unitPrice": "1"},
+    }}
+    submit(token, user_id, [parties["lender"], parties["borrower"], parties["valuer"]], command, "valuation")
+    print("✓ seeded jointly authorized valuation stream")
 
 
 def write_config(parties):
     os.makedirs(os.path.dirname(CONFIG), exist_ok=True)
     config = {
-        "jsonApiUrl": LEDGER,
+        "jsonApiUrl": "",
         "packageRef": PACKAGE_REF,
-        "userId": USER_ID,
         "issuer": parties["issuer"],
         "parties": {role: party for role, party in parties.items() if role != "issuer"},
     }
@@ -235,71 +235,27 @@ def write_config(parties):
     print(f"✓ wrote {CONFIG}")
 
 
-def seed_valuation(token, parties):
-    entries = active_contracts(token, parties["valuer"])
-    events = [e.get("contractEntry", {}).get("JsActiveContract", {}).get("createdEvent", {}) for e in entries]
-    marks = [e for e in events if e.get("templateId", "").endswith(":Veil:CollateralValuation")]
-    if any("streamId" not in e["createArgument"] for e in marks):
-        sys.exit("Legacy valuations found; use a fresh party suffix for version 0.5.0.")
-    if len(marks) > 1 or any(e.get("templateId", "").endswith(":Veil:ValuationStream") for e in events):
-        sys.exit("Ambiguous or unpublished valuation streams; use a fresh party suffix.")
-    if marks:
-        print("✓ valuation stream already seeded; publish a fresh mark in the UI if stale")
-        return
-    command = {
-        "commands": {
-            "commands": [{"CreateAndExerciseCommand": {
-                "templateId": f"{PACKAGE_REF}:Veil:ValuationStream",
-                "createArguments": {
-                    "valuationAgent": parties["valuer"], "lender": parties["lender"],
-                    "borrower": parties["borrower"], "regulator": parties["regulator"],
-                    "collateralAsset": COLLATERAL_ASSET,
-                },
-                "choice": "PublishInitial", "choiceArgument": {"unitPrice": "1"},
-            }}],
-            "commandId": f"devnet-seed-valuation-{os.urandom(4).hex()}",
-            "actAs": [parties["lender"], parties["borrower"], parties["valuer"]],
-            "userId": USER_ID,
-        }
-    }
-    code, resp = api(token, "POST", "/v2/commands/submit-and-wait-for-transaction", json.dumps(command).encode())
-    if code != 200:
-        sys.exit(f"Failed to seed valuation stream (HTTP {code}): {json.dumps(resp)}")
-    print("✓ seeded jointly authorized valuation stream")
-
-
 def main():
     if not os.path.exists(DAR):
         sys.exit(f"DAR not found: {DAR}\n  build it first: dpm build")
-
-    tag = (sys.argv[1] if len(sys.argv) > 1 else os.environ.get("VEIL_PARTY_SUFFIX", "")).strip()
-    suffix = f"-{tag}" if tag else ""
-    if tag:
-        print(f"run tag: {tag} -> parties suffixed with {suffix}")
-
-    token = get_token()
-    print("✓ token acquired")
-
-    code, resp = api(token, "POST", "/v2/packages", open(DAR, "rb").read(), "application/octet-stream")
-    if code == 200:
-        print("✓ DAR uploaded")
-    else:
-        print(f"! DAR upload returned HTTP {code}: {json.dumps(resp)[:300]}")
-        print("  continuing; the package may already be deployed/vetted")
-
-    parties = allocate_parties(token, suffix)
+    token = access_token()
+    user_id = token_subject(token)
+    print(f"✓ token acquired for ledger user {user_id}")
+    parties = discover_parties(token, user_id)
     for role in ROLES:
         print(f"  {role:9} {parties[role]}")
-
-    code, resp = grant_rights(token, parties)
-    if code != 200:
-        sys.exit(f"Failed to grant CanActAs to user {USER_ID} (HTTP {code}): {json.dumps(resp)}")
-    print(f"✓ granted CanActAs x{len(parties)} to user {USER_ID}")
-
-    seed_holdings(token, parties)
-    seed_valuation(token, parties)
+    check_package(token)
+    seed_holdings(token, user_id, parties)
+    seed_valuation(token, user_id, parties)
     write_config(parties)
-    print("Done. Start the frontend with: npm --prefix frontend run dev")
+    print("\nNon-secret hosted settings (see docs/DEVNET.md for the secrets):")
+    print(f"  VEIL_LEDGER_TARGET={LEDGER}")
+    print(f"  VEIL_LEDGER_USER_ID={user_id}")
+    print(f"  VEIL_OIDC_TOKEN_URL={TOKEN_URL}")
+    print(f"  VEIL_OIDC_CLIENT_ID={CLIENT_ID}")
+    print(f"  VEIL_PACKAGE_REF={PACKAGE_REF}")
+    for role in ROLES:
+        print(f"  VEIL_PARTY_{role.upper()}={parties[role]}")
 
 
 if __name__ == "__main__":

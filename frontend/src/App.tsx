@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
-import { captureSession, clearSession, getSession, signIn, SessionError, type AuthSnapshot } from './auth'
+import { captureSession, clearSession, demoLoginInfo, getSession, signIn, signInWithPasscode, SessionError, type AuthSnapshot, type DemoLoginInfo } from './auth'
 import type { ActivityEntry, Contract, Draft, Role, Session, SessionRole, TxResult } from './types'
 import {
   acceptOffer,
@@ -93,6 +93,7 @@ export default function App() {
   const [authBusy, setAuthBusy] = useState(false)
   const [configOk, setConfigOk] = useState<boolean | null>(null)
   const [configIssue, setConfigIssue] = useState<string | null>(null)
+  const [demoLogin, setDemoLogin] = useState<DemoLoginInfo>({ enabled: false, operator: false })
   const { theme, toggle: toggleTheme } = useTheme()
   const refreshGeneration = useRef(0)
   const authGeneration = useRef(0)
@@ -149,7 +150,7 @@ export default function App() {
     } catch (e) {
       if (expectedAuthGeneration !== authGeneration.current || generation !== refreshGeneration.current || forRole !== activeRole.current) return
       if (errorStatus(e) === 401) {
-        signOut('Your role session expired or was rejected. Sign in again with a fresh token.')
+        signOut('Your role session expired or was rejected. Sign in again.')
         return
       }
       setError(errorMessage(e))
@@ -158,15 +159,23 @@ export default function App() {
     }
   }, [signOut])
 
-  const submitSignIn = async (event: FormEvent<HTMLFormElement>) => {
+  const submitSignIn = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (authBusy) return
     const candidate = token
     setToken('')
+    void completeSignIn(() => signIn(candidate))
+  }
+
+  const submitPasscode = (sessionRole: SessionRole, passcode: string) => {
+    void completeSignIn(() => signInWithPasscode(sessionRole, passcode))
+  }
+
+  const completeSignIn = async (attempt: () => Promise<Session>) => {
+    if (authBusy) return
     setAuthBusy(true)
     setAuthError(null)
     try {
-      const nextSession = await signIn(candidate)
+      const nextSession = await attempt()
       authGeneration.current += 1
       refreshGeneration.current += 1
       const nextRole = roleForSession(nextSession.role)
@@ -184,6 +193,10 @@ export default function App() {
   }
 
   useEffect(() => {
+    void demoLoginInfo().then(setDemoLogin)
+  }, [])
+
+  useEffect(() => {
     void loadConfig().then((ok) => {
       setConfigOk(ok)
       setConfigIssue(getConfigIssue())
@@ -197,7 +210,7 @@ export default function App() {
   useEffect(() => {
     if (!session) return
     const delay = Math.max(0, session.expiresAt * 1000 - Date.now())
-    const timer = window.setTimeout(() => signOut('Your role session expired. Sign in again with a fresh token.'), delay)
+    const timer = window.setTimeout(() => signOut('Your role session expired. Sign in again.'), delay)
     return () => window.clearTimeout(timer)
   }, [session, signOut])
 
@@ -210,7 +223,7 @@ export default function App() {
     try {
       snapshot = captureSession()
     } catch (e) {
-      if (errorStatus(e) === 401) signOut('Your role session expired or was rejected. Sign in again with a fresh token.')
+      if (errorStatus(e) === 401) signOut('Your role session expired or was rejected. Sign in again.')
       else setError(errorMessage(e))
       return
     }
@@ -224,7 +237,7 @@ export default function App() {
     } catch (e) {
       if (expectedAuthGeneration !== authGeneration.current || expectedRole !== activeRole.current) return
       if (errorStatus(e) === 401) {
-        signOut('Your role session expired or was rejected. Sign in again with a fresh token.')
+        signOut('Your role session expired or was rejected. Sign in again.')
         return
       }
       setError(errorMessage(e))
@@ -273,7 +286,7 @@ export default function App() {
     try {
       snapshot = captureSession()
     } catch (e) {
-      if (errorStatus(e) === 401) signOut('Your role session expired or was rejected. Sign in again with a fresh token.')
+      if (errorStatus(e) === 401) signOut('Your role session expired or was rejected. Sign in again.')
       else setError(errorMessage(e))
       return
     }
@@ -288,7 +301,7 @@ export default function App() {
     } catch (e) {
       if (expectedAuthGeneration !== authGeneration.current || expectedRole !== activeRole.current) return
       if (errorStatus(e) === 401) {
-        signOut('Your role session expired or was rejected. Sign in again with a fresh token.')
+        signOut('Your role session expired or was rejected. Sign in again.')
         return
       }
       setError(errorMessage(e))
@@ -324,6 +337,8 @@ export default function App() {
         busy={authBusy}
         onTokenChange={setToken}
         onSubmit={submitSignIn}
+        demoLogin={demoLogin}
+        onPasscodeSubmit={submitPasscode}
         theme={theme}
         onToggleTheme={toggleTheme}
       />

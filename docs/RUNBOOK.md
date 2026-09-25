@@ -42,12 +42,10 @@ use **Reset demo**. Its role tabs remain available for a narrated walkthrough.
 
 ## 3. DevNet and Vercel (deferred)
 
-The shared OIDC operator proxy has been removed. A future hosted deployment must
-configure participant trust, restricted Canton users, and the server's public
-verification key and audience. The proxy forwards each user's verified bearer
-token unchanged. Old Seaport client credentials alone cannot run this version.
-See [AUTH.md](AUTH.md); historical deployment instructions are retained in
-[DEVNET.md](DEVNET.md) and [VERCEL.md](VERCEL.md), labelled as historical.
+Locally the proxy forwards each user's verified role token unchanged, so Canton
+re-checks it. The hosted deployment on the shared HackCanton DevNet node instead
+submits with the team's ledger-user token after the same role checks; see
+[AUTH.md](AUTH.md), [DEVNET.md](DEVNET.md) and [VERCEL.md](VERCEL.md).
 No hosted ledger deployment is validated by this increment.
 
 ### Ports
