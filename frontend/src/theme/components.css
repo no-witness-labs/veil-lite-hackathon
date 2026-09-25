@@ -658,6 +658,7 @@
 
 @media (max-width: 760px) {
   :root { --shell-gutter: var(--space-5); --display-xl: 40px; }
+  .v-hero h1 { font-size: var(--display-md); }
   .v-metric-row { grid-template-columns: minmax(0, 1fr); }
   .v-metric-row > * { border-right: none; border-top: 1px solid var(--line); }
   .v-panel__head, .v-panel__foot { flex-wrap: wrap; }
@@ -681,14 +682,14 @@
 .v-hero__inner {
   max-width: var(--shell-max);
   margin: 0 auto;
-  padding: var(--space-9) var(--shell-gutter) var(--space-8);
+  padding: var(--space-7) var(--shell-gutter) var(--space-6);
 }
 
 .v-hero h1 {
   font-family: var(--font-display);
   font-weight: 400;
   text-transform: uppercase;
-  font-size: var(--display-xl);
+  font-size: var(--display-lg);
   line-height: var(--leading-tight);
   letter-spacing: var(--tracking-display);
   color: var(--ink-900);
@@ -705,7 +706,7 @@
   align-items: flex-end;
   justify-content: space-between;
   gap: var(--space-8);
-  margin-top: var(--space-6);
+  margin-top: var(--space-4);
 }
 
 .v-hero__row p {
@@ -761,7 +762,8 @@
   list-style: none;
   margin: 0;
   padding: 0;
-  display: grid;
+  display: flex;
+  flex-wrap: wrap;
   gap: var(--space-2);
   flex: none;
 }
