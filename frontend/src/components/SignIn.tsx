@@ -1,71 +1,103 @@
 import type { FormEvent } from 'react'
+import type { Theme } from '../theme/useTheme'
+import { Label } from '../ui/primitives'
+import { ThemeToggle } from './ThemeToggle'
 
-const mono: React.CSSProperties = { fontFamily: "'IBM Plex Mono',monospace" }
-
+/** Token gate. Nothing is requested from the ledger until the server has
+ * verified the pasted role token, and the token is never stored or echoed. */
 export function SignIn({
   token,
   error,
   busy,
   onTokenChange,
   onSubmit,
+  theme,
+  onToggleTheme,
 }: {
   token: string
   error: string | null
   busy: boolean
   onTokenChange: (value: string) => void
   onSubmit: (event: FormEvent<HTMLFormElement>) => void
+  theme: Theme
+  onToggleTheme: () => void
 }) {
+  const canSubmit = !busy && token.trim().length > 0
+
   return (
-    <main style={{ maxWidth: 560, margin: '0 auto', padding: '15vh 32px 64px' }}>
-      <div style={{ textAlign: 'center', marginBottom: 28 }}>
-        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 12 }}>
-          <div style={{ width: 14, height: 14, background: '#2748d8', borderRadius: 3, transform: 'rotate(45deg)' }} />
-          <div style={{ fontSize: 25, fontWeight: 600, letterSpacing: '-0.01em', color: '#14171f' }}>Veil</div>
-        </div>
-        <div style={{ ...mono, fontSize: 10, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#9aa1ad', marginTop: 12 }}>
-          Canton · role sign-in
-        </div>
+    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+      <div className="v-row" style={{ justifyContent: 'flex-end', padding: 'var(--space-5) var(--shell-gutter)' }}>
+        <ThemeToggle theme={theme} onToggle={onToggleTheme} />
       </div>
 
-      <form
-        onSubmit={onSubmit}
-        style={{ background: '#fff', border: '1px solid #e6e8ec', borderRadius: 14, padding: '32px 34px', boxShadow: '0 1px 2px rgba(20,23,31,0.04)' }}
+      <main
+        style={{
+          flex: 1,
+          width: '100%',
+          maxWidth: 560,
+          margin: '0 auto',
+          padding: '8vh var(--space-5) var(--space-10)',
+        }}
       >
-        <div style={{ fontSize: 20, fontWeight: 600, color: '#14171f', marginBottom: 9 }}>Sign in to the sandbox</div>
-        <div style={{ fontSize: 14, color: '#5b6472', lineHeight: 1.6, marginBottom: 24 }}>
-          Paste the expiring role token issued for your Canton party. The server verifies it before any ledger data is requested.
-        </div>
-        <label htmlFor="role-token" style={{ ...mono, display: 'block', fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#8a929e', marginBottom: 8 }}>
-          Role token
-        </label>
-        <input
-          id="role-token"
-          type="password"
-          autoComplete="off"
-          spellCheck={false}
-          value={token}
-          onChange={(event) => onTokenChange(event.target.value)}
-          disabled={busy}
-          placeholder="Paste token"
-          style={{ width: '100%', border: '1px solid #cfd4dc', borderRadius: 8, padding: '12px 13px', fontSize: 14, color: '#14171f', outline: 'none', boxSizing: 'border-box' }}
-        />
-        {error && (
-          <div role="alert" style={{ display: 'flex', alignItems: 'flex-start', gap: 9, background: '#fbeae8', border: '1px solid #f1c9c3', borderRadius: 8, padding: '10px 12px', marginTop: 14, fontSize: 13, lineHeight: 1.45, color: '#a23b2e' }}>
-            <span style={{ width: 7, height: 7, borderRadius: 999, background: '#c0392b', flex: 'none', marginTop: 5 }} />
-            <span>{error}</span>
+        <div style={{ textAlign: 'center', marginBottom: 'var(--space-7)' }}>
+          <div className="v-row" style={{ gap: 'var(--space-3)', justifyContent: 'center' }}>
+            <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+              <rect x="4.5" y="4.5" width="9" height="9" rx="1" transform="rotate(45 9 9)" fill="var(--accent)" />
+            </svg>
+            <span className="v-wordmark" style={{ fontSize: 'var(--display-md)' }}>Veil</span>
           </div>
-        )}
-        <button
-          type="submit"
-          disabled={busy || !token.trim()}
-          style={{ width: '100%', marginTop: 18, border: 'none', borderRadius: 8, background: busy || !token.trim() ? '#aeb9e8' : '#2748d8', color: '#fff', fontSize: 14, fontWeight: 600, padding: '12px 16px', cursor: busy ? 'wait' : 'pointer' }}
-        >
-          {busy ? 'Verifying token…' : 'Sign in'}
-        </button>
-        <div style={{ ...mono, fontSize: 10, lineHeight: 1.6, color: '#9aa1ad', marginTop: 18 }}>
-          Obtain a role token from the sandbox operator. Tokens are never printed or saved by this app.
+          <Label className="v-muted">Canton · role sign-in</Label>
         </div>
-      </form>
-    </main>
+
+        <form onSubmit={onSubmit} className="v-panel">
+          <header className="v-panel__head">
+            <div className="v-panel__title">
+              <h2>Sign in to the sandbox</h2>
+            </div>
+          </header>
+
+          <div style={{ padding: 'var(--space-6) var(--space-7)', display: 'grid', gap: 'var(--space-5)' }}>
+            <p style={{ fontSize: 'var(--text-md)', color: 'var(--ink-500)', lineHeight: 'var(--leading-relaxed)' }}>
+              Paste the expiring role token issued for your Canton party. The server verifies it before any ledger
+              data is requested.
+            </p>
+
+            <div className="v-field">
+              <label htmlFor="role-token" className="v-label">
+                Role token
+              </label>
+              <input
+                id="role-token"
+                className="v-input"
+                type="password"
+                autoComplete="off"
+                spellCheck={false}
+                value={token}
+                onChange={(event) => onTokenChange(event.target.value)}
+                disabled={busy}
+                placeholder="Paste token"
+              />
+            </div>
+
+            {error && (
+              <div className="v-banner v-banner--danger" role="alert">
+                <span className="v-tag__dot" style={{ marginTop: 7 }} />
+                <div className="v-banner__body">{error}</div>
+              </div>
+            )}
+
+            <button type="submit" disabled={!canSubmit} className="v-btn v-btn--primary v-btn--lg v-btn--block">
+              {busy ? 'Verifying token…' : 'Sign in'}
+            </button>
+          </div>
+
+          <footer className="v-panel__foot">
+            <span className="v-metric__note">
+              Obtain a role token from the sandbox operator. Tokens are never printed or saved by this app.
+            </span>
+          </footer>
+        </form>
+      </main>
+    </div>
   )
 }

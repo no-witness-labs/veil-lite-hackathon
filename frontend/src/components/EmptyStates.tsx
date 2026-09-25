@@ -1,139 +1,116 @@
 import type { Role } from '../types'
+import { Label } from '../ui/primitives'
 
-const cardBase: React.CSSProperties = {
-  background: '#fff',
-  border: '1px solid #e6e8ec',
-  borderRadius: 14,
-  textAlign: 'center',
-  display: 'flex',
-  flexDirection: 'column',
-  alignItems: 'center',
-  boxShadow: '0 1px 2px rgba(20,23,31,0.04)',
-}
-
-const mono: React.CSSProperties = {
-  fontFamily: "'IBM Plex Mono',monospace",
-}
-
-/** Outsider view: the privacy payload — nothing is visible on the ledger. */
+/** Outsider view: the privacy payload. Deliberately the emptiest screen in the
+ * app — there is genuinely nothing on the ledger for this party to render. */
 export function OutsiderEmpty() {
   return (
-    <div style={{ ...cardBase, padding: '80px 40px' }}>
-      <div
-        style={{
-          width: 84,
-          height: 84,
-          borderRadius: 999,
-          border: '2px dashed #d2d6dd',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          marginBottom: 26,
-        }}
-      >
-        <div style={{ width: 30, height: 30, borderRadius: 999, background: '#eef0f3' }} />
-      </div>
-      <div style={{ fontSize: 22, fontWeight: 600, color: '#14171f', letterSpacing: '-0.01em', marginBottom: 12 }}>
-        Not a stakeholder.
-      </div>
-      <div style={{ fontSize: 15, color: '#5b6472', lineHeight: 1.6, maxWidth: 420 }}>
-        On Canton, this party sees nothing — no terms, no collateral, no counterparties, not even that a contract
-        exists. The deal is invisible outside the room.
-      </div>
-      <div
-        style={{
-          ...mono,
-          marginTop: 28,
-          fontSize: 11,
-          letterSpacing: '0.1em',
-          textTransform: 'uppercase',
-          color: '#aeb4be',
-          borderTop: '1px solid #eef0f3',
-          paddingTop: 20,
-        }}
-      >
-        No data on this ledger for this party
-      </div>
-    </div>
+    <Shell
+      glyph={
+        <svg width="40" height="40" viewBox="0 0 40 40" aria-hidden="true">
+          <circle cx="20" cy="20" r="18" fill="none" stroke="var(--line-strong)" strokeWidth="1.5" strokeDasharray="3 4" />
+          <line x1="11" y1="29" x2="29" y2="11" stroke="var(--line-strong)" strokeWidth="1.5" />
+        </svg>
+      }
+      title="Not a stakeholder"
+      body="On Canton this party sees nothing — no terms, no collateral, no counterparties, not even that a contract
+      exists. There is no filtered view to defeat, because the contract was never distributed to this participant’s
+      sub-ledger."
+      footnote="active-contracts returned 0 rows"
+    />
   )
 }
 
 /** Borrower / regulator view before any offer exists. */
 export function Waiting({ role }: { role: Role }) {
-  const text =
-    role === 'regulator'
-      ? 'No contract to observe yet. Refresh after the lender creates an offer.'
-      : 'The lender has not yet extended an offer. Refresh after they create one.'
   return (
-    <div style={{ ...cardBase, padding: '72px 40px' }}>
-      <div
+    <Shell
+      glyph={
+        <svg width="40" height="40" viewBox="0 0 40 40" aria-hidden="true">
+          <rect x="9" y="9" width="22" height="22" rx="2" fill="none" stroke="var(--line-strong)" strokeWidth="1.5" />
+          <line x1="15" y1="20" x2="25" y2="20" stroke="var(--line-strong)" strokeWidth="1.5" />
+        </svg>
+      }
+      title="No open position"
+      body={
+        role === 'regulator'
+          ? 'Nothing to observe yet. Refresh after the lender originates a facility.'
+          : 'The lender has not extended an offer. Refresh after they originate one.'
+      }
+      footnote="awaiting origination"
+    />
+  )
+}
+
+function Shell({
+  glyph,
+  title,
+  body,
+  footnote,
+}: {
+  glyph: React.ReactNode
+  title: string
+  body: string
+  footnote: string
+}) {
+  return (
+    <section
+      className="v-panel"
+      style={{
+        display: 'grid',
+        justifyItems: 'center',
+        textAlign: 'center',
+        padding: 'var(--space-10) var(--space-7)',
+        gap: 'var(--space-4)',
+      }}
+    >
+      {glyph}
+      <h2 className="v-display" style={{ fontSize: 'var(--display-md)' }}>
+        {title}
+      </h2>
+      <p
         style={{
-          width: 64,
-          height: 64,
-          borderRadius: 999,
-          background: '#f4f5f7',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          marginBottom: 22,
+          maxWidth: 460,
+          fontSize: 'var(--text-md)',
+          color: 'var(--ink-500)',
+          lineHeight: 'var(--leading-relaxed)',
         }}
       >
-        <div style={{ width: 22, height: 22, borderRadius: 6, border: '2px solid #cfd4dc' }} />
+        {body}
+      </p>
+      <div style={{ marginTop: 'var(--space-3)', paddingTop: 'var(--space-4)', borderTop: '1px solid var(--line-soft)', width: '100%', maxWidth: 460 }}>
+        <Label>{footnote}</Label>
       </div>
-      <div style={{ fontSize: 19, fontWeight: 600, color: '#14171f', marginBottom: 10 }}>No active offer</div>
-      <div style={{ fontSize: 14, color: '#5b6472', lineHeight: 1.6, maxWidth: 380 }}>{text}</div>
-    </div>
+    </section>
   )
 }
 
-export function ShockBanner({ unitPrice, observedAt, valuationAgent }: { unitPrice: number; observedAt: string; valuationAgent?: string }) {
-  const observed = observedAt ? new Date(observedAt).toLocaleString() : 'unknown time'
-  const agent = valuationAgent ? valuationAgent.split('::')[0] : ''
+/** Shown before the ledger config has been loaded or when it is absent. */
+export function ConnectionGate({ connecting, issue }: { connecting: boolean; issue?: string | null }) {
   return (
-    <div
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 12,
-        background: '#fbeae8',
-        border: '1px solid #f1c9c3',
-        borderRadius: 10,
-        padding: '13px 16px',
-      }}
+    <section
+      className="v-panel"
+      style={{ padding: 'var(--space-10) var(--space-7)', display: 'grid', justifyItems: 'center', textAlign: 'center', gap: 'var(--space-4)' }}
     >
-      <div style={{ width: 8, height: 8, borderRadius: 999, background: '#d94b3a', flex: 'none' }} />
-      <div style={{ fontSize: 13, color: '#a23b2e', lineHeight: 1.45 }}>
-        <b>Ledger-attested collateral mark: {unitPrice.toFixed(2)} simulated USDC/unit.</b> LTV at this mark exceeds the
-        facility threshold. Observed {observed}
-        {agent ? ` by ${agent}.` : '.'}
-      </div>
-    </div>
-  )
-}
-
-export function ErrorBanner({ message, onDismiss }: { message: string; onDismiss: () => void }) {
-  return (
-    <div
-      style={{
-        display: 'flex',
-        alignItems: 'flex-start',
-        gap: 12,
-        background: '#fbeae8',
-        border: '1px solid #f1c9c3',
-        borderRadius: 10,
-        padding: '13px 16px',
-      }}
-    >
-      <div style={{ width: 8, height: 8, borderRadius: 999, background: '#c0392b', flex: 'none', marginTop: 5 }} />
-      <div style={{ fontSize: 13, color: '#a23b2e', lineHeight: 1.45, flex: 1, wordBreak: 'break-word' }}>
-        <b>Ledger error.</b> {message}
-      </div>
-      <button
-        onClick={onDismiss}
-        style={{ background: 'none', border: 'none', color: '#a23b2e', cursor: 'pointer', fontSize: 16, lineHeight: 1 }}
-      >
-        ×
-      </button>
-    </div>
+      <h2 className="v-display" style={{ fontSize: 'var(--display-md)' }}>
+        {connecting ? 'Connecting to Canton…' : 'Ledger not ready'}
+      </h2>
+      {connecting ? (
+        <p className="v-dim" style={{ fontSize: 'var(--text-md)' }}>Loading ledger configuration.</p>
+      ) : (
+        <div style={{ maxWidth: 520 }}>
+          <p style={{ fontSize: 'var(--text-md)', color: 'var(--ink-500)', lineHeight: 'var(--leading-relaxed)' }}>
+            {issue ?? 'No valid ledger configuration found.'} Start the local sandbox, or configure the DevNet
+            deployment:
+          </p>
+          <pre className="v-code" style={{ marginTop: 'var(--space-4)', borderRadius: 'var(--radius-md)', textAlign: 'left' }}>
+            ./scripts/start-sandbox.sh
+          </pre>
+          <p className="v-metric__note" style={{ marginTop: 'var(--space-3)' }}>
+            For DevNet and Vercel deployments see docs/DEVNET.md.
+          </p>
+        </div>
+      )}
+    </section>
   )
 }

@@ -1,0 +1,189 @@
+/* Veil design tokens.
+ *
+ * Single source of truth for every colour, dimension and type ramp. Components
+ * reference these variables only — no literal hex value appears anywhere in the
+ * component tree, so the light theme is a pure token swap.
+ *
+ * The register is dark-first crypto-native: a charcoal ground, heavy condensed
+ * uppercase display type, monospace interface text, square edges and hairline
+ * rules, with a single mint accent carrying emphasis.
+ *
+ * Colour discipline: mint is the only decorative accent. Every other hue is
+ * SEMANTIC — status (offered / active / settled / liquidated), LTV bands, and
+ * party identity (the sky hue exists only to identify the valuation agent).
+ * That is why the accent budget is kept small: the palette has to stay legible
+ * as meaning, not decoration.
+ */
+
+:root {
+  color-scheme: dark;
+
+  /* ---- Type ------------------------------------------------------------ */
+  /* Anton carries headings and every figure; its condensed caps are the
+     signature. Mono handles all interface text, which keeps data and prose on
+     one grid and suits a ledger product. */
+  --font-display: 'Anton', 'Haettenschweiler', Impact, sans-serif;
+  --font-sans: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --text-2xs: 10px;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-base: 13px;
+  --text-md: 14px;
+  --text-lg: 15px;
+  --text-xl: 17px;
+  --display-sm: 22px;
+  --display-md: 30px;
+  --display-lg: 46px;
+  --display-xl: 82px;
+
+  --leading-tight: 0.92;
+  --leading-normal: 1.6;
+  --leading-relaxed: 1.7;
+
+  --tracking-caption: 0.17em;
+  --tracking-display: 0.005em;
+
+  /* ---- Space (4px base grid) ------------------------------------------- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 26px;
+  --space-7: 30px;
+  --space-8: 44px;
+  --space-9: 60px;
+  --space-10: 80px;
+
+  /* ---- Radius ----------------------------------------------------------- */
+  /* Square. The reference register has no rounded corners. */
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --radius-lg: 0px;
+  --radius-pill: 999px;
+
+  /* ---- Layout ----------------------------------------------------------- */
+  /* Deliberately broad — the previous 1180px shell read as cramped. */
+  --shell-max: 1680px;
+  --shell-gutter: var(--space-8);
+  --rail-width: 340px;
+  --topbar-height: 74px;
+  --tabbar-height: 52px;
+
+  /* ---- Ground and ink --------------------------------------------------- */
+  --ink-900: #f4f4f2;
+  --ink-700: #c2c2be;
+  --ink-500: #a5a5a0;
+  --ink-400: #82827d;
+  --ink-300: #5f5f5b;
+
+  --surface-page: #131313;
+  --surface-panel: #1a1a1a;
+  --surface-sunken: #111111;
+  --surface-raised: #202020;
+  --surface-inverse: #f4f4f2;
+
+  --line-strong: #3a3a3a;
+  --line: #2c2c2c;
+  --line-soft: #242424;
+
+  /* ---- Accent (the one decorative hue) ----------------------------------- */
+  --accent: #6fe7a5;
+  --accent-strong: #8df0bc;
+  --accent-soft: #10291d;
+  --accent-line: #1f5138;
+  --accent-contrast: #0d0d0d;
+
+  /* ---- Semantic ---------------------------------------------------------- */
+  --ok: #6fe7a5;
+  --ok-soft: #10291d;
+  --ok-line: #1f5138;
+
+  --warn: #f5c451;
+  --warn-soft: #2b2312;
+  --warn-line: #574520;
+
+  --danger: #ff7a6b;
+  --danger-soft: #2d1714;
+  --danger-line: #5a2c25;
+
+  --info: #9d8bff;
+  --info-soft: #1c1730;
+  --info-line: #372c63;
+
+  /* Identity-only hue for the valuation agent, the fifth querying party. */
+  --sky: #6cc9ec;
+  --sky-soft: #10232b;
+  --sky-line: #22495a;
+
+  --neutral-soft: #232323;
+  --neutral-line: #333333;
+
+  /* ---- Effects ---------------------------------------------------------- */
+  --shadow-panel: none;
+  --shadow-pop: 0 10px 34px -12px rgba(0, 0, 0, 0.85);
+  --ring: 0 0 0 2px var(--accent);
+
+  --duration-fast: 90ms;
+  --duration: 170ms;
+  --ease: cubic-bezier(0.2, 0, 0.2, 1);
+}
+
+/* ---- Light theme --------------------------------------------------------
+ * Opt-in via the top-bar control. The charcoal ground inverts to paper and the
+ * mint deepens so it holds contrast on white; everything else — the condensed
+ * caps, the square edges, the mono grid — is unchanged, so the two themes read
+ * as one product rather than two designs.
+ */
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  --ink-900: #16171a;
+  --ink-700: #3f4248;
+  --ink-500: #62666e;
+  --ink-400: #82868f;
+  --ink-300: #a8acb4;
+
+  --surface-page: #f2f2f0;
+  --surface-panel: #ffffff;
+  --surface-sunken: #e9e9e6;
+  --surface-raised: #fafaf8;
+  --surface-inverse: #16171a;
+
+  --line-strong: #c9c9c4;
+  --line: #dededa;
+  --line-soft: #ebebe7;
+
+  --accent: #0f9d63;
+  --accent-strong: #0b7c4d;
+  --accent-soft: #e4f7ee;
+  --accent-line: #a8e0c6;
+  --accent-contrast: #ffffff;
+
+  --ok: #0f9d63;
+  --ok-soft: #e4f7ee;
+  --ok-line: #a8e0c6;
+
+  --warn: #9a6a0d;
+  --warn-soft: #fbf1da;
+  --warn-line: #e2cb95;
+
+  --danger: #c0392b;
+  --danger-soft: #fbeae8;
+  --danger-line: #eec3bd;
+
+  --info: #5b45c9;
+  --info-soft: #eeeafa;
+  --info-line: #cabef0;
+
+  --sky: #0f7598;
+  --sky-soft: #e3f3f9;
+  --sky-line: #a9d8ea;
+
+  --neutral-soft: #eeeeea;
+  --neutral-line: #dcdcd7;
+
+  --shadow-pop: 0 10px 30px -14px rgba(0, 0, 0, 0.3);
+}

@@ -185,23 +185,65 @@ restricted Canton users; see **[docs/DEVNET.md](./docs/DEVNET.md)** and
 
 The UI surfaces the ledger's own evidence, so nothing has to be taken on trust:
 
-- **Party-ID strip** (under the header) — five user roles and a separate demo issuer are distinct Canton parties on one participant.
-- **Deal card** — shows the real contract ID and ledger offset behind the position.
-- **Ledger activity feed** — every action lists its committed transaction: `updateId`, ledger offset,
+- **Allocated parties** (Disclosure tab) — five user roles and a separate demo issuer are distinct Canton parties on one participant.
+- **Secured Credit Facility panel** (Position tab) — shows the real contract ID and ledger offset behind the position.
+- **Disclosure matrix** (Disclosure tab) — the signatory/observer declaration of every template, including the
+  valuation records and the demo issuer, as a matrix. The active viewpoint's column is highlighted; the **Outsider**
+  column is empty by construction.
+- **Ledger activity** (Activity tab) — every action lists its committed transaction: `updateId`, ledger offset,
   synchronizer ID, and the contracts created/archived.
-- **Raw ledger view** (collapsible) — the exact JSON each party gets from the `active-contracts` query.
+- **Raw ledger view** (Raw ledger tab, collapsible) — the exact JSON each party gets from the `active-contracts` query.
   Switching to **Outsider** makes the strongest point: the same panel is literally `[]`.
-- **Your holdings** — each party's own wallet (simulated cash + collateral). Holdings require issuer and owner signatures;
+- **Holdings** (Holdings tab) — each party's own wallet (simulated cash + collateral). Holdings require issuer and owner signatures;
   the issuer sees the inventory, while the other counterparty does not see unspent wallet holdings. The demo flow settles on-ledger: the borrower starts with
   150 collateral + a 50-unit reserve + 105 cash, accepting locks 150 units and delivers 100 principal, and repaying returns the
   collateral while the lender ends with 105 (principal + 5 interest).
 
-Strongest single demo moment: view the deal as **Lender**, expand the raw ledger view, then switch to
-**Outsider** — the same query returns nothing.
+Strongest single demo moment: view the deal as **Lender**, open the **Raw ledger** tab and expand the raw ledger
+view, then switch to **Outsider** — the same query returns nothing.
 
 Both the web proxy and Canton Ledger API enforce role permissions. This remains
 one participant with a trusted local signing key and privileged demo operator;
 it is not enterprise SSO or privacy against the participant operator.
+
+### UI architecture
+
+The interface is a small design system rather than ad-hoc styling, so the look is consistent and retheming is
+a one-file change:
+
+- `src/theme/tokens.css` — every colour, space, radius and type step as a CSS custom property. This is the
+  single source of truth; no component contains a literal hex value or magic pixel number.
+- `src/theme/base.css` — resets, document typography, focus ring, scrollbars.
+- `src/theme/components.css` — the class layer (`.v-panel`, `.v-hero`, `.v-matrix`, `.v-table`, `.v-tag`, …).
+- `src/ui/primitives.tsx` — typed React wrappers over those classes (`Panel`, `Metric`, `Meter`, `Tag`,
+  `Button`, `Segmented`, `Field`, `Banner`). Feature components compose primitives and never hand-roll styles.
+
+**Visual register** — dark-first and crypto-native: a charcoal ground, Anton condensed caps for headings and
+every figure, IBM Plex Mono for all interface text, square edges and hairline rules, on a broad 1680px shell.
+
+**Colour discipline** — mint is the *only* decorative accent. Every other hue is semantic: status (offered /
+active / settled / liquidated, margin call), LTV band (within limit / elevated / breach, relative to the
+facility's own threshold), and party identity (the selected role fills the switcher with its own colour; sky
+exists only to identify the valuer).
+
+Machine identifiers (contract IDs, party IDs, update IDs) use `.v-id` — monospaced and deliberately **not**
+uppercased, because an on-ledger value must render verbatim.
+
+**Sections** — the page presents one thing at a time. Position (Valuation for the valuer), Disclosure,
+Holdings, Activity and Raw ledger are tabs rather than a single scroll of stacked panels. Holdings and Activity
+are not offered to the valuer or the outsider.
+
+**Hero** — a statement band above the workspace. It carries no call to action: the originate form sits
+directly below with its own submit.
+
+**Theme** — dark is the default and the canonical look. The sun/moon control in the top right switches to a
+light counterpart that keeps the same type, structure and accent. The OS preference is deliberately not
+consulted. The choice is saved to `localStorage` only when the control is used, so an untouched session leaves
+Web Storage empty (the role-auth browser check asserts this).
+
+**Deep links** — the section is mirrored in the URL, so `?section=disclosure` opens on the disclosure matrix.
+For the demo operator, the viewpoint is mirrored too (`?role=outsider`); every other session is fixed to the
+party its token was issued for. Sign-out clears both parameters.
 
 > **Dev dependencies:** `esbuild` is pinned to `^0.25` (via `overrides`) to clear its dev-server advisory.
 > One dev-server-only Vite advisory remains (fixable only by a major `vite@8` bump, deferred to avoid
@@ -262,7 +304,9 @@ veil/
 │       ├── App.tsx
 │       ├── ledger.ts      # JSON Ledger API v2 client
 │       ├── state.ts       # view derivation
-│       └── components/
+│       ├── theme/         # design tokens, base layer, component classes, theme hook
+│       ├── ui/            # typed primitives over the component classes
+│       └── components/    # feature panels composed from primitives
 ├── docs/
 │   ├── ARCHITECTURE.md    # e2e: build, deploy, JSON API, per-flow walkthroughs
 │   ├── RUNBOOK.md         # run steps, demo walkthrough, troubleshooting
