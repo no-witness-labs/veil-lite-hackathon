@@ -12,6 +12,7 @@ const ledgerApi = require('../api/_ledger.js') as {
   proxyLedgerRequest: (req: IncomingMessage & { veilEnv?: Record<string, string> }, res: ServerResponse, path: string, options?: Record<string, unknown>) => Promise<void>
 }
 const sessionHandler = require('../api/session.js') as (req: IncomingMessage & { veilEnv?: Record<string, string> }, res: ServerResponse) => Promise<void> | void
+const demoLoginHandler = require('../api/demo-login.js') as (req: IncomingMessage & { veilEnv?: Record<string, string> }, res: ServerResponse) => Promise<void> | void
 const { proxyLedgerRequest } = ledgerApi
 
 export default defineConfig(({ mode }) => {
@@ -41,6 +42,11 @@ function ledgerApiProxy(target: string, env: Record<string, string>): Plugin {
     if (pathname === '/api/session') {
       authReq.veilEnv = env
       await sessionHandler(authReq, res)
+      return
+    }
+    if (pathname === '/api/demo-login') {
+      authReq.veilEnv = env
+      await demoLoginHandler(authReq, res)
       return
     }
     if (!pathname.startsWith('/v2')) {

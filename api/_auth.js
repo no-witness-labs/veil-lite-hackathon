@@ -347,6 +347,7 @@ function requireAuth(req, res, env = req?.veilEnv || process.env) {
 module.exports = {
   AuthError,
   DEFAULT_AUDIENCE,
+  DEFAULT_ISSUER,
   MAX_BODY_BYTES,
   ROLE_SUBJECTS,
   ROLES,

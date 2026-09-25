@@ -173,9 +173,10 @@ Tokens stay in browser memory. Ordinary accounts have a fixed role; only the dem
 operator has role-view tabs and **Reset demo**. To demonstrate access isolation,
 use separate role logins. See **[docs/AUTH.md](./docs/AUTH.md)**.
 
-The earlier Seaport shared-credential setup cannot authenticate users of this
-version. A future hosted deployment must configure a trusted token issuer and
-restricted Canton users; see **[docs/DEVNET.md](./docs/DEVNET.md)** and
+The hosted demo runs on the shared HackCanton DevNet node, where judges sign in
+by picking a party and entering the demo passcode. On that node the team has a
+single ledger user for all parties, so Veil's server alone enforces the role
+boundary; see **[docs/DEVNET.md](./docs/DEVNET.md)** and
 **[docs/VERCEL.md](./docs/VERCEL.md)**.
 
 3-minute click path: **Lender** create offer → **Borrower** sees it → **Outsider** sees nothing →

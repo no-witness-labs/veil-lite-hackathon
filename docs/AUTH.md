@@ -76,10 +76,21 @@ commands must use the authenticated user ID and permitted `actAs`/`readAs` parti
 The server blocks unknown routes, ledger administration, and ordinary users'
 direct create commands. Regulator and outsider cannot submit commands.
 
-The former shared OIDC client-credentials proxy is removed. Missing authentication
-configuration fails closed. Existing Seaport/Vercel credentials alone are not a
-valid deployment of this version: the participant must trust the token issuer and
-have the corresponding restricted users. See [DEVNET.md](DEVNET.md).
+Missing authentication configuration fails closed.
+
+On the shared HackCanton DevNet node the team has one ledger user for all parties.
+There the server performs the same role checks and then submits with that user's
+token instead of the role token, so the role boundary is enforced by the server
+alone. See [DEVNET.md](DEVNET.md).
+
+## Hosted passcode sign-in
+
+A hosted deployment can set `VEIL_DEMO_PASSCODE` and a server-side signing key.
+The sign-in page then offers a party picker: the server exchanges the passcode for
+the same five-minute role token the local issuer produces, and every later request
+goes through the checks above. The operator role needs a separate
+`VEIL_OPERATOR_PASSCODE`; the judge passcode never grants it. Sessions expire after
+five minutes; sign in again to continue. See [VERCEL.md](VERCEL.md).
 
 Direct requests to Canton's JSON/gRPC Ledger API also require an authorized token.
 The bootstrap administrator credential is separate from the operator and is not
@@ -90,6 +101,9 @@ do not expose its admin interface as a public service.
 
 - One participant hosts all parties; these checks establish user access control,
   not privacy against the participant operator.
+- On the shared DevNet node, Canton does not re-check the role: one ledger user can
+  act for every party, and the server is the only role boundary. Anyone holding the
+  demo passcode can sign in as any ordinary role.
 - Assets and manually published valuations are still simulated/trusted inputs.
 - Reset is privileged, cooperative demo cleanup. It is not a business cancellation
   workflow or proof of independent counterparty approval.
