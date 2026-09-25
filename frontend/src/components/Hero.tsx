@@ -6,10 +6,10 @@ const CLAIMS = ['Need-to-know privacy', 'Structural authorisation', 'Selective d
 
 /** The statement band.
  *
- * Rendered at full height on every view and in every lifecycle stage — it is
- * the frame the product is read through, so it must not move or shrink as the
- * workflow advances. Anything that changed here would pull the page around
- * under the viewer mid-demo.
+ * Rendered at the same compact height on every view and in every lifecycle
+ * stage — it is the frame the product is read through, so it must not move or
+ * shrink as the workflow advances, and it must leave the position visible above
+ * the fold at a 900px-tall recording viewport.
  *
  * Deliberately carries no call to action: the originate form sits directly
  * below it with its own submit, and two buttons firing the same command is a
@@ -19,9 +19,7 @@ export function Hero() {
     <div className="v-hero">
       <div className="v-hero__inner">
         <h1>
-          Private credit.
-          <br />
-          <em>Zero disclosure.</em>
+          Private credit. <em>Need-to-know disclosure.</em>
         </h1>
         <div className="v-hero__row">
           <p>
