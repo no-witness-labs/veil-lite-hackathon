@@ -2,7 +2,17 @@
 
 > HackCanton Season 3 development: private financing with controlled demo issuance, funded offers, attested prices, margin calls, collateral top-ups, and enforced maturity.
 
-**Earlier demo:** <https://veil-lite-hackathon.vercel.app/>. The Season 3 changes below require a fresh local sandbox; they have not been deployed to this URL.
+**Live demo:** <https://veil-lite-hackathon.vercel.app/> runs the current Season 3 version on the HackCanton DevNet node. Sign in by choosing a party and entering the demo passcode from the submission notes; each party is a separate five-minute session, so sign out and back in to switch.
+
+**Try it:**
+
+0. **Valuer** → `Healthy · 1.00` → `Publish mark`. A price is usable for five minutes, so start here whenever the offer or acceptance button reports a stale valuation.
+1. **Lender** → `Create offer`.
+2. **Borrower** → `Accept offer`.
+3. **Valuer** → `Stress · 0.62` → `Publish mark`.
+4. **Lender** → `Issue margin call`.
+5. **Borrower** → `Top up 50 units`, then `Repay`.
+6. **Regulator** sees the settlement; **Outsider** → `Raw ledger` shows `[]`.
 
 **Current scope, baseline, policies, and review handoff:** [Season 3](docs/SEASON3.md).
 
@@ -179,7 +189,7 @@ single ledger user for all parties, so Veil's server alone enforces the role
 boundary; see **[docs/DEVNET.md](./docs/DEVNET.md)** and
 **[docs/VERCEL.md](./docs/VERCEL.md)**.
 
-3-minute click path: **Lender** create offer → **Borrower** sees it → **Outsider** sees nothing →
+3-minute click path (if the price is older than five minutes, first publish `Healthy · 1.00` as **Valuer**): **Lender** create offer → **Borrower** sees it → **Outsider** sees nothing →
 **Borrower** accepts → **Valuer** publishes 0.62 → **Lender** issues margin call → **Borrower** adds 50 units → repays and receives all locked collateral. "Reset demo" clears the demo ledger for another run.
 
 ### What the UI proves it is really on Canton

@@ -204,7 +204,7 @@ export function assessValuation(
   const ageMs = now - observedMs
   if (!Number.isFinite(observedMs)) return { status: 'invalid', message: 'The valuation timestamp is invalid; publish a fresh mark.', mark }
   if (ageMs < 0) return { status: 'future', message: 'The valuation is future-dated; synchronize the browser and ledger clocks.', mark, ageMs }
-  if (ageMs > 5 * 60 * 1000) return { status: 'stale', message: 'The valuation is stale; publish a fresh mark before proceeding.', mark, ageMs }
+  if (ageMs > 5 * 60 * 1000) return { status: 'stale', message: 'The valuation is older than 5 minutes. Sign in as Valuer and publish a fresh mark (Healthy · 1.00) first.', mark, ageMs }
 
   if (!Number.isFinite(mark.unitPrice) || mark.unitPrice <= 0 || !Number.isFinite(principal) || principal <= 0 || !Number.isFinite(collateral) || collateral <= 0 || !Number.isFinite(threshold) || threshold <= 0) {
     return { status: 'invalid', message: 'Enter positive principal and collateral terms with a valid liquidation threshold.', mark, ageMs }
