@@ -420,12 +420,11 @@ template Loan
         valuationCid : ContractId CollateralValuation
       controller borrower
       do
-        call <- case marginCall of
-          None -> abort "no margin call is open"
-          Some call -> pure call
+        -- Like ResolveMarginCall, a cure may land after the deadline; Liquidate
+        -- still needs a breach on a fresh mark, so it only loses to a real cure.
+        assertMsg "no margin call is open" (marginCall /= None)
         now <- getTime
         assertMsg "cannot top up at or after maturity" (now < maturity)
-        assertMsg "margin call deadline has passed" (now < call.deadline)
         assertMsg "top-up quantity must be positive" (topUpQuantity > 0.0)
         collateral <- fetch collateralCid
         assertMsg "top-up issuer mismatch" (collateral.issuer == issuer)
@@ -483,10 +482,11 @@ template Loan
           collateralQuantity = request.newQuantity
           valuationStreamId = request.newValuationStreamId
 
-    -- | Borrower pays part of the balance with an exact cash holding. With a
-    -- margin call open, the payment must cure it on a fresh mark; otherwise it
-    -- simply reduces what is owed. Full settlement stays with Repay, which is
-    -- the only choice that releases collateral.
+    -- | Borrower pays part of the balance with an exact cash holding. Without
+    -- a mark it only reduces what is owed and an open call stays open, so it
+    -- can be combined with a top-up. With a mark it must cure the open call.
+    -- Full settlement stays with Repay, the only choice that releases
+    -- collateral.
     choice PartialRepay : ContractId Loan
       with
         paymentCid : ContractId CashHolding
@@ -502,16 +502,13 @@ template Loan
         assertMsg "a partial payment must be less than the outstanding balance; use Repay to settle"
           (paid < principal + interest)
         let remainingPrincipal = outstandingPrincipal principal interest (Some paid)
-        cured <- case marginCall of
-          None -> pure False
-          Some _ -> do
-            markCid <- case valuationCid of
-              None -> abort "a fresh valuation is required to pay down during a margin call"
-              Some markCid -> pure markCid
+        cured <- case (marginCall, valuationCid) of
+          (Some _, Some markCid) -> do
             unitPrice <- checkedPrice valuationAgent lender borrower regulator collateralAsset valuationStreamId markCid
-            assertMsg "payment must restore LTV below the threshold while a margin call is open"
+            assertMsg "payment must restore LTV below the threshold to cure the margin call"
               ((remainingPrincipal / (collateralQuantity * unitPrice)) * 100.0 < liquidationThresholdLtv)
             pure True
+          _ -> pure False
         archive paymentCid
         _ <- create CashHolding with issuer; owner = lender; amount = cash.amount
         create this with
@@ -826,6 +823,7 @@ template CoinLoan
           ((outstandingPrincipal principal interest amountRepaid / (collateralQuantity * unitPrice)) * 100.0 < liquidationThresholdLtv)
         create this with marginCall = None
 
+    -- | Same rules as Loan.PartialRepay.
     choice PartialRepayCoin : ContractId CoinLoan
       with
         paymentCid : ContractId CashHolding
@@ -840,16 +838,13 @@ template CoinLoan
         let paid = repaidTotal amountRepaid + cash.amount
         assertMsg "a partial payment must be less than the outstanding balance; use Repay to settle"
           (paid < principal + interest)
-        cured <- case marginCall of
-          None -> pure False
-          Some _ -> do
-            markCid <- case valuationCid of
-              None -> abort "a fresh valuation is required to pay down during a margin call"
-              Some markCid -> pure markCid
+        cured <- case (marginCall, valuationCid) of
+          (Some _, Some markCid) -> do
             unitPrice <- checkedPrice valuationAgent lender borrower regulator coinAsset valuationStreamId markCid
-            assertMsg "payment must restore LTV below the threshold while a margin call is open"
+            assertMsg "payment must restore LTV below the threshold to cure the margin call"
               ((outstandingPrincipal principal interest (Some paid) / (collateralQuantity * unitPrice)) * 100.0 < liquidationThresholdLtv)
             pure True
+          _ -> pure False
         archive paymentCid
         _ <- create CashHolding with issuer; owner = lender; amount = cash.amount
         create this with

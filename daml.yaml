@@ -1,7 +1,9 @@
 sdk-version: 3.5.1
 name: veil-lite
 source: daml
-version: 0.8.1
+version: 0.8.2
+# The released package this one must upgrade; the compiler checks it at build time.
+upgrades: vendor/veil-lite/veil-lite-0.8.1.dar
 dependencies:
   - daml-prim
   - daml-stdlib

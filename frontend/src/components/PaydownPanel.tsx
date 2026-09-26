@@ -4,20 +4,23 @@ import { UNIT_CASH, balanceOf, fmtAmount, marginCallOf, repaidOf } from '../stat
 import { Button, Field, Panel } from '../ui/primitives'
 
 /** Pay part of the balance in cash. Interest is settled first, then principal,
- * so LTV improves once the payment reaches principal. With a margin call open
- * the payment must cure it on a fresh mark; the ledger enforces both rules. */
+ * so LTV improves once the payment reaches principal. With a margin call open,
+ * a payment that restores LTV on a fresh mark cures it; a smaller one only
+ * reduces the balance, and a top-up can finish the cure. */
 export function PaydownPanel({
   loan,
   valuation,
-  availableCash,
+  largestCash,
   busy,
   onPayDown,
 }: {
   loan: Contract
   valuation?: Valuation
-  availableCash: number
+  /** A payment is one holding, so the largest one caps it (holdings never merge). */
+  largestCash: number
   busy: boolean
-  onPayDown: (amount: number) => void
+  /** `cure` asks the ledger to clear the open call on the current mark. */
+  onPayDown: (amount: number, cure: boolean) => void
 }) {
   const [amount, setAmount] = useState('30')
   const [now, setNow] = useState(() => Date.now())
@@ -46,13 +49,15 @@ export function PaydownPanel({
       ? 'Enter a positive amount.'
       : payment >= outstandingDue
         ? `Pay less than the ${fmtAmount(outstandingDue)} outstanding, or use Repay to settle and release collateral.`
-        : payment > availableCash
-          ? `Only ${fmtAmount(availableCash)} ${UNIT_CASH} is available.`
-          : callOpen && !markFresh
-            ? 'A margin call is open: a fresh mark is needed to prove the payment cures it.'
-            : callOpen && !(ltvAfter < threshold)
-              ? `This leaves LTV at ${ltvAfter.toFixed(1)}%; pay more to get below ${threshold}%.`
-              : null
+        : payment > largestCash
+          ? `Your largest cash holding is ${fmtAmount(largestCash)} ${UNIT_CASH}; a payment must come from one holding.`
+          : null
+  const cures = callOpen && markFresh && ltvAfter < threshold
+  const callNote = !callOpen || cures
+    ? ''
+    : !markFresh
+      ? ' Without a fresh mark this payment cannot cure the margin call; it stays open.'
+      : ` LTV stays at or above ${threshold}%, so the margin call stays open; pay more or top up collateral.`
 
   return (
     <Panel title="Pay down" kicker={`Outstanding · ${fmtAmount(outstandingDue)} ${UNIT_CASH}`}>
@@ -76,12 +81,12 @@ export function PaydownPanel({
               />
             </Field>
           </div>
-          <Button variant="primary" onClick={() => onPayDown(payment)} busy={busy} disabled={Boolean(blocker)}>
+          <Button variant="primary" onClick={() => onPayDown(payment, cures)} busy={busy} disabled={Boolean(blocker)}>
             Pay down
           </Button>
         </div>
         <p className="v-metric__note" style={{ color: blocker ? 'var(--danger)' : undefined }}>
-          {blocker ?? `Leaves ${fmtAmount(after.outstandingDue)} ${UNIT_CASH} outstanding${Number.isFinite(ltvAfter) ? ` at ${ltvAfter.toFixed(1)}% LTV` : ''}.`}
+          {blocker ?? `Leaves ${fmtAmount(after.outstandingDue)} ${UNIT_CASH} outstanding${Number.isFinite(ltvAfter) ? ` at ${ltvAfter.toFixed(1)}% LTV` : ''}${cures ? ' and cures the margin call' : ''}.${callNote}`}
         </p>
       </div>
     </Panel>
