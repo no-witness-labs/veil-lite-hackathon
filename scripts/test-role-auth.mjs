@@ -75,6 +75,9 @@ async function contracts(role, base = web, view = party[role]) {
 
 const template = (name) => `#veil-lite:Veil:${name}`
 const named = (list, name) => list.filter((c) => c.templateId.endsWith(`:Veil:${name}`))
+const TBILL = 'Tokenized T-Bill'
+const MMF = 'Tokenized MMF'
+const ofAsset = (list, asset) => list.filter((c) => (c.createArgument.collateralAsset ?? c.createArgument.asset) === asset)
 function one(list, name) {
   const found = named(list, name)
   assert.equal(found.length, 1, `Expected one ${name}; reset the demo before repeating this check`)
@@ -144,22 +147,22 @@ for (const file of ['tokens.json', 'private.pem', 'headers/participant_admin.txt
 }
 passed('Vite cannot serve the credential directory')
 
-const priorMark = one(await contracts('valuer'), 'CollateralValuation')
+const priorMark = one(ofAsset(await contracts('valuer'), TBILL), 'CollateralValuation')
 await ok(web, submitPath, 'valuer', commandBody('valuer', exercise('CollateralValuation', priorMark.contractId, 'Publish', { unitPrice: '1' })))
 const initial = await contracts('lender')
 const cash = one(initial, 'CashHolding')
-const mark = one(initial, 'CollateralValuation')
+const mark = one(ofAsset(initial, TBILL), 'CollateralValuation')
 await ok(web, submitPath, 'lender', commandBody('lender', exercise('CashHolding', cash.contractId, 'MakeOffer', {
   borrower: party.borrower, regulator: party.regulator, valuationAgent: party.valuer,
   valuationCid: mark.contractId, principal: '100', interest: '5',
-  collateralAsset: 'Tokenized T-Bill / MMF', collateralQuantity: '150',
+  collateralAsset: 'Tokenized T-Bill', collateralQuantity: '150',
   maturity: new Date(Date.now() + 86_400_000).toISOString(), liquidationThresholdLtv: '90', marginCallWindowSeconds: '60',
 })))
 passed('lender creates a funded offer using only its own token')
 
 const borrowerView = await contracts('borrower')
 const offer = one(borrowerView, 'LoanOffer')
-const collateral = named(borrowerView, 'CollateralHolding').find((c) => Number(c.createArgument.quantity) === 150)
+const collateral = ofAsset(named(borrowerView, 'CollateralHolding'), TBILL).find((c) => Number(c.createArgument.quantity) === 150)
 assert.ok(collateral)
 await ok(web, submitPath, 'borrower', commandBody('borrower', exercise('LoanOffer', offer.contractId, 'Accept', {
   collateralCid: collateral.contractId, valuationCid: mark.contractId,
@@ -179,15 +182,37 @@ for (const base of [web, canton]) {
 
 await ok(web, submitPath, 'valuer', commandBody('valuer', exercise('CollateralValuation', mark.contractId, 'Publish', { unitPrice: '0.62' })))
 const stressed = await contracts('lender')
-const stressedMark = one(stressed, 'CollateralValuation')
+const stressedMark = one(ofAsset(stressed, TBILL), 'CollateralValuation')
 await ok(web, submitPath, 'lender', commandBody('lender', exercise('Loan', one(stressed, 'Loan').contractId, 'IssueMarginCall', { valuationCid: stressedMark.contractId })))
 const called = await contracts('borrower')
-const reserve = named(called, 'CollateralHolding').find((c) => Number(c.createArgument.quantity) === 50)
+const reserve = ofAsset(named(called, 'CollateralHolding'), TBILL).find((c) => Number(c.createArgument.quantity) === 50)
 assert.ok(reserve)
 await ok(web, submitPath, 'borrower', commandBody('borrower', exercise('Loan', one(called, 'Loan').contractId, 'TopUpCollateral', {
   collateralCid: reserve.contractId, topUpQuantity: '50', valuationCid: stressedMark.contractId,
 })))
 passed('valuer publishes, lender calls margin, borrower cures with independent tokens')
+
+// Substitution: the borrower escrows its MMF holding; the lender, which cannot
+// see that wallet, approves the request against a fresh MMF mark.
+const beforeSwap = await contracts('borrower')
+const mmfHolding = one(ofAsset(beforeSwap, MMF), 'CollateralHolding')
+const mmfMarkBefore = one(ofAsset(beforeSwap, MMF), 'CollateralValuation')
+await ok(web, submitPath, 'borrower', commandBody('borrower', exercise('CollateralHolding', mmfHolding.contractId, 'ProposeSubstitution', {
+  lender: party.lender, regulator: party.regulator, valuationAgent: party.valuer,
+  releaseAsset: TBILL, releaseQuantity: '200', newValuationStreamId: mmfMarkBefore.createArgument.streamId,
+})))
+assert.equal(named(await contracts('lender'), 'CollateralHolding').length, 0)
+assert.equal(named(await contracts('valuer'), 'SubstitutionRequest').length, 0)
+await ok(web, submitPath, 'valuer', commandBody('valuer', exercise('CollateralValuation', mmfMarkBefore.contractId, 'Publish', { unitPrice: '1' })))
+const swapView = await contracts('lender')
+await ok(web, submitPath, 'lender', commandBody('lender', exercise('Loan', one(swapView, 'Loan').contractId, 'ApplySubstitution', {
+  requestCid: one(swapView, 'SubstitutionRequest').contractId,
+  newValuationCid: one(ofAsset(swapView, MMF), 'CollateralValuation').contractId,
+})))
+const swapped = one(await contracts('regulator'), 'Loan')
+assert.equal(swapped.createArgument.collateralAsset, MMF)
+assert.equal(Number(swapped.createArgument.collateralQuantity), 160)
+passed('borrower proposes and lender approves a collateral substitution with independent tokens')
 
 const cured = await contracts('borrower')
 const repayment = named(cured, 'CashHolding').find((c) => Number(c.createArgument.amount) === 105)
@@ -196,7 +221,8 @@ await ok(web, submitPath, 'borrower', commandBody('borrower', exercise('Loan', o
 const lenderFinal = await contracts('lender')
 const borrowerFinal = await contracts('borrower')
 assert.equal(Number(one(lenderFinal, 'CashHolding').createArgument.amount), 105)
-assert.equal(Number(one(borrowerFinal, 'CollateralHolding').createArgument.quantity), 200)
+assert.equal(Number(one(ofAsset(borrowerFinal, TBILL), 'CollateralHolding').createArgument.quantity), 200)
+assert.equal(Number(one(ofAsset(borrowerFinal, MMF), 'CollateralHolding').createArgument.quantity), 160)
 assert.equal(Number(one(borrowerFinal, 'CashHolding').createArgument.amount), 100)
 assert.equal(named(await contracts('regulator'), 'LoanClosed').length, 1)
 assert.deepEqual(await contracts('outsider'), [])

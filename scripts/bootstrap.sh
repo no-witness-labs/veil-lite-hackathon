@@ -10,7 +10,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BASE="${1:-http://127.0.0.1:6864}"
-DAR="$ROOT/.daml/dist/veil-lite-0.5.0.dar"
+DAR="$ROOT/.daml/dist/veil-lite-0.6.0.dar"
 CONFIG="$ROOT/frontend/public/ledger-config.json"
 AUTH_DIR="$ROOT/.local/auth"
 ADMIN_HEADER="$AUTH_DIR/headers/participant_admin.txt"
@@ -194,7 +194,9 @@ echo "→ Wrote $CONFIG"
 # lender 100 cash, borrower 105 cash + 150 collateral and a 50-unit reserve.
 # Idempotent: skip if the
 # borrower already holds collateral.
-COLLATERAL_ASSET="Tokenized T-Bill / MMF"
+COLLATERAL_ASSET="Tokenized T-Bill"
+# The eligible replacement for collateral substitution, with its own stream.
+SUBSTITUTE_ASSET="Tokenized MMF"
 
 create_holding() {
   # $1 = owner; issuance requires both owner and issuer authority.
@@ -212,7 +214,7 @@ already_seeded="$(curl --fail-with-body -sS -X POST "$BASE/v2/state/active-contr
 d=json.load(sys.stdin)
 events=[e.get("contractEntry",{}).get("JsActiveContract",{}).get("createdEvent",{}) or {} for e in d]
 if any(e.get("templateId", "").endswith((":Veil:CashHolding", ":Veil:CollateralHolding", ":Veil:LoanOffer", ":Veil:Loan", ":Veil:LoanClosed")) and not e.get("createArgument", {}).get("issuer") for e in events):
-    sys.exit("Legacy asset contracts found; restart with a fresh 0.5.0 sandbox.")
+    sys.exit("Legacy asset contracts found; restart with a fresh 0.6.0 sandbox.")
 print(any(e.get("templateId", "").endswith(":Veil:CollateralHolding") and e.get("createArgument", {}).get("issuer") == sys.argv[1] for e in events))' "$ISSUER")"
 
 if [ "$already_seeded" = "True" ]; then
@@ -223,6 +225,7 @@ else
   create_holding "$BORROWER" "{\"issuer\":\"$ISSUER\",\"owner\":\"$BORROWER\",\"amount\":\"105\"}" CashHolding
   create_holding "$BORROWER" "{\"issuer\":\"$ISSUER\",\"owner\":\"$BORROWER\",\"asset\":\"$COLLATERAL_ASSET\",\"quantity\":\"150\"}" CollateralHolding
   create_holding "$BORROWER" "{\"issuer\":\"$ISSUER\",\"owner\":\"$BORROWER\",\"asset\":\"$COLLATERAL_ASSET\",\"quantity\":\"50\"}" CollateralHolding
+  create_holding "$BORROWER" "{\"issuer\":\"$ISSUER\",\"owner\":\"$BORROWER\",\"asset\":\"$SUBSTITUTE_ASSET\",\"quantity\":\"160\"}" CollateralHolding
 fi
 
 # All three demo parties authorize the stream; future price updates need only
@@ -237,15 +240,19 @@ mark_count="$(curl --fail-with-body -sS -X POST "$BASE/v2/state/active-contracts
 events=[e.get("contractEntry",{}).get("JsActiveContract",{}).get("createdEvent",{}) for e in json.load(sys.stdin)]
 marks=[e for e in events if e.get("templateId", "").endswith(":Veil:CollateralValuation")]
 if any("streamId" not in e["createArgument"] for e in marks):
-    sys.exit("Legacy valuations found; restart with a fresh 0.5.0 sandbox.")
+    sys.exit("Legacy valuations found; restart with a fresh 0.6.0 sandbox.")
 if any(e.get("templateId", "").endswith(":Veil:ValuationStream") for e in events):
     sys.exit("Unpublished stream found; initialize it before re-running bootstrap.")
 print(len(marks))')"
-if [ "$mark_count" = "0" ]; then
+seed_stream() {
   curl --fail-with-body -sS -o /dev/null -X POST "$BASE/v2/commands/submit-and-wait-for-transaction" \
     -H "@$OPERATOR_HEADER" -H "Content-Type: application/json" \
-    -d "{\"commands\":{\"commands\":[{\"CreateAndExerciseCommand\":{\"templateId\":\"#veil-lite:Veil:ValuationStream\",\"createArguments\":{\"valuationAgent\":\"$VALUER\",\"lender\":\"$LENDER\",\"borrower\":\"$BORROWER\",\"regulator\":\"$REGULATOR\",\"collateralAsset\":\"$COLLATERAL_ASSET\"},\"choice\":\"PublishInitial\",\"choiceArgument\":{\"unitPrice\":\"1\"}}}],\"commandId\":\"seed-valuation-$RANDOM\",\"actAs\":[\"$LENDER\",\"$BORROWER\",\"$VALUER\"],\"userId\":\"$USER_ID\"}}"
-elif [ "$mark_count" != "1" ]; then
+    -d "{\"commands\":{\"commands\":[{\"CreateAndExerciseCommand\":{\"templateId\":\"#veil-lite:Veil:ValuationStream\",\"createArguments\":{\"valuationAgent\":\"$VALUER\",\"lender\":\"$LENDER\",\"borrower\":\"$BORROWER\",\"regulator\":\"$REGULATOR\",\"collateralAsset\":\"$1\"},\"choice\":\"PublishInitial\",\"choiceArgument\":{\"unitPrice\":\"1\"}}}],\"commandId\":\"seed-valuation-$RANDOM\",\"actAs\":[\"$LENDER\",\"$BORROWER\",\"$VALUER\"],\"userId\":\"$USER_ID\"}}"
+}
+if [ "$mark_count" = "0" ]; then
+  seed_stream "$COLLATERAL_ASSET"
+  seed_stream "$SUBSTITUTE_ASSET"
+elif [ "$mark_count" != "2" ]; then
   echo "Ambiguous valuation streams; use a fresh sandbox." >&2
   exit 1
 fi

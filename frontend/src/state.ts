@@ -133,6 +133,17 @@ export function currentDeal(contracts: Contract[], issuer?: string): Contract | 
   return relevant.reduce((a, b) => (b.offset > a.offset ? b : a))
 }
 
+/** The open substitution request for this loan's counterparties and issuer. */
+export function substitutionRequestFor(contracts: Contract[], deal: Contract | undefined): Contract | undefined {
+  if (!deal || deal.template !== 'Loan') return undefined
+  const requests = contracts.filter((c) => c.template === 'SubstitutionRequest'
+    && c.args.issuer === deal.args.issuer
+    && c.args.lender === deal.args.lender
+    && c.args.borrower === deal.args.borrower)
+  if (requests.length === 0) return undefined
+  return requests.reduce((a, b) => (b.offset > a.offset ? b : a))
+}
+
 export function statusOf(deal: Contract | undefined): Status {
   if (!deal) return 'none'
   if (deal.template === 'LoanOffer') return 'offered'
@@ -350,6 +361,11 @@ export const DISCLOSURE: DisclosureRow[] = [
     template: 'Loan',
     note: 'Issuer and both principals sign; regulator observes',
     by: { lender: 'signatory', borrower: 'signatory', regulator: 'observer', valuer: 'none', issuer: 'signatory', outsider: 'none' },
+  },
+  {
+    template: 'SubstitutionRequest',
+    note: 'Escrowed replacement collateral; the lender approves without seeing the wallet',
+    by: { lender: 'observer', borrower: 'signatory', regulator: 'observer', valuer: 'none', issuer: 'signatory', outsider: 'none' },
   },
   {
     template: 'LoanClosed',

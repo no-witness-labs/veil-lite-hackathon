@@ -105,12 +105,18 @@ const KNOWN_TEMPLATES: TemplateName[] = [
   'CollateralHolding',
   'ValuationStream',
   'CollateralValuation',
+  'SubstitutionRequest',
 ]
 
-export const COLLATERAL_ASSET = 'Tokenized T-Bill / MMF'
+/** The asset offers are written against, and the eligible replacement the
+ * borrower can substitute in while a loan is open. Each has its own jointly
+ * authorized price stream. */
+export const COLLATERAL_ASSET = 'Tokenized T-Bill'
+export const SUBSTITUTE_ASSET = 'Tokenized MMF'
+export const COLLATERAL_ASSETS = [COLLATERAL_ASSET, SUBSTITUTE_ASSET] as const
 
 /** Canonical demo seed (kept in sync with scripts/bootstrap.sh). */
-const SEED = { lenderCash: 100, borrowerCash: 105, borrowerCollateral: 150, borrowerReserve: 50 }
+const SEED = { lenderCash: 100, borrowerCash: 105, borrowerCollateral: 150, borrowerReserve: 50, borrowerSubstitute: 160 }
 
 let commandSeq = 0
 function nextCommandId(prefix: string): string {
@@ -339,7 +345,7 @@ async function findCollateral(party: string, asset: string, quantity?: number, s
 /** Return the one active mark for the configured deal. A stream publishes by
  * replacement, so accepting multiple matching marks would hide a broken
  * stream or stale parallel branch from the user. */
-async function findCurrentValuation(party: string, snapshot = captureSession()): Promise<Contract> {
+async function findCurrentValuation(party: string, asset: string, snapshot = captureSession()): Promise<Contract> {
   const { contracts } = await listActive(party, snapshot)
   const marks = contracts.filter((contract) =>
     contract.template === 'CollateralValuation'
@@ -347,11 +353,11 @@ async function findCurrentValuation(party: string, snapshot = captureSession()):
       && contract.args.lender === cfg.parties.lender
       && contract.args.borrower === cfg.parties.borrower
       && contract.args.regulator === cfg.parties.regulator
-      && contract.args.collateralAsset === COLLATERAL_ASSET
+      && contract.args.collateralAsset === asset
       && typeof contract.args.streamId === 'string'
   )
   if (marks.length !== 1) {
-    throw new Error(`Expected exactly one active valuation mark for the configured stream; found ${marks.length}. Publish or reset the demo before creating an offer.`)
+    throw new Error(`Expected exactly one active ${asset} valuation mark for the configured stream; found ${marks.length}. Publish or reset the demo first.`)
   }
   return marks[0]
 }
@@ -363,7 +369,7 @@ function ledgerMaturity(value: string): string {
 
 /** Lender funds + creates the offer from a cash holding (MakeOffer). */
 export async function createOffer(draft: Draft, snapshot = captureSession()): Promise<TxResult> {
-  const valuation = await findCurrentValuation(cfg.parties.lender, snapshot)
+  const valuation = await findCurrentValuation(cfg.parties.lender, COLLATERAL_ASSET, snapshot)
   const cashCid = await findCash(cfg.parties.lender, draft.principal, snapshot)
   return submit(
     cfg.parties.lender,
@@ -413,7 +419,7 @@ export async function acceptOffer(offerCid: string, snapshot = captureSession())
   if (marks.length !== 1) {
     throw new Error(`Expected exactly one current valuation for the offer's agreed stream; found ${marks.length}. Refresh or publish the agreed stream mark before accepting.`)
   }
-  const collateralCid = await findCollateral(cfg.parties.borrower, COLLATERAL_ASSET, requestedQuantity, snapshot)
+  const collateralCid = await findCollateral(cfg.parties.borrower, offer.args.collateralAsset ?? COLLATERAL_ASSET, requestedQuantity, snapshot)
   return submit(
     cfg.parties.borrower,
     exercise(template('LoanOffer'), offerCid, 'Accept', { collateralCid, valuationCid: marks[0].contractId }),
@@ -436,7 +442,7 @@ export const MARGIN_CALL_WINDOW_SECONDS = 60
 /** Replace the current mark on the configured stream. This is manually
  * attested demo data, not an oracle claim; the UI never creates a parallel
  * valuation contract or chooses an arbitrary latest stream. */
-export async function publishValuation(unitPrice: number, snapshot = captureSession()): Promise<TxResult> {
+export async function publishValuation(unitPrice: number, asset: string, snapshot = captureSession()): Promise<TxResult> {
   if (!Number.isFinite(unitPrice) || unitPrice <= 0) throw new Error('Valuation price must be greater than zero.')
   const { contracts } = await listActive(cfg.parties.valuer, snapshot)
   const marks = contracts.filter((contract) =>
@@ -446,11 +452,11 @@ export async function publishValuation(unitPrice: number, snapshot = captureSess
       && contract.args.lender === cfg.parties.lender
       && contract.args.borrower === cfg.parties.borrower
       && contract.args.regulator === cfg.parties.regulator
-      && contract.args.collateralAsset === COLLATERAL_ASSET
+      && contract.args.collateralAsset === asset
       && typeof contract.args.streamId === 'string'
   )
   if (marks.length !== 1) {
-    throw new Error(`Expected exactly one active mark on the configured valuation stream; found ${marks.length}. Reset the demo to restore the stream lineage.`)
+    throw new Error(`Expected exactly one active ${asset} mark on its configured valuation stream; found ${marks.length}. Reset the demo to restore the stream lineage.`)
   }
   return submit(
     cfg.parties.valuer,
@@ -463,9 +469,9 @@ export async function publishValuation(unitPrice: number, snapshot = captureSess
 export const issueMarginCall = (loanCid: string, valuationCid: string, snapshot = captureSession()): Promise<TxResult> =>
   submit(cfg.parties.lender, exercise(template('Loan'), loanCid, 'IssueMarginCall', { valuationCid }), 'margin-call', snapshot)
 
-export async function topUpCollateral(loanCid: string, topUpQuantity: number, valuationCid: string, snapshot = captureSession()): Promise<TxResult> {
+export async function topUpCollateral(loanCid: string, asset: string, topUpQuantity: number, valuationCid: string, snapshot = captureSession()): Promise<TxResult> {
   if (!Number.isFinite(topUpQuantity) || topUpQuantity <= 0) throw new Error('Top-up quantity must be greater than zero.')
-  const collateralCid = await findCollateral(cfg.parties.borrower, COLLATERAL_ASSET, topUpQuantity, snapshot)
+  const collateralCid = await findCollateral(cfg.parties.borrower, asset, topUpQuantity, snapshot)
   return submit(
     cfg.parties.borrower,
     exercise(template('Loan'), loanCid, 'TopUpCollateral', {
@@ -480,6 +486,40 @@ export async function topUpCollateral(loanCid: string, topUpQuantity: number, va
 
 export const resolveMarginCall = (loanCid: string, valuationCid: string, snapshot = captureSession()): Promise<TxResult> =>
   submit(cfg.parties.borrower, exercise(template('Loan'), loanCid, 'ResolveMarginCall', { valuationCid }), 'resolve-call', snapshot)
+
+/** Borrower escrows one whole holding of the other eligible asset as a
+ * replacement for the loan's locked collateral, naming that asset's agreed
+ * price stream. The lender sees only the request, never the wallet. */
+export async function proposeSubstitution(loan: Contract, holdingCid: string, snapshot = captureSession()): Promise<TxResult> {
+  const { contracts } = await listActive(cfg.parties.borrower, snapshot)
+  const holding = parseHoldings(contracts).find((h) => h.contractId === holdingCid && h.kind === 'collateral')
+  if (!holding?.asset) throw new Error('Replacement holding is no longer available; refresh before proposing.')
+  const mark = await findCurrentValuation(cfg.parties.borrower, holding.asset, snapshot)
+  return submit(
+    cfg.parties.borrower,
+    exercise(template('CollateralHolding'), holdingCid, 'ProposeSubstitution', {
+      lender: loan.args.lender,
+      regulator: loan.args.regulator,
+      valuationAgent: loan.args.valuationAgent,
+      releaseAsset: loan.args.collateralAsset,
+      releaseQuantity: loan.args.collateralQuantity,
+      newValuationStreamId: mark.args.streamId,
+    }),
+    'propose-substitution',
+    snapshot,
+  )
+}
+
+/** Lender approves: Canton re-checks coverage on a fresh mark of the new asset
+ * and swaps the collateral atomically. */
+export const applySubstitution = (loanCid: string, requestCid: string, newValuationCid: string, snapshot = captureSession()): Promise<TxResult> =>
+  submit(cfg.parties.lender, exercise(template('Loan'), loanCid, 'ApplySubstitution', { requestCid, newValuationCid }), 'apply-substitution', snapshot)
+
+export const rejectSubstitution = (requestCid: string, snapshot = captureSession()): Promise<TxResult> =>
+  submit(cfg.parties.lender, exercise(template('SubstitutionRequest'), requestCid, 'RejectSubstitution'), 'reject-substitution', snapshot)
+
+export const cancelSubstitution = (requestCid: string, snapshot = captureSession()): Promise<TxResult> =>
+  submit(cfg.parties.borrower, exercise(template('SubstitutionRequest'), requestCid, 'CancelSubstitution'), 'cancel-substitution', snapshot)
 
 /** Liquidation uses only a ledger valuation CID. The lender never supplies a
  * private mark directly; freshness, deadline, counterparties, and LTV are
@@ -496,27 +536,30 @@ export const liquidateOverdueLoan = (cid: string, snapshot = captureSession()): 
  * the locked-offer quantity (150) and a separate 50-unit top-up reserve. */
 export async function seedDemo(snapshot = captureSession()): Promise<void> {
   requireOperator(snapshot)
-  await submitAs(
-    [cfg.parties.lender, cfg.parties.borrower, cfg.parties.valuer],
-    createAndExercise(
-      template('ValuationStream'),
-      {
-        valuationAgent: cfg.parties.valuer,
-        lender: cfg.parties.lender,
-        borrower: cfg.parties.borrower,
-        regulator: cfg.parties.regulator,
-        collateralAsset: COLLATERAL_ASSET,
-      },
-      'PublishInitial',
-      { unitPrice: '1' },
-    ),
-    'seed-valuation',
-    snapshot,
-  )
+  for (const asset of COLLATERAL_ASSETS) {
+    await submitAs(
+      [cfg.parties.lender, cfg.parties.borrower, cfg.parties.valuer],
+      createAndExercise(
+        template('ValuationStream'),
+        {
+          valuationAgent: cfg.parties.valuer,
+          lender: cfg.parties.lender,
+          borrower: cfg.parties.borrower,
+          regulator: cfg.parties.regulator,
+          collateralAsset: asset,
+        },
+        'PublishInitial',
+        { unitPrice: '1' },
+      ),
+      'seed-valuation',
+      snapshot,
+    )
+  }
   await submitAs([cfg.issuer, cfg.parties.lender], create(template('CashHolding'), { issuer: cfg.issuer, owner: cfg.parties.lender, amount: String(SEED.lenderCash) }), 'seed', snapshot)
   await submitAs([cfg.issuer, cfg.parties.borrower], create(template('CashHolding'), { issuer: cfg.issuer, owner: cfg.parties.borrower, amount: String(SEED.borrowerCash) }), 'seed', snapshot)
   await submitAs([cfg.issuer, cfg.parties.borrower], create(template('CollateralHolding'), { issuer: cfg.issuer, owner: cfg.parties.borrower, asset: COLLATERAL_ASSET, quantity: String(SEED.borrowerCollateral) }), 'seed', snapshot)
   await submitAs([cfg.issuer, cfg.parties.borrower], create(template('CollateralHolding'), { issuer: cfg.issuer, owner: cfg.parties.borrower, asset: COLLATERAL_ASSET, quantity: String(SEED.borrowerReserve) }), 'seed', snapshot)
+  await submitAs([cfg.issuer, cfg.parties.borrower], create(template('CollateralHolding'), { issuer: cfg.issuer, owner: cfg.parties.borrower, asset: SUBSTITUTE_ASSET, quantity: String(SEED.borrowerSubstitute) }), 'seed', snapshot)
 }
 
 async function submitReset(actAs: string[], command: unknown, prefix: string, snapshot = captureSession()): Promise<TxResult> {
@@ -561,7 +604,9 @@ export async function resetDemo(snapshot = captureSession()): Promise<void> {
   }
   ;({ contracts } = await listActive(cfg.parties.lender, snapshot))
   for (const c of contracts) {
-    if (c.template === 'LoanClosed')
+    if (c.template === 'SubstitutionRequest')
+      await submitReset([cfg.issuer, cfg.parties.borrower], exercise(template('SubstitutionRequest'), c.contractId, 'Archive'), 'archive-substitution', snapshot)
+    else if (c.template === 'LoanClosed')
       await submitReset(
         [cfg.issuer, cfg.parties.lender, cfg.parties.borrower],
         exercise(template('LoanClosed'), c.contractId, 'Dismiss'),

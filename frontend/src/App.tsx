@@ -3,6 +3,11 @@ import { captureSession, clearSession, demoLoginInfo, getSession, signIn, signIn
 import type { ActivityEntry, Contract, Draft, Role, Session, SessionRole, TxResult } from './types'
 import {
   acceptOffer,
+  applySubstitution,
+  cancelSubstitution,
+  COLLATERAL_ASSETS,
+  proposeSubstitution,
+  rejectSubstitution,
   COLLATERAL_ASSET,
   createOffer,
   getConfigIssue,
@@ -28,6 +33,7 @@ import {
   UNIT_CASH,
   currentDeal,
   fmtTimestamp,
+  substitutionRequestFor,
   isRole,
   valuationCandidates,
   valuationFor,
@@ -42,6 +48,7 @@ import { PartyStrip } from './components/PartyStrip'
 import { OfferTicket } from './components/OfferTicket'
 import { PositionPanel } from './components/PositionPanel'
 import { ValuationPanel } from './components/ValuationPanel'
+import { SubstitutionPanel } from './components/SubstitutionPanel'
 import { DisclosureMatrix } from './components/DisclosureMatrix'
 import { PositionsTable } from './components/PositionsTable'
 import { ActivityLog } from './components/ActivityLog'
@@ -266,14 +273,23 @@ export default function App() {
   const showCreateForm = !isOutsider && role === 'lender' && status === 'none'
   const showWaiting = !isOutsider && !isValuer && (role === 'borrower' || role === 'regulator') && status === 'none'
   const showPosition = !isOutsider && !isValuer && hasDeal && !!deal
+  const dealAsset = deal?.args.collateralAsset ?? COLLATERAL_ASSET
   const collateralCandidates = holdings
-    .filter((holding) => holding.kind === 'collateral' && holding.asset === COLLATERAL_ASSET)
+    .filter((holding) => holding.kind === 'collateral' && holding.asset === dealAsset)
     .map((holding) => holding.amount)
     .filter((amount) => amount > 0)
     .sort((a, b) => a - b)
   const liquidationThreshold = deal ? Number(deal.args.liquidationThresholdLtv) : Number.NaN
   const markedLtv = deal && valuation ? Number(deal.args.principal) / (Number(deal.args.collateralQuantity) * valuation.unitPrice) * 100 : 0
   const showShockBanner = !isOutsider && !isValuer && status === 'active' && Number.isFinite(liquidationThreshold) && Boolean(valuation && markedLtv >= liquidationThreshold)
+  const substitution = substitutionRequestFor(contracts, deal)
+  const replacementHolding = holdings
+    .filter((holding) => holding.kind === 'collateral' && holding.asset !== dealAsset
+      && (COLLATERAL_ASSETS as readonly string[]).includes(holding.asset ?? ''))
+    .sort((a, b) => b.amount - a.amount)[0]
+  const replacementMarks = substitution
+    ? valuationCandidates(contracts).filter((mark) => mark.streamId === substitution.args.newValuationStreamId)
+    : []
   const availableTopUp = deal && valuation && Number.isFinite(liquidationThreshold)
     ? collateralCandidates.find((amount) => Number(deal.args.principal) / ((Number(deal.args.collateralQuantity) + amount) * valuation.unitPrice) * 100 < liquidationThreshold) ?? 0
     : collateralCandidates[0] ?? 0
@@ -421,8 +437,8 @@ export default function App() {
                   {isValuer && (
                     <ValuationPanel
                       contracts={contracts}
-                      latest={valuation}
-                      onPublish={(price) => act(`Publish valuation ${price.toFixed(2)}`, PARTY_NAMES.valuer, (snapshot) => publishValuation(price, snapshot))}
+                      assets={COLLATERAL_ASSETS}
+                      onPublish={(price, asset) => act(`Publish ${asset} valuation ${price.toFixed(2)}`, PARTY_NAMES.valuer, (snapshot) => publishValuation(price, asset, snapshot))}
                       busy={busy}
                     />
                   )}
@@ -468,12 +484,41 @@ export default function App() {
                         onTopUp: (quantity) =>
                           act(`Top up collateral · ${quantity} units`, PARTY_NAMES.borrower, (snapshot) => {
                             if (!valuation) throw new Error('No ledger valuation is visible. Publish a fresh mark before topping up.')
-                            return topUpCollateral(deal.contractId, quantity, valuation.contractId, snapshot)
+                            return topUpCollateral(deal.contractId, dealAsset, quantity, valuation.contractId, snapshot)
                           }),
                         onResolveMarginCall: () =>
                           act('Resolve margin call', PARTY_NAMES.borrower, (snapshot) => {
                             if (!valuation) throw new Error('No ledger valuation is visible. Publish a fresh healthy mark first.')
                             return resolveMarginCall(deal.contractId, valuation.contractId, snapshot)
+                          }),
+                      }}
+                    />
+                  )}
+                  {showPosition && deal && status === 'active' && (
+                    <SubstitutionPanel
+                      role={role}
+                      loan={deal}
+                      request={substitution}
+                      replacement={replacementHolding}
+                      replacementMarks={replacementMarks}
+                      busy={busy}
+                      actions={{
+                        onPropose: (holdingCid) =>
+                          act('Propose collateral substitution', PARTY_NAMES.borrower, (snapshot) => proposeSubstitution(deal, holdingCid, snapshot)),
+                        onApply: () =>
+                          act('Approve collateral substitution', PARTY_NAMES.lender, (snapshot) => {
+                            if (!substitution || replacementMarks.length !== 1) throw new Error('Publish a fresh mark for the replacement asset first.')
+                            return applySubstitution(deal.contractId, substitution.contractId, replacementMarks[0].contractId, snapshot)
+                          }),
+                        onReject: () =>
+                          act('Reject collateral substitution', PARTY_NAMES.lender, (snapshot) => {
+                            if (!substitution) throw new Error('The substitution request is no longer visible.')
+                            return rejectSubstitution(substitution.contractId, snapshot)
+                          }),
+                        onCancel: () =>
+                          act('Cancel collateral substitution', PARTY_NAMES.borrower, (snapshot) => {
+                            if (!substitution) throw new Error('The substitution request is no longer visible.')
+                            return cancelSubstitution(substitution.contractId, snapshot)
                           }),
                       }}
                     />
