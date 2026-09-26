@@ -9,6 +9,7 @@ const { proxyLedgerRequest } = require('../api/_ledger.js')
 const sessionHandler = require('../api/session.js')
 const demoLoginHandler = require('../api/demo-login.js')
 const { resetUpstreamCache } = require('../api/_upstream.js')
+const { proxyRegistryRequest } = require('../api/_registry.js')
 
 const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 })
 const publicPem = publicKey.export({ type: 'spki', format: 'pem' })
@@ -383,4 +384,53 @@ test('open demo: ordinary parties need no passcode, the operator still does', as
   const disabled = response()
   await demoLoginHandler(loginReq({ role: 'lender' }), disabled)
   assert.equal(disabled.statusCode, 404)
+})
+
+test('commands may carry well-formed disclosed contracts only', () => {
+  const token = jwt({ sub: 'veil-borrower' })
+  const disclosed = [{ templateId: 'pkg:Mod:T', contractId: '00ab', createdEventBlob: 'CgMyLjE=', synchronizerId: 'global-domain::1220' }]
+  const withDisclosed = (value) => {
+    const body = exerciseBody(['Borrower::local'], undefined, 'veil-borrower')
+    body.commands.disclosedContracts = value
+    return req(token, 'POST', '/v2/commands/submit-and-wait-for-transaction', body)
+  }
+  authorizeLedgerRequest(withDisclosed(disclosed), '/v2/commands/submit-and-wait-for-transaction', withDisclosed(disclosed).body)
+  for (const bad of ['x', [{ contractId: '00ab' }], [{ ...disclosed[0], extra: 1 }], Array(17).fill(disclosed[0])]) {
+    assertAuthError(() => authorizeLedgerRequest(withDisclosed(bad), '/v2/commands/submit-and-wait-for-transaction', withDisclosed(bad).body), 400, 'REQUEST_INVALID')
+  }
+})
+
+test('registry proxy: whitelisted reads only, transacting roles only, node token forwarded', async () => {
+  Object.assign(process.env, sharedNodeEnv, { VEIL_REGISTRY_URL: 'http://registry.test/scan-proxy' })
+  const captured = {}
+  globalThis.fetch = async (url, init) => {
+    if (url === sharedNodeEnv.VEIL_OIDC_TOKEN_URL) return new Response(JSON.stringify({ access_token: 'node-access', expires_in: 10800 }), { status: 200 })
+    captured.url = url
+    captured.init = init
+    return new Response('{"factoryId":"f"}', { status: 200, headers: { 'content-type': 'application/json' } })
+  }
+  const post = (sub, path, body = { choiceArguments: {} }) => ({ method: 'POST', url: `/api${path}`, headers: { authorization: `Bearer ${jwt({ sub })}` }, body: JSON.stringify(body) })
+
+  const ok = response()
+  await proxyRegistryRequest(post('veil-borrower', '/registry/allocation-instruction/v2/allocation-factory'), ok, '/registry/allocation-instruction/v2/allocation-factory')
+  assert.equal(ok.statusCode, 200)
+  assert.equal(captured.url, 'http://registry.test/scan-proxy/registry/allocation-instruction/v2/allocation-factory')
+  assert.equal(captured.init.headers.Authorization, 'Bearer node-access')
+
+  const regulator = response()
+  await proxyRegistryRequest(post('veil-regulator', '/registry/allocation/v2/settlement-factory'), regulator, '/registry/allocation/v2/settlement-factory')
+  assert.equal(regulator.statusCode, 403)
+
+  const unknown = response()
+  await proxyRegistryRequest(post('veil-lender', '/registry/transfer-instruction/v1/transfer-factory'), unknown, '/registry/transfer-instruction/v1/transfer-factory')
+  assert.equal(unknown.statusCode, 404)
+
+  const anonymous = response()
+  await proxyRegistryRequest({ method: 'GET', url: '/api/registry/metadata/v1/info', headers: {} }, anonymous, '/registry/metadata/v1/info')
+  assert.equal(anonymous.statusCode, 401)
+
+  process.env.VEIL_REGISTRY_URL = ''
+  const off = response()
+  await proxyRegistryRequest(post('veil-lender', '/registry/allocation/v2/settlement-factory'), off, '/registry/allocation/v2/settlement-factory')
+  assert.equal(off.statusCode, 503)
 })

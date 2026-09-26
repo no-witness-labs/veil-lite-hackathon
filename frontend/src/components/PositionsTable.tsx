@@ -11,6 +11,7 @@ export function PositionsTable({ role, holdings }: { role: Role; holdings: Holdi
   )
   const cash = rows.filter((h) => h.kind === 'cash').reduce((s, h) => s + h.amount, 0)
   const units = rows.filter((h) => h.kind === 'collateral').reduce((s, h) => s + h.amount, 0)
+  const coin = rows.filter((h) => h.kind === 'coin').reduce((s, h) => s + h.amount, 0)
 
   return (
     <Panel
@@ -20,7 +21,7 @@ export function PositionsTable({ role, holdings }: { role: Role; holdings: Holdi
       footer={
         <>
           <span className="v-id">
-            {fmtAmount(cash)} {UNIT_CASH} · {fmtAmount(units, 0)} units
+            {fmtAmount(cash)} {UNIT_CASH} · {fmtAmount(units, 0)} units{coin > 0 ? ` · ${fmtAmount(coin)} CC` : ''}
           </span>
           <span className="v-id">{rows.length} contract{rows.length === 1 ? '' : 's'}</span>
         </>
@@ -47,14 +48,15 @@ export function PositionsTable({ role, holdings }: { role: Role; holdings: Holdi
                   <Tag tone={h.kind === 'cash' ? 'accent' : 'info'}>{h.kind}</Tag>
                 </td>
                 <td style={{ color: 'var(--ink-900)' }}>
-                  {h.kind === 'cash' ? 'USDC' : (h.asset ?? 'Collateral')} <span className="v-muted">(simulated)</span>
+                  {h.kind === 'cash' ? 'USDC' : (h.asset ?? 'Collateral')}{' '}
+                  <span className="v-muted">{h.kind === 'coin' ? '(real, DevNet)' : '(simulated)'}</span>
                 </td>
                 <td>
                   <span className="v-id" title={h.contractId}>{shortId(h.contractId, 10, 6)}</span>
                 </td>
                 <td className="v-num">
-                  {fmtAmount(h.amount, h.kind === 'cash' ? 2 : 0)}
-                  <span className="v-metric__unit">{h.kind === 'cash' ? UNIT_CASH : 'units'}</span>
+                  {fmtAmount(h.amount, h.kind === 'collateral' ? 0 : 2)}
+                  <span className="v-metric__unit">{h.kind === 'cash' ? UNIT_CASH : h.kind === 'coin' ? 'CC' : 'units'}</span>
                 </td>
               </tr>
             ))}

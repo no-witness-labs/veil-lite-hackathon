@@ -19,6 +19,9 @@ export type TemplateName =
   | 'ValuationStream'
   | 'CollateralValuation'
   | 'SubstitutionRequest'
+  | 'CoinLoanOffer'
+  | 'CoinLoan'
+  | 'Amulet'
 
 /** The valuation record attached to an active margin-call workflow. */
 export interface MarginCall {
@@ -51,6 +54,10 @@ export interface DealArgs {
   reason?: string
   collateralReleased?: boolean
   amountRepaid?: string | null
+  // Canton Coin collateral (CIP-112 committed allocation)
+  coinAdmin?: string
+  settlementRef?: string
+  allocationCid?: string
   // Substitution request
   releaseAsset?: string
   releaseQuantity?: string
@@ -67,7 +74,7 @@ export interface DealArgs {
 /** A wallet holding owned by the active party (its own cash / collateral). */
 export interface Holding {
   contractId: string
-  kind: 'cash' | 'collateral'
+  kind: 'cash' | 'collateral' | 'coin'
   amount: number
   asset?: string
   issuer?: string
@@ -89,6 +96,7 @@ export interface Draft {
   maturity: string
   thresholdLtv: number
   marginCallWindowSeconds: number
+  collateralAsset: string
 }
 
 /** Ledger-attested collateral mark. Valuers can see these records without

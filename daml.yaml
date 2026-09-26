@@ -1,9 +1,16 @@
 sdk-version: 3.5.1
 name: veil-lite
 source: daml
-version: 0.7.0
+version: 0.8.0
 dependencies:
   - daml-prim
   - daml-stdlib
+data-dependencies:
+  - vendor/splice-token-standard/splice-api-token-metadata-v1-1.0.0.dar
+  - vendor/splice-token-standard/splice-api-token-holding-v2-1.0.0.dar
+  - vendor/splice-token-standard/splice-api-token-allocation-v2-1.0.0.dar
+  - vendor/splice-token-standard/splice-api-token-allocation-instruction-v2-1.0.0.dalf
 build-options:
   - --target=2.2
+  # A .dalf data-dependency is hidden by default; expose its module.
+  - --package=splice-api-token-allocation-instruction-v2-1.0.0

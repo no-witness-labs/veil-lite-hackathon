@@ -1,0 +1,97 @@
+-- | Stand-ins for the Canton Coin registry that implement the Token Standard V2
+-- interfaces with the same authorization and committed-lock rules as Amulet:
+-- only executors settle or cancel, and a committed allocation cannot be
+-- withdrawn before its settlement deadline.
+module Veil.CoinMocks where
+
+import DA.Action (when)
+import DA.Foldable (forA_)
+import DA.Map qualified as Map
+import DA.Optional (fromSome)
+import Splice.Api.Token.AllocationInstructionV2 qualified as Instr
+import Splice.Api.Token.AllocationV2 qualified as Token
+import Splice.Api.Token.MetadataV1
+
+template MockAllocationFactory
+  with
+    admin : Party
+    users : [Party]
+  where
+    signatory admin
+    observer users
+
+    interface instance Instr.AllocationFactory for MockAllocationFactory where
+      view = Instr.AllocationFactoryView with admin; meta = emptyMetadata
+      allocationFactory_publicFetchImpl _ _ = pure Instr.AllocationFactoryView with admin; meta = emptyMetadata
+      allocationFactory_allocateExtraObservers _ = []
+      allocationFactory_allocateImpl _ arg = do
+        assertMsg "only the authorizer may allocate" (arg.actors == [fromSome arg.allocation.authorizer.owner])
+        cid <- create MockAllocation with settlement = arg.settlement; allocation = arg.allocation
+        pure Instr.AllocationInstructionResult with
+          output = Instr.AllocationInstructionResult_Completed with allocationCid = toInterfaceContractId cid
+          authorizerChangeCids = mempty
+          meta = emptyMetadata
+
+template MockAllocation
+  with
+    settlement : Token.SettlementInfo
+    allocation : Token.AllocationSpecification
+  where
+    signatory allocation.admin, fromSome allocation.authorizer.owner
+    observer settlement.executors
+
+    interface instance Token.Allocation for MockAllocation where
+      view = Token.AllocationView with
+        originalAllocationCid = None
+        settlement
+        allocation
+        holdingCids = []
+        createdAt = fromSome allocation.settlementDeadline
+        numIterations = 0
+        expiresAt = allocation.settlementDeadline
+        availableActions = Map.empty
+        meta = emptyMetadata
+      allocation_settleImpl self arg = do
+        assertMsg "only executors settle" (arg.actors == settlement.executors)
+        now <- getTime
+        forA_ allocation.settlementDeadline $ \d -> assertMsg "settlement deadline passed" (now <= d)
+        archive (fromInterfaceContractId @MockAllocation self)
+        pure Token.AllocationResult with
+          output = Token.AllocationResult_Settled with nextIterationAllocationCid = None
+          authorizerHoldingCids = mempty
+          meta = emptyMetadata
+      allocation_cancelImpl self arg = do
+        assertMsg "only executors cancel" (arg.actors == settlement.executors)
+        archive (fromInterfaceContractId @MockAllocation self)
+        pure Token.AllocationResult with output = Token.AllocationResult_Cancelled; authorizerHoldingCids = mempty; meta = emptyMetadata
+      allocation_withdrawImpl self arg = do
+        assertMsg "only the authorizer withdraws" (arg.actors == [fromSome allocation.authorizer.owner])
+        now <- getTime
+        when allocation.committed $
+          assertMsg "cannot withdraw a committed allocation before its settlement deadline"
+            (maybe False (now >) allocation.settlementDeadline)
+        archive (fromInterfaceContractId @MockAllocation self)
+        pure Token.AllocationResult with output = Token.AllocationResult_Withdrawn; authorizerHoldingCids = mempty; meta = emptyMetadata
+      allocation_settleExtraObservers _ = []
+      allocation_cancelExtraObservers _ = []
+      allocation_withdrawExtraObservers _ = []
+
+template MockSettlementFactory
+  with
+    admin : Party
+    users : [Party]
+  where
+    signatory admin
+    observer users
+
+    interface instance Token.SettlementFactory for MockSettlementFactory where
+      view = Token.SettlementFactoryView with admin; meta = emptyMetadata
+      settlementFactory_publicFetchImpl _ _ = pure Token.SettlementFactoryView with admin; meta = emptyMetadata
+      settlementFactory_settleBatchExtraObservers _ = []
+      settlementFactory_settleBatchImpl _ arg = do
+        results <- forA arg.allocations $ \a -> exercise a.allocationCid Token.Allocation_Settle with
+          actors = arg.actors
+          extraTransferLegSides = a.extraTransferLegSides
+          nextIterationFunding = a.nextIterationFunding
+          extraArgs = arg.extraArgs
+        pure Token.SettlementFactory_SettleBatchResult with allocationSettleResults = results; meta = emptyMetadata
