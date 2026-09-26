@@ -92,8 +92,14 @@ export function PositionPanel({
   const markFresh = Boolean(valuation && Number.isFinite(markAgeMs) && markAgeMs >= 0 && markAgeMs <= MARK_MAX_AGE_MS)
   const markIssue = markAgeMs < 0 ? 'future-dated — use a synchronised ledger clock' : 'stale — publish a fresh mark'
   const markBreach = Boolean(markFresh && threshold !== undefined && ltv >= threshold)
-  const topUpLtv = availableTopUp > 0 && markPrice && collateral + availableTopUp > 0
-    ? (outstandingPrincipal / ((collateral + availableTopUp) * markPrice)) * 100
+  // Smallest whole number of units that brings LTV strictly below the threshold.
+  const neededUnits = markPrice && threshold !== undefined
+    ? Math.max(1, Math.floor((outstandingPrincipal * 100) / (threshold * markPrice) - collateral) + 1)
+    : 1
+  const [topUpInput, setTopUpInput] = useState('')
+  const topUpQty = topUpInput === '' ? Math.min(neededUnits, availableTopUp || neededUnits) : Number(topUpInput)
+  const topUpLtv = Number.isFinite(topUpQty) && topUpQty > 0 && topUpQty <= availableTopUp && markPrice
+    ? (outstandingPrincipal / ((collateral + topUpQty) * markPrice)) * 100
     : Number.POSITIVE_INFINITY
   const topUpRestores = threshold !== undefined && topUpLtv < threshold
 
@@ -273,6 +279,8 @@ export function PositionPanel({
         threshold={threshold}
         acceptanceMessage={acceptance?.message}
         availableTopUp={availableTopUp}
+        topUpQty={topUpQty}
+        onTopUpQtyChange={setTopUpInput}
         repayment={repayment}
         busy={busy}
         actions={actions}
@@ -376,6 +384,8 @@ function ActionBar({
   threshold,
   acceptanceMessage,
   availableTopUp,
+  topUpQty,
+  onTopUpQtyChange,
   repayment,
   busy,
   actions,
@@ -391,6 +401,8 @@ function ActionBar({
   threshold?: number
   acceptanceMessage?: string
   availableTopUp: number
+  topUpQty: number
+  onTopUpQtyChange: (value: string) => void
   repayment: number
   busy: boolean
   actions: PositionActions
@@ -426,9 +438,11 @@ function ActionBar({
       hint = !beforeMaturity
         ? 'Maturity reached — repay or await lender liquidation'
         : beforeDeadline
-          ? availableTopUp > 0
-            ? 'Fresh mark or exact top-up required'
-            : 'No reserve holding restores LTV'
+          ? availableTopUp <= 0
+            ? 'No reserve holding available'
+            : topUpQty > availableTopUp
+              ? `At most ${availableTopUp} units available in one holding`
+              : 'Fresh mark and a top-up that restores LTV required'
           : 'Call expired — lender may liquidate'
       hintTone = 'danger'
     }
@@ -465,9 +479,23 @@ function ActionBar({
             Issue margin call
           </Button>
         )}
+        {borrowerCall && beforeDeadline && beforeMaturity && !gates.resolve && availableTopUp > 0 && (
+          <input
+            className="v-input"
+            aria-label="Top-up units"
+            type="number"
+            inputMode="decimal"
+            min="1"
+            step="1"
+            style={{ width: 110 }}
+            value={Number.isFinite(topUpQty) ? topUpQty : ''}
+            onChange={(event) => onTopUpQtyChange(event.target.value)}
+            disabled={busy}
+          />
+        )}
         {borrowerCall && gates.topUp && (
-          <Button variant="primary" onClick={() => actions.onTopUp(availableTopUp)} busy={busy}>
-            Top up {availableTopUp} units
+          <Button variant="primary" onClick={() => actions.onTopUp(topUpQty)} busy={busy}>
+            Top up {topUpQty} units
           </Button>
         )}
         {borrowerCall && !gates.topUp && gates.resolve && (
@@ -477,7 +505,7 @@ function ActionBar({
         )}
         {borrowerCall && !gates.topUp && !gates.resolve && (
           <Button variant="primary" disabled>
-            Top up collateral
+            Top up {Number.isFinite(topUpQty) && topUpQty > 0 ? `${topUpQty} units` : 'collateral'}
           </Button>
         )}
         {lenderCall && (

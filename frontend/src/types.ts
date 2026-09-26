@@ -87,6 +87,8 @@ export interface Draft {
   interest: number
   collateral: number
   maturity: string
+  thresholdLtv: number
+  marginCallWindowSeconds: number
 }
 
 /** Ledger-attested collateral mark. Valuers can see these records without

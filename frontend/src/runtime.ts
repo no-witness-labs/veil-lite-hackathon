@@ -10,7 +10,6 @@ export const getParties = (): Record<Role, string> => ledger.getParties()
 export const getIssuer = (): string => ledger.getIssuer()
 export const getConfigIssue = (): string | null => ledger.getConfigIssue()
 
-export const LIQUIDATION_THRESHOLD_LTV = ledger.LIQUIDATION_THRESHOLD_LTV
 export const COLLATERAL_ASSET = ledger.COLLATERAL_ASSET
 export const COLLATERAL_ASSETS = ledger.COLLATERAL_ASSETS
 
@@ -44,8 +43,8 @@ export const issueMarginCall = (loanCid: string, valuationCid: string, snapshot?
 export const topUpCollateral = (loanCid: string, asset: string, topUpQuantity: number, valuationCid: string, snapshot?: AuthSnapshot): Promise<TxResult> =>
   ledger.topUpCollateral(loanCid, asset, topUpQuantity, valuationCid, snapshot)
 
-export const proposeSubstitution = (loan: Contract, holdingCid: string, snapshot?: AuthSnapshot): Promise<TxResult> =>
-  ledger.proposeSubstitution(loan, holdingCid, snapshot)
+export const proposeSubstitution = (loan: Contract, asset: string, quantity: number, snapshot?: AuthSnapshot): Promise<TxResult> =>
+  ledger.proposeSubstitution(loan, asset, quantity, snapshot)
 
 export const applySubstitution = (loanCid: string, requestCid: string, newValuationCid: string, snapshot?: AuthSnapshot): Promise<TxResult> =>
   ledger.applySubstitution(loanCid, requestCid, newValuationCid, snapshot)

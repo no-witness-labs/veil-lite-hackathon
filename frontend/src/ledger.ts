@@ -116,7 +116,7 @@ export const SUBSTITUTE_ASSET = 'Tokenized MMF'
 export const COLLATERAL_ASSETS = [COLLATERAL_ASSET, SUBSTITUTE_ASSET] as const
 
 /** Canonical demo seed (kept in sync with scripts/bootstrap.sh). */
-const SEED = { lenderCash: 100, borrowerCash: 105, borrowerCollateral: 150, borrowerReserve: 50, borrowerSubstitute: 160 }
+const SEED = { lenderCash: 10000, borrowerCash: 10500, borrowerCollateral: 15000, borrowerReserve: 5000, borrowerSubstitute: 16000 }
 
 let commandSeq = 0
 function nextCommandId(prefix: string): string {
@@ -273,9 +273,6 @@ function exercise(templateId: string, contractId: string, choice: string, choice
   return { ExerciseCommand: { templateId, contractId, choice, choiceArgument } }
 }
 
-/** LTV threshold (%) above which the on-ledger Liquidate choice is permitted. */
-export const LIQUIDATION_THRESHOLD_LTV = 90
-
 /** A party's own wallet holdings (cash + collateral), derived from contracts. */
 export function parseHoldings(contracts: Contract[]): Holding[] {
   const out: Holding[] = []
@@ -383,8 +380,8 @@ export async function createOffer(draft: Draft, snapshot = captureSession()): Pr
       collateralAsset: COLLATERAL_ASSET,
       collateralQuantity: String(draft.collateral),
       maturity: ledgerMaturity(draft.maturity),
-      liquidationThresholdLtv: String(LIQUIDATION_THRESHOLD_LTV),
-      marginCallWindowSeconds: String(MARGIN_CALL_WINDOW_SECONDS),
+      liquidationThresholdLtv: String(draft.thresholdLtv),
+      marginCallWindowSeconds: String(draft.marginCallWindowSeconds),
     }),
     'offer',
     snapshot,
@@ -445,8 +442,6 @@ export async function partialRepay(loanCid: string, amount: number, valuationCid
   return submit(cfg.parties.borrower, exercise(template('Loan'), loanCid, 'PartialRepay', { paymentCid, valuationCid }), 'partial-repay', snapshot)
 }
 
-export const MARGIN_CALL_WINDOW_SECONDS = 60
-
 /** Replace the current mark on the configured stream. This is manually
  * attested demo data, not an oracle claim; the UI never creates a parallel
  * valuation contract or chooses an arbitrary latest stream. */
@@ -495,14 +490,14 @@ export async function topUpCollateral(loanCid: string, asset: string, topUpQuant
 export const resolveMarginCall = (loanCid: string, valuationCid: string, snapshot = captureSession()): Promise<TxResult> =>
   submit(cfg.parties.borrower, exercise(template('Loan'), loanCid, 'ResolveMarginCall', { valuationCid }), 'resolve-call', snapshot)
 
-/** Borrower escrows one whole holding of the other eligible asset as a
+/** Borrower escrows an exact quantity of the other eligible asset as a
  * replacement for the loan's locked collateral, naming that asset's agreed
- * price stream. The lender sees only the request, never the wallet. */
-export async function proposeSubstitution(loan: Contract, holdingCid: string, snapshot = captureSession()): Promise<TxResult> {
-  const { contracts } = await listActive(cfg.parties.borrower, snapshot)
-  const holding = parseHoldings(contracts).find((h) => h.contractId === holdingCid && h.kind === 'collateral')
-  if (!holding?.asset) throw new Error('Replacement holding is no longer available; refresh before proposing.')
-  const mark = await findCurrentValuation(cfg.parties.borrower, holding.asset, snapshot)
+ * price stream. A larger holding is split privately first; the lender sees
+ * only the request, never the wallet. */
+export async function proposeSubstitution(loan: Contract, asset: string, quantity: number, snapshot = captureSession()): Promise<TxResult> {
+  if (!Number.isFinite(quantity) || quantity <= 0) throw new Error('Replacement quantity must be greater than zero.')
+  const mark = await findCurrentValuation(cfg.parties.borrower, asset, snapshot)
+  const holdingCid = await findCollateral(cfg.parties.borrower, asset, quantity, snapshot)
   return submit(
     cfg.parties.borrower,
     exercise(template('CollateralHolding'), holdingCid, 'ProposeSubstitution', {
@@ -540,8 +535,9 @@ export const liquidateLoan = (cid: string, valuationCid: string, snapshot = capt
 export const liquidateOverdueLoan = (cid: string, snapshot = captureSession()): Promise<TxResult> =>
   submit(cfg.parties.lender, exercise(template('Loan'), cid, 'LiquidateOverdue'), 'liquidate-overdue', snapshot)
 
-/** Seed the canonical demo holdings: lender 100 cash, borrower 105 cash plus
- * the locked-offer quantity (150) and a separate 50-unit top-up reserve. */
+/** Seed demo wallets large enough for user-chosen terms: lender 10,000 cash;
+ * borrower 10,500 cash, 15,000 + 5,000 T-Bill units and 16,000 MMF units. The
+ * default offer (100 / 5 / 150) splits exact holdings out of these. */
 export async function seedDemo(snapshot = captureSession()): Promise<void> {
   requireOperator(snapshot)
   for (const asset of COLLATERAL_ASSETS) {

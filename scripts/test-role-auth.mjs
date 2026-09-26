@@ -78,6 +78,21 @@ const named = (list, name) => list.filter((c) => c.templateId.endsWith(`:Veil:${
 const TBILL = 'Tokenized T-Bill'
 const MMF = 'Tokenized MMF'
 const ofAsset = (list, asset) => list.filter((c) => (c.createArgument.collateralAsset ?? c.createArgument.asset) === asset)
+const amountOf = (c) => Number(c.createArgument.amount ?? c.createArgument.quantity)
+
+// Seed wallets are large; carve an exact holding out of one, as the app does.
+async function exactHolding(role, templateName, asset, amount) {
+  const holdings = named(await contracts(role), templateName).filter((c) => asset === undefined || c.createArgument.asset === asset)
+  const exact = holdings.find((c) => amountOf(c) === amount)
+  if (exact) return exact
+  const source = holdings.find((c) => amountOf(c) > amount)
+  assert.ok(source, `no ${templateName} holding larger than ${amount}`)
+  const [choice, field] = templateName === 'CashHolding' ? ['Split', 'splitAmount'] : ['SplitCollateral', 'splitQuantity']
+  await ok(web, submitPath, role, commandBody(role, exercise(templateName, source.contractId, choice, { [field]: String(amount) })))
+  const split = named(await contracts(role), templateName).find((c) => amountOf(c) === amount && (asset === undefined || c.createArgument.asset === asset))
+  assert.ok(split)
+  return split
+}
 function one(list, name) {
   const found = named(list, name)
   assert.equal(found.length, 1, `Expected one ${name}; reset the demo before repeating this check`)
@@ -162,8 +177,7 @@ passed('lender creates a funded offer using only its own token')
 
 const borrowerView = await contracts('borrower')
 const offer = one(borrowerView, 'LoanOffer')
-const collateral = ofAsset(named(borrowerView, 'CollateralHolding'), TBILL).find((c) => Number(c.createArgument.quantity) === 150)
-assert.ok(collateral)
+const collateral = await exactHolding('borrower', 'CollateralHolding', TBILL, 150)
 await ok(web, submitPath, 'borrower', commandBody('borrower', exercise('LoanOffer', offer.contractId, 'Accept', {
   collateralCid: collateral.contractId, valuationCid: mark.contractId,
 })))
@@ -185,8 +199,7 @@ const stressed = await contracts('lender')
 const stressedMark = one(ofAsset(stressed, TBILL), 'CollateralValuation')
 await ok(web, submitPath, 'lender', commandBody('lender', exercise('Loan', one(stressed, 'Loan').contractId, 'IssueMarginCall', { valuationCid: stressedMark.contractId })))
 const called = await contracts('borrower')
-const reserve = ofAsset(named(called, 'CollateralHolding'), TBILL).find((c) => Number(c.createArgument.quantity) === 50)
-assert.ok(reserve)
+const reserve = await exactHolding('borrower', 'CollateralHolding', TBILL, 50)
 await ok(web, submitPath, 'borrower', commandBody('borrower', exercise('Loan', one(called, 'Loan').contractId, 'TopUpCollateral', {
   collateralCid: reserve.contractId, topUpQuantity: '50', valuationCid: stressedMark.contractId,
 })))
@@ -195,7 +208,7 @@ passed('valuer publishes, lender calls margin, borrower cures with independent t
 // Substitution: the borrower escrows its MMF holding; the lender, which cannot
 // see that wallet, approves the request against a fresh MMF mark.
 const beforeSwap = await contracts('borrower')
-const mmfHolding = one(ofAsset(beforeSwap, MMF), 'CollateralHolding')
+const mmfHolding = await exactHolding('borrower', 'CollateralHolding', MMF, 160)
 const mmfMarkBefore = one(ofAsset(beforeSwap, MMF), 'CollateralValuation')
 await ok(web, submitPath, 'borrower', commandBody('borrower', exercise('CollateralHolding', mmfHolding.contractId, 'ProposeSubstitution', {
   lender: party.lender, regulator: party.regulator, valuationAgent: party.valuer,
@@ -216,27 +229,23 @@ passed('borrower proposes and lender approves a collateral substitution with ind
 
 // Partial repayment: 30 settles the 5 interest and 25 principal; the lender
 // receives it and the final repayment is the remaining 75.
-const beforePaydown = await contracts('borrower')
-const fullCash = named(beforePaydown, 'CashHolding').find((c) => Number(c.createArgument.amount) === 105)
-assert.ok(fullCash)
-await ok(web, submitPath, 'borrower', commandBody('borrower', exercise('CashHolding', fullCash.contractId, 'Split', { splitAmount: '30' })))
+const payment = await exactHolding('borrower', 'CashHolding', undefined, 30)
 const splitView = await contracts('borrower')
-const payment = named(splitView, 'CashHolding').find((c) => Number(c.createArgument.amount) === 30)
 await ok(web, submitPath, 'borrower', commandBody('borrower', exercise('Loan', one(splitView, 'Loan').contractId, 'PartialRepay', { paymentCid: payment.contractId, valuationCid: null })))
 const paidDown = one(await contracts('regulator'), 'Loan')
 assert.equal(Number(paidDown.createArgument.amountRepaid), 30)
 passed('borrower pays down part of the balance with its own token')
 
+const repayment = await exactHolding('borrower', 'CashHolding', undefined, 75)
 const cured = await contracts('borrower')
-const repayment = named(cured, 'CashHolding').find((c) => Number(c.createArgument.amount) === 75)
-assert.ok(repayment)
 await ok(web, submitPath, 'borrower', commandBody('borrower', exercise('Loan', one(cured, 'Loan').contractId, 'Repay', { repaymentCid: repayment.contractId })))
 const lenderFinal = await contracts('lender')
 const borrowerFinal = await contracts('borrower')
-assert.deepEqual(named(lenderFinal, 'CashHolding').map((c) => Number(c.createArgument.amount)).sort((a, b) => a - b), [30, 75])
-assert.equal(Number(one(ofAsset(borrowerFinal, TBILL), 'CollateralHolding').createArgument.quantity), 200)
-assert.equal(Number(one(ofAsset(borrowerFinal, MMF), 'CollateralHolding').createArgument.quantity), 160)
-assert.equal(Number(one(borrowerFinal, 'CashHolding').createArgument.amount), 100)
+assert.deepEqual(named(lenderFinal, 'CashHolding').map(amountOf).sort((a, b) => a - b), [30, 75, 9900])
+// Released T-Bills (150 + 50) and returned MMF (160) sit beside the untouched remainders.
+assert.deepEqual(ofAsset(named(borrowerFinal, 'CollateralHolding'), TBILL).map(amountOf).sort((a, b) => a - b), [200, 4950, 14850])
+assert.deepEqual(ofAsset(named(borrowerFinal, 'CollateralHolding'), MMF).map(amountOf).sort((a, b) => a - b), [160, 15840])
+assert.equal(named(borrowerFinal, 'CashHolding').map(amountOf).reduce((a, b) => a + b, 0), 10500 - 105 + 100)
 assert.equal(named(await contracts('regulator'), 'LoanClosed').length, 1)
 assert.deepEqual(await contracts('outsider'), [])
 passed('repayment preserves expected holdings and role visibility')
