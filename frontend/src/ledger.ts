@@ -437,6 +437,14 @@ export async function repayLoan(loanCid: string, repayment: number, snapshot = c
   return submit(cfg.parties.borrower, exercise(template('Loan'), loanCid, 'Repay', { repaymentCid }), 'repay', snapshot)
 }
 
+/** Borrower pays part of the balance with an exact cash holding. During a
+ * margin call the ledger requires a fresh mark proving the payment cures it. */
+export async function partialRepay(loanCid: string, amount: number, valuationCid: string | null, snapshot = captureSession()): Promise<TxResult> {
+  if (!Number.isFinite(amount) || amount <= 0) throw new Error('Payment amount must be greater than zero.')
+  const paymentCid = await findCash(cfg.parties.borrower, amount, snapshot)
+  return submit(cfg.parties.borrower, exercise(template('Loan'), loanCid, 'PartialRepay', { paymentCid, valuationCid }), 'partial-repay', snapshot)
+}
+
 export const MARGIN_CALL_WINDOW_SECONDS = 60
 
 /** Replace the current mark on the configured stream. This is manually

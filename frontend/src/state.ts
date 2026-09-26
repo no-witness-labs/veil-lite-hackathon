@@ -274,12 +274,25 @@ export function ltvBand(ltv: number, threshold = 90): { label: string; tone: 'ok
 }
 
 /** Numbers shown on the position readout, using only the ledger-attested mark. */
-export function dealNumbers(args: { principal: number; interest: number; collateral: number }, unitPrice = 1.0) {
+export function dealNumbers(args: { principal: number; interest: number; collateral: number; repaid?: number }, unitPrice = 1.0) {
+  const { outstandingPrincipal, outstandingDue, repaid } = balanceOf(args.principal, args.interest, args.repaid ?? 0)
   const collateralValue = args.collateral * unitPrice
-  const ltv = collateralValue > 0 ? (args.principal / collateralValue) * 100 : 0
-  const repayment = args.principal + args.interest
+  const ltv = collateralValue > 0 ? (outstandingPrincipal / collateralValue) * 100 : 0
   const couponPct = args.principal > 0 ? (args.interest / args.principal) * 100 : 0
-  return { unitPrice, collateralValue, ltv, repayment, couponPct }
+  return { unitPrice, collateralValue, ltv, repayment: outstandingDue, couponPct, outstandingPrincipal, repaid }
+}
+
+/** Mirrors the Daml rule: partial payments settle the fixed interest first,
+ * then principal. LTV is always measured on the outstanding principal. */
+export function balanceOf(principal: number, interest: number, repaid: number) {
+  const outstandingPrincipal = principal - Math.max(0, repaid - interest)
+  return { repaid, outstandingPrincipal, outstandingDue: principal + interest - repaid }
+}
+
+/** The running partial-payment total recorded on a Loan or LoanClosed. */
+export function repaidOf(deal: Contract | undefined): number {
+  const value = Number(deal?.args.amountRepaid ?? 0)
+  return Number.isFinite(value) ? value : 0
 }
 
 /* ------------------------------------------------------------- lifecycle -- */

@@ -1,5 +1,6 @@
 module Veil where
 
+import DA.Optional (fromOptional)
 import DA.Time (addRelTime, seconds)
 
 data MarginCallDetails = MarginCallDetails
@@ -74,6 +75,14 @@ checkedPrice valuationAgent lender borrower regulator collateralAsset valuationS
   assertMsg "valuation cannot be from the future" (mark.observedAt <= now)
   assertMsg "valuation is stale" (now <= addRelTime mark.observedAt (seconds 300))
   pure mark.unitPrice
+
+-- Partial payments settle the fixed interest first, then principal. The
+-- agreed terms stay on the contract; only the running total changes.
+repaidTotal : Optional Decimal -> Decimal
+repaidTotal = fromOptional 0.0
+
+outstandingPrincipal : Decimal -> Decimal -> Optional Decimal -> Decimal
+outstandingPrincipal principal interest amountRepaid = principal - max 0.0 (repaidTotal amountRepaid - interest)
 
 -- The demo issuer authorizes issuance. Spending choices carry that authority
 -- forward without giving the owner permission to create arbitrary holdings.
@@ -290,6 +299,7 @@ template LoanOffer
           marginCallWindowSeconds
           marginCall = None
           collateralLocked = True
+          amountRepaid = None
 
     -- | Lender withdraws the unaccepted offer; the pre-funded principal is
     -- refunded to the lender.
@@ -319,6 +329,7 @@ template Loan
     marginCallWindowSeconds : Int
     marginCall : Optional MarginCallDetails
     collateralLocked : Bool
+    amountRepaid : Optional Decimal
   where
     signatory issuer, lender, borrower
     observer regulator
@@ -327,6 +338,7 @@ template Loan
       && liquidationThresholdLtv > 0.0 && liquidationThresholdLtv <= 100.0
       && marginCallWindowSeconds >= 60 && marginCallWindowSeconds <= 86400
       && lender /= borrower && collateralAsset /= "" && collateralLocked
+      && repaidTotal amountRepaid >= 0.0 && repaidTotal amountRepaid < principal + interest
       && valuationAgent /= lender && valuationAgent /= borrower && valuationAgent /= regulator
       && issuer /= lender && issuer /= borrower && issuer /= regulator && issuer /= valuationAgent
 
@@ -341,7 +353,7 @@ template Loan
         assertMsg "a margin call is already open" (marginCall == None)
         unitPrice <- checkedPrice valuationAgent lender borrower regulator collateralAsset valuationStreamId valuationCid
         assertMsg "margin call requires an LTV breach"
-          ((principal / (collateralQuantity * unitPrice)) * 100.0 >= liquidationThresholdLtv)
+          ((outstandingPrincipal principal interest amountRepaid / (collateralQuantity * unitPrice)) * 100.0 >= liquidationThresholdLtv)
         let call = MarginCallDetails with
               issuedAt = now
               deadline = addRelTime now (seconds marginCallWindowSeconds)
@@ -370,7 +382,7 @@ template Loan
         unitPrice <- checkedPrice valuationAgent lender borrower regulator collateralAsset valuationStreamId valuationCid
         let totalQuantity = collateralQuantity + topUpQuantity
         assertMsg "top-up must restore LTV below the threshold"
-          ((principal / (totalQuantity * unitPrice)) * 100.0 < liquidationThresholdLtv)
+          ((outstandingPrincipal principal interest amountRepaid / (totalQuantity * unitPrice)) * 100.0 < liquidationThresholdLtv)
         archive collateralCid
         create this with collateralQuantity = totalQuantity; marginCall = None
 
@@ -385,7 +397,7 @@ template Loan
         assertMsg "no margin call is open" (marginCall /= None)
         unitPrice <- checkedPrice valuationAgent lender borrower regulator collateralAsset valuationStreamId valuationCid
         assertMsg "collateral remains below the required value"
-          ((principal / (collateralQuantity * unitPrice)) * 100.0 < liquidationThresholdLtv)
+          ((outstandingPrincipal principal interest amountRepaid / (collateralQuantity * unitPrice)) * 100.0 < liquidationThresholdLtv)
         create this with marginCall = None
 
     -- | Lender approves a collateral substitution. In one transaction the
@@ -410,13 +422,48 @@ template Loan
           (request.releaseAsset == collateralAsset && request.releaseQuantity == collateralQuantity)
         unitPrice <- checkedPrice valuationAgent lender borrower regulator request.newAsset request.newValuationStreamId newValuationCid
         assertMsg "substituted collateral must keep LTV below the threshold"
-          ((principal / (request.newQuantity * unitPrice)) * 100.0 < liquidationThresholdLtv)
+          ((outstandingPrincipal principal interest amountRepaid / (request.newQuantity * unitPrice)) * 100.0 < liquidationThresholdLtv)
         archive requestCid
         _ <- create CollateralHolding with issuer; owner = borrower; asset = collateralAsset; quantity = collateralQuantity
         create this with
           collateralAsset = request.newAsset
           collateralQuantity = request.newQuantity
           valuationStreamId = request.newValuationStreamId
+
+    -- | Borrower pays part of the balance with an exact cash holding. With a
+    -- margin call open, the payment must cure it on a fresh mark; otherwise it
+    -- simply reduces what is owed. Full settlement stays with Repay, which is
+    -- the only choice that releases collateral.
+    choice PartialRepay : ContractId Loan
+      with
+        paymentCid : ContractId CashHolding
+        valuationCid : Optional (ContractId CollateralValuation)
+      controller borrower
+      do
+        now <- getTime
+        assertMsg "cannot pay down at or after maturity" (now < maturity)
+        cash <- fetch paymentCid
+        assertMsg "payment issuer mismatch" (cash.issuer == issuer)
+        assertMsg "payment cash must be owned by the borrower" (cash.owner == borrower)
+        let paid = repaidTotal amountRepaid + cash.amount
+        assertMsg "a partial payment must be less than the outstanding balance; use Repay to settle"
+          (paid < principal + interest)
+        let remainingPrincipal = outstandingPrincipal principal interest (Some paid)
+        cured <- case marginCall of
+          None -> pure False
+          Some _ -> do
+            markCid <- case valuationCid of
+              None -> abort "a fresh valuation is required to pay down during a margin call"
+              Some markCid -> pure markCid
+            unitPrice <- checkedPrice valuationAgent lender borrower regulator collateralAsset valuationStreamId markCid
+            assertMsg "payment must restore LTV below the threshold while a margin call is open"
+              ((remainingPrincipal / (collateralQuantity * unitPrice)) * 100.0 < liquidationThresholdLtv)
+            pure True
+        archive paymentCid
+        _ <- create CashHolding with issuer; owner = lender; amount = cash.amount
+        create this with
+          amountRepaid = Some paid
+          marginCall = if cured then None else marginCall
 
     -- | Borrower repays principal + interest in cash and gets collateral back.
     -- Split privately first: only the exact payment is disclosed to this loan.
@@ -425,7 +472,7 @@ template Loan
         repaymentCid : ContractId CashHolding
       controller borrower
       do
-        let repayment = principal + interest
+        let repayment = principal + interest - repaidTotal amountRepaid
         cash <- fetch repaymentCid
         assertMsg "repayment issuer mismatch" (cash.issuer == issuer)
         assertMsg "repayment cash must be owned by the borrower" (cash.owner == borrower)
@@ -447,6 +494,7 @@ template Loan
           maturity
           reason = "Repaid"
           collateralReleased = True
+          amountRepaid = Some (principal + interest)
 
     -- | A call must have expired and a fresh attested mark must still show a
     -- breach. There is no lender-supplied price or grace-period bypass.
@@ -462,7 +510,7 @@ template Loan
         assertMsg "margin call deadline has not passed" (now >= call.deadline)
         unitPrice <- checkedPrice valuationAgent lender borrower regulator collateralAsset valuationStreamId valuationCid
         assertMsg "liquidation requires an LTV breach"
-          ((principal / (collateralQuantity * unitPrice)) * 100.0 >= liquidationThresholdLtv)
+          ((outstandingPrincipal principal interest amountRepaid / (collateralQuantity * unitPrice)) * 100.0 >= liquidationThresholdLtv)
         _ <- create CollateralHolding with issuer; owner = lender; asset = collateralAsset; quantity = collateralQuantity
         create LoanClosed with
           issuer
@@ -478,6 +526,7 @@ template Loan
           maturity
           reason = "Liquidated"
           collateralReleased = False
+          amountRepaid
 
     -- Repayment default is distinct from a price breach. Repayment can still
     -- win the race; either consuming choice closes the loan exactly once.
@@ -492,6 +541,7 @@ template Loan
           principal; interest; collateralAsset; collateralQuantity; maturity
           reason = "LiquidatedAtMaturity"
           collateralReleased = False
+          amountRepaid
 
 -- | Terminal settlement record created when a loan closes, either through
 -- borrower repayment or lender liquidation.
@@ -513,6 +563,7 @@ template LoanClosed
     maturity : Time
     reason : Text
     collateralReleased : Bool
+    amountRepaid : Optional Decimal
   where
     signatory issuer, lender, borrower
     observer regulator

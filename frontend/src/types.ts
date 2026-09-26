@@ -50,6 +50,7 @@ export interface DealArgs {
   collateralLocked?: boolean
   reason?: string
   collateralReleased?: boolean
+  amountRepaid?: string | null
   // Substitution request
   releaseAsset?: string
   releaseQuantity?: string
