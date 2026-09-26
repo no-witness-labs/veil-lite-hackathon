@@ -7,16 +7,16 @@
 **Try it:**
 
 0. **Valuer** → `Healthy · 1.00` → `Publish mark`. A price is usable for five minutes, so start here whenever the offer or acceptance button reports a stale valuation.
-1. **Lender** → `Create offer`.
+1. **Lender** → `Create offer`. The defaults are 100 principal, 5 interest, 150 T-Bill units, a 90% liquidation threshold and a 60-second margin-call window; every term is editable, up to the wallet balances (lender 10,000 cash; borrower 10,500 cash, 20,000 T-Bill and 16,000 MMF units).
 2. **Borrower** → `Accept offer`.
 3. **Valuer** → `Stress · 0.62` → `Publish mark`.
 4. **Lender** → `Issue margin call`.
-5. **Borrower** → `Top up 50 units`, then `Repay`.
+5. **Borrower** → `Top up` (it suggests the smallest amount that cures the call, 30 units here; any amount works), then `Repay`.
 6. **Regulator** sees the settlement; **Outsider** → `Raw ledger` shows `[]`.
 
 Paying down instead of topping up (step 5 alternative): **Borrower** → `Pay down` 30. It settles the 5 interest and 25 principal, bringing LTV to about 80.6% at the 0.62 price, so Canton clears the call. The final `Repay` is then 75.
 
-Collateral substitution (between steps 2 and 5, with no margin call open): **Borrower** → `Propose substitution` escrows 160 units of Tokenized MMF against the 150 locked T-Bills → **Valuer** selects `Tokenized MMF` → `Healthy · 1.00` → `Publish mark` → **Lender** → `Approve substitution`. In one transaction Canton rechecks LTV on the MMF price, locks the MMF, rebinds the loan to the MMF price stream, and returns the T-Bills. The lender approves without ever seeing the borrower's wallet.
+Collateral substitution (between steps 2 and 5, with no margin call open): **Borrower** → `Propose substitution` escrows Tokenized MMF (defaults to the locked quantity; any amount the wallet holds) against the locked T-Bills → **Valuer** selects `Tokenized MMF` → `Healthy · 1.00` → `Publish mark` → **Lender** → `Approve substitution`. In one transaction Canton rechecks LTV on the MMF price, locks the MMF, rebinds the loan to the MMF price stream, and returns the T-Bills. The lender approves without ever seeing the borrower's wallet.
 
 **Current scope, baseline, policies, and review handoff:** [Season 3](docs/SEASON3.md).
 
@@ -92,7 +92,8 @@ Eight Daml templates. Loan states are scoped to issuer, lender, borrower, and re
 Lifecycle and the money/collateral trail (canonical demo numbers):
 
 ```text
-  seed ─ Lender wallet: Cash 100      Borrower: Cash 105 · Collateral 150 + reserve 50
+  seed ─ Lender wallet: Cash 10,000   Borrower: Cash 10,500 · T-Bill 15,000 + 5,000 · MMF 16,000
+         (the default 100 / 5 / 150 deal below splits exact holdings out of these)
 
   Lender ── MakeOffer(100) ─────────────►  LoanOffer            (principal pre-funded,
             [CashHolding choice]          sig I,L · obs B,R       escrowed in the offer)
@@ -195,7 +196,7 @@ boundary; see **[docs/DEVNET.md](./docs/DEVNET.md)** and
 **[docs/VERCEL.md](./docs/VERCEL.md)**.
 
 3-minute click path (if the price is older than five minutes, first publish `Healthy · 1.00` as **Valuer**): **Lender** create offer → **Borrower** sees it → **Outsider** sees nothing →
-**Borrower** accepts → **Valuer** publishes 0.62 → **Lender** issues margin call → **Borrower** adds 50 units → repays and receives all locked collateral. "Reset demo" clears the demo ledger for another run.
+**Borrower** accepts → **Valuer** publishes 0.62 → **Lender** issues margin call → **Borrower** tops up (30 units suggested) → repays and receives all locked collateral. "Reset demo" clears the demo ledger for another run.
 
 ### What the UI proves it is really on Canton
 

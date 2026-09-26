@@ -15,7 +15,6 @@ import {
   getIssuer,
   getParties,
   issueMarginCall,
-  LIQUIDATION_THRESHOLD_LTV,
   liquidateLoan,
   liquidateOverdueLoan,
   listActive,
@@ -296,9 +295,9 @@ export default function App() {
   const replacementMarks = substitution
     ? valuationCandidates(contracts).filter((mark) => mark.streamId === substitution.args.newValuationStreamId)
     : []
-  const availableTopUp = deal && valuation && Number.isFinite(liquidationThreshold)
-    ? collateralCandidates.find((amount) => balance.outstandingPrincipal / ((Number(deal.args.collateralQuantity) + amount) * valuation.unitPrice) * 100 < liquidationThreshold) ?? 0
-    : collateralCandidates[0] ?? 0
+  // The largest single reserve holding: a top-up of any size up to this is
+  // carved out of it privately before the loan sees it.
+  const availableTopUp = collateralCandidates.length > 0 ? collateralCandidates[collateralCandidates.length - 1] : 0
 
   const onReset = async () => {
     if (session?.role !== 'operator' || configOk !== true || busy) return
@@ -452,7 +451,7 @@ export default function App() {
                     <OfferTicket
                       draft={draft}
                       valuations={availableValuations}
-                      liquidationThresholdLtv={LIQUIDATION_THRESHOLD_LTV}
+                      availableCash={holdings.filter((holding) => holding.kind === 'cash').reduce((sum, holding) => sum + holding.amount, 0)}
                       onChange={(field, value) => setDraft((d) => ({ ...d, [field]: value }) as Draft)}
                       onSubmit={() => act('Create offer', PARTY_NAMES.lender, (snapshot) => createOffer(draft, snapshot))}
                       busy={busy}
@@ -521,8 +520,8 @@ export default function App() {
                       replacementMarks={replacementMarks}
                       busy={busy}
                       actions={{
-                        onPropose: (holdingCid) =>
-                          act('Propose collateral substitution', PARTY_NAMES.borrower, (snapshot) => proposeSubstitution(deal, holdingCid, snapshot)),
+                        onPropose: (asset, quantity) =>
+                          act(`Propose substitution · ${quantity} ${asset}`, PARTY_NAMES.borrower, (snapshot) => proposeSubstitution(deal, asset, quantity, snapshot)),
                         onApply: () =>
                           act('Approve collateral substitution', PARTY_NAMES.lender, (snapshot) => {
                             if (!substitution || replacementMarks.length !== 1) throw new Error('Publish a fresh mark for the replacement asset first.')

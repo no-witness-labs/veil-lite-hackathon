@@ -10,14 +10,14 @@ import { Button, DateInput, Field, Label, Meter, Metric, MetricRow, NumberInput,
 export function OfferTicket({
   draft,
   valuations,
-  liquidationThresholdLtv,
+  availableCash,
   onChange,
   onSubmit,
   busy,
 }: {
   draft: Draft
   valuations: Valuation[]
-  liquidationThresholdLtv: number
+  availableCash: number
   onChange: (field: keyof Draft, value: number | string) => void
   onSubmit: () => void
   busy: boolean
@@ -28,11 +28,18 @@ export function OfferTicket({
     return () => window.clearInterval(timer)
   }, [])
 
+  const liquidationThresholdLtv = draft.thresholdLtv
   const repayment = draft.principal + draft.interest
   const coupon = draft.principal > 0 ? (draft.interest / draft.principal) * 100 : 0
   const maturityMs = parseMaturity(draft.maturity)
   const termMessage = !Number.isFinite(draft.principal) || draft.principal <= 0
     ? 'Principal must be greater than zero.'
+    : draft.principal > availableCash
+      ? `Principal exceeds the ${fmtAmount(availableCash)} ${UNIT_CASH} available to fund the offer.`
+    : !Number.isFinite(draft.thresholdLtv) || draft.thresholdLtv <= 0 || draft.thresholdLtv > 100
+      ? 'Liquidation threshold must be above 0% and at most 100%.'
+    : !Number.isInteger(draft.marginCallWindowSeconds) || draft.marginCallWindowSeconds < 60 || draft.marginCallWindowSeconds > 86400
+      ? 'Margin-call window must be a whole number of seconds from 60 to 86,400.'
     : !Number.isFinite(draft.interest) || draft.interest < 0
       ? 'Interest cannot be negative.'
       : !Number.isFinite(draft.collateral) || draft.collateral <= 0
@@ -64,7 +71,7 @@ export function OfferTicket({
             gap: 'var(--space-4)',
           }}
         >
-          <Field label="Principal · simulated USDC">
+          <Field label="Principal · simulated USDC" hint={`${fmtAmount(availableCash)} available`}>
             <NumberInput value={draft.principal} onChange={(v) => onChange('principal', v)} />
           </Field>
           <Field label="Interest · simulated USDC" hint={`${fmtPct(coupon)} coupon`}>
@@ -72,6 +79,12 @@ export function OfferTicket({
           </Field>
           <Field label="Collateral · units" hint="Simulated tokenised T-Bill">
             <NumberInput value={draft.collateral} onChange={(v) => onChange('collateral', v)} />
+          </Field>
+          <Field label="Liquidation threshold · LTV %" hint="Margin calls and liquidation start at this LTV.">
+            <NumberInput value={draft.thresholdLtv} onChange={(v) => onChange('thresholdLtv', v)} />
+          </Field>
+          <Field label="Margin-call window · seconds" hint="Time the borrower has to cure a call (60–86,400).">
+            <NumberInput value={draft.marginCallWindowSeconds} onChange={(v) => onChange('marginCallWindowSeconds', v)} />
           </Field>
           <Field label="Maturity · UTC start of day" hint="Acceptance and collateral cures must complete before this.">
             <DateInput value={draft.maturity} onChange={(v) => onChange('maturity', v)} />

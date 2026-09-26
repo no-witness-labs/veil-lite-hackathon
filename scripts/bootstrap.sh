@@ -221,11 +221,11 @@ if [ "$already_seeded" = "True" ]; then
   echo "→ Holdings already seeded, skipping"
 else
   echo "→ Seeding demo holdings"
-  create_holding "$LENDER"   "{\"issuer\":\"$ISSUER\",\"owner\":\"$LENDER\",\"amount\":\"100\"}"   CashHolding
-  create_holding "$BORROWER" "{\"issuer\":\"$ISSUER\",\"owner\":\"$BORROWER\",\"amount\":\"105\"}" CashHolding
-  create_holding "$BORROWER" "{\"issuer\":\"$ISSUER\",\"owner\":\"$BORROWER\",\"asset\":\"$COLLATERAL_ASSET\",\"quantity\":\"150\"}" CollateralHolding
-  create_holding "$BORROWER" "{\"issuer\":\"$ISSUER\",\"owner\":\"$BORROWER\",\"asset\":\"$COLLATERAL_ASSET\",\"quantity\":\"50\"}" CollateralHolding
-  create_holding "$BORROWER" "{\"issuer\":\"$ISSUER\",\"owner\":\"$BORROWER\",\"asset\":\"$SUBSTITUTE_ASSET\",\"quantity\":\"160\"}" CollateralHolding
+  create_holding "$LENDER"   "{\"issuer\":\"$ISSUER\",\"owner\":\"$LENDER\",\"amount\":\"10000\"}"   CashHolding
+  create_holding "$BORROWER" "{\"issuer\":\"$ISSUER\",\"owner\":\"$BORROWER\",\"amount\":\"10500\"}" CashHolding
+  create_holding "$BORROWER" "{\"issuer\":\"$ISSUER\",\"owner\":\"$BORROWER\",\"asset\":\"$COLLATERAL_ASSET\",\"quantity\":\"15000\"}" CollateralHolding
+  create_holding "$BORROWER" "{\"issuer\":\"$ISSUER\",\"owner\":\"$BORROWER\",\"asset\":\"$COLLATERAL_ASSET\",\"quantity\":\"5000\"}" CollateralHolding
+  create_holding "$BORROWER" "{\"issuer\":\"$ISSUER\",\"owner\":\"$BORROWER\",\"asset\":\"$SUBSTITUTE_ASSET\",\"quantity\":\"16000\"}" CollateralHolding
 fi
 
 # All three demo parties authorize the stream; future price updates need only

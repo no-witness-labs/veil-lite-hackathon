@@ -189,11 +189,11 @@ def seed_holdings(token, user_id, parties):
         print("✓ holdings already seeded")
         return
     creates = [
-        (parties["lender"], "CashHolding", {"owner": parties["lender"], "amount": "100"}),
-        (parties["borrower"], "CashHolding", {"owner": parties["borrower"], "amount": "105"}),
-        (parties["borrower"], "CollateralHolding", {"owner": parties["borrower"], "asset": COLLATERAL_ASSET, "quantity": "150"}),
-        (parties["borrower"], "CollateralHolding", {"owner": parties["borrower"], "asset": COLLATERAL_ASSET, "quantity": "50"}),
-        (parties["borrower"], "CollateralHolding", {"owner": parties["borrower"], "asset": SUBSTITUTE_ASSET, "quantity": "160"}),
+        (parties["lender"], "CashHolding", {"owner": parties["lender"], "amount": "10000"}),
+        (parties["borrower"], "CashHolding", {"owner": parties["borrower"], "amount": "10500"}),
+        (parties["borrower"], "CollateralHolding", {"owner": parties["borrower"], "asset": COLLATERAL_ASSET, "quantity": "15000"}),
+        (parties["borrower"], "CollateralHolding", {"owner": parties["borrower"], "asset": COLLATERAL_ASSET, "quantity": "5000"}),
+        (parties["borrower"], "CollateralHolding", {"owner": parties["borrower"], "asset": SUBSTITUTE_ASSET, "quantity": "16000"}),
     ]
     for owner, template, args in creates:
         args["issuer"] = parties["issuer"]

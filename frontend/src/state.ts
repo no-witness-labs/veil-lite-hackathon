@@ -61,6 +61,8 @@ export const DEFAULT_DRAFT: Draft = {
   interest: 5,
   collateral: 150,
   maturity: new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10),
+  thresholdLtv: 90,
+  marginCallWindowSeconds: 60,
 }
 
 /* ------------------------------------------------------------ formatting -- */

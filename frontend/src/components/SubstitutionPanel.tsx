@@ -4,7 +4,7 @@ import { assessValuation, balanceOf, fmtAmount, marginCallOf, repaidOf } from '.
 import { Banner, Button, Panel } from '../ui/primitives'
 
 export interface SubstitutionActions {
-  onPropose: (holdingCid: string) => void
+  onPropose: (asset: string, quantity: number) => void
   onApply: () => void
   onReject: () => void
   onCancel: () => void
@@ -32,6 +32,7 @@ export function SubstitutionPanel({
   actions: SubstitutionActions
 }) {
   const [now, setNow] = useState(() => Date.now())
+  const [quantityInput, setQuantityInput] = useState('')
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1000)
     return () => window.clearInterval(timer)
@@ -47,18 +48,41 @@ export function SubstitutionPanel({
 
   if (!request) {
     if (role !== 'borrower' || !replacement?.asset) return null
-    const blocked = callOpen ? 'Cure the open margin call first.' : !beforeMaturity ? 'The loan has reached maturity.' : null
+    const replacementAsset = replacement.asset
+    // Default to a like-for-like swap of the locked quantity; any amount works.
+    const quantity = quantityInput === '' ? Math.min(replacement.amount, lockedQuantity) : Number(quantityInput)
+    const blocked = callOpen
+      ? 'Cure the open margin call first.'
+      : !beforeMaturity
+        ? 'The loan has reached maturity.'
+        : !Number.isFinite(quantity) || quantity <= 0
+          ? 'Enter a positive quantity.'
+          : quantity > replacement.amount
+            ? `At most ${fmtAmount(replacement.amount, 0)} units are available in one holding.`
+            : null
     return (
       <Panel title="Substitute collateral" kicker={`Locked · ${fmtAmount(lockedQuantity, 0)} ${lockedAsset}`}>
         <div style={{ padding: 'var(--space-5)', display: 'grid', gap: 'var(--space-4)' }}>
           <p style={{ color: 'var(--ink-500)', lineHeight: 'var(--leading-relaxed)' }}>
-            Offer {fmtAmount(replacement.amount, 0)} units of {replacement.asset} in place of the locked {lockedAsset}.
+            Offer {replacementAsset} ({fmtAmount(replacement.amount, 0)} units available) in place of the locked {lockedAsset}.
             The replacement is escrowed until the lender approves or rejects it, and the lender sees only the request,
             not your wallet.
           </p>
           {blocked && <p className="v-metric__note" style={{ color: 'var(--danger)' }}>{blocked}</p>}
-          <div className="v-row" style={{ justifyContent: 'flex-end' }}>
-            <Button variant="primary" onClick={() => actions.onPropose(replacement.contractId)} busy={busy} disabled={Boolean(blocked)}>
+          <div className="v-row" style={{ justifyContent: 'flex-end', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
+            <input
+              className="v-input"
+              aria-label="Replacement units"
+              type="number"
+              inputMode="decimal"
+              min="1"
+              step="1"
+              style={{ width: 140 }}
+              value={Number.isFinite(quantity) ? quantity : ''}
+              onChange={(event) => setQuantityInput(event.target.value)}
+              disabled={busy}
+            />
+            <Button variant="primary" onClick={() => actions.onPropose(replacementAsset, quantity)} busy={busy} disabled={Boolean(blocked)}>
               Propose substitution
             </Button>
           </div>
