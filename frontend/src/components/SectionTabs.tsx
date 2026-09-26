@@ -1,6 +1,6 @@
-export type SectionKey = 'position' | 'disclosure' | 'holdings' | 'activity' | 'ledger'
+export type SectionKey = 'position' | 'book' | 'disclosure' | 'holdings' | 'activity' | 'ledger'
 
-export const SECTION_KEYS: SectionKey[] = ['position', 'disclosure', 'holdings', 'activity', 'ledger']
+export const SECTION_KEYS: SectionKey[] = ['position', 'book', 'disclosure', 'holdings', 'activity', 'ledger']
 
 export const isSectionKey = (v: unknown): v is SectionKey => SECTION_KEYS.includes(v as SectionKey)
 
