@@ -16,6 +16,8 @@
 
 Paying down instead of topping up (step 5 alternative): **Borrower** → `Pay down` 30. It settles the 5 interest and 25 principal, bringing LTV to about 80.6% at the 0.62 price, so Canton clears the call. The final `Repay` is then 75.
 
+**Real Canton Coin collateral (CIP-112):** in step 1 choose `Canton Coin (real)` (defaults to 1,000 CC; the valuer prices CC on its own stream, seeded at 0.15). On acceptance the borrower's DevNet Canton Coin is locked in a Token Standard V2 *committed allocation* whose only executor is the lender: the token standard itself refuses the borrower's withdrawal before the settlement deadline (maturity + 1 day). Repaying cancels the allocation and the coin unlocks; liquidation settles it to the lender. Margin calls and pay-down work as above; top-up and substitution are T-Bill only.
+
 Collateral substitution (between steps 2 and 5, with no margin call open): **Borrower** → `Propose substitution` escrows Tokenized MMF (defaults to the locked quantity; any amount the wallet holds) against the locked T-Bills → **Valuer** selects `Tokenized MMF` → `Healthy · 1.00` → `Publish mark` → **Lender** → `Approve substitution`. In one transaction Canton rechecks LTV on the MMF price, locks the MMF, rebinds the loan to the MMF price stream, and returns the T-Bills. The lender approves without ever seeing the borrower's wallet.
 
 **Current scope, baseline, policies, and review handoff:** [Season 3](docs/SEASON3.md).

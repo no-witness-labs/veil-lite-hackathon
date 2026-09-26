@@ -76,6 +76,17 @@ issuer-signed holdings and the jointly authorized valuation stream (skipping wha
 already exists), writes `frontend/public/ledger-config.json`, and prints the
 non-secret settings for Vercel. It never prints tokens.
 
+### Canton Coin collateral
+
+CC loans use the Canton Coin registry through the validator's scan proxy
+(`VEIL_REGISTRY_URL`), read-only and behind the server's role check. The package
+depends on the Token Standard V2 interfaces vendored in `vendor/splice-token-standard/`;
+`splice-api-token-allocation-instruction-v2` is the exact archive vetted on
+hackcanton-01 (its SHA-256 equals its package ID). The borrower party needs DevNet
+CC to post as collateral; it was funded from the team's own party with a V2
+allocation settlement. Reset never strands coin: it writes open CC loans off, which
+cancels their allocations.
+
 ## 4. Run against DevNet locally (optional)
 
 Vite serves the same `api/` handlers. Export the shared-node settings from
