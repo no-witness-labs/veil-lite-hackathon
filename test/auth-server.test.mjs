@@ -437,7 +437,7 @@ test('registry proxy: whitelisted reads only, transacting roles only, node token
 
 test('registry handler maps /api/registry/<registry path> onto the registry', async () => {
   Object.assign(process.env, sharedNodeEnv, { VEIL_REGISTRY_URL: 'http://registry.test/scan-proxy' })
-  const registryHandler = require('../api/registry/[...path].js')
+  const registryHandler = require('../api/registry.js')
   let calledUrl
   globalThis.fetch = async (url) => {
     if (url === sharedNodeEnv.VEIL_OIDC_TOKEN_URL) return new Response(JSON.stringify({ access_token: 'node-access', expires_in: 10800 }), { status: 200 })
@@ -447,5 +447,11 @@ test('registry handler maps /api/registry/<registry path> onto the registry', as
   const res = response()
   await registryHandler({ method: 'GET', url: '/api/registry/registry/metadata/v1/info', headers: { authorization: `Bearer ${jwt({ sub: 'veil-lender' })}` } }, res)
   assert.equal(res.statusCode, 200)
+  assert.equal(calledUrl, 'http://registry.test/scan-proxy/registry/metadata/v1/info')
+  // The Vercel rewrite form: /api/registry?path=<registry path>
+  calledUrl = undefined
+  const rewritten = response()
+  await registryHandler({ method: 'GET', url: '/api/registry?path=registry/metadata/v1/info', headers: { authorization: `Bearer ${jwt({ sub: 'veil-lender' })}` } }, rewritten)
+  assert.equal(rewritten.statusCode, 200)
   assert.equal(calledUrl, 'http://registry.test/scan-proxy/registry/metadata/v1/info')
 })
