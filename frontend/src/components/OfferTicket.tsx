@@ -45,6 +45,8 @@ export function OfferTicket({
       ? 'Margin-call window must be a whole number of seconds from 60 to 86,400.'
     : !Number.isFinite(draft.interest) || draft.interest < 0
       ? 'Interest cannot be negative.'
+    : draft.interest > draft.principal
+      ? 'Interest cannot exceed the principal.'
       : !Number.isFinite(draft.collateral) || draft.collateral <= 0
         ? 'Collateral quantity must be greater than zero.'
         : !Number.isFinite(maturityMs) || now >= maturityMs

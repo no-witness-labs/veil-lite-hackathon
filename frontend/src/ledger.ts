@@ -386,6 +386,21 @@ function ledgerMaturity(value: string): string {
   return `${value}T00:00:00.000Z`
 }
 
+/** Offers lapse after a day, or at maturity if that comes first. The ledger
+ * refuses acceptance from the expiry instant on; withdraw and reject still work. */
+export const OFFER_TTL_MS = 24 * 60 * 60 * 1000
+
+function offerExpiry(maturity: string): string {
+  const maturityMs = Date.parse(ledgerMaturity(maturity))
+  const ttl = Date.now() + OFFER_TTL_MS
+  return new Date(Number.isFinite(maturityMs) ? Math.min(ttl, maturityMs) : ttl).toISOString()
+}
+
+/** Daml Decimal has 10 fractional digits; JS sums such as 0.1 + 0.2 do not. */
+function toDecimal(value: number): number {
+  return Number(value.toFixed(10))
+}
+
 /** Lender funds + creates the offer from a cash holding (MakeOffer). */
 export async function createOffer(draft: Draft, snapshot = captureSession()): Promise<TxResult> {
   if (draft.collateralAsset === COIN_ASSET) return createCoinOffer(draft, snapshot)
@@ -405,6 +420,7 @@ export async function createOffer(draft: Draft, snapshot = captureSession()): Pr
       maturity: ledgerMaturity(draft.maturity),
       liquidationThresholdLtv: String(draft.thresholdLtv),
       marginCallWindowSeconds: String(draft.marginCallWindowSeconds),
+      expiresAt: offerExpiry(draft.maturity),
     }),
     'offer',
     snapshot,
@@ -456,8 +472,15 @@ export const withdrawOffer = (offer: Contract, snapshot = captureSession()) =>
     ? submit(cfg.parties.lender, exercise(template('CoinLoanOffer'), offer.contractId, 'WithdrawCoinOffer'), 'withdraw', snapshot)
     : submit(cfg.parties.lender, exercise(template('LoanOffer'), offer.contractId, 'Withdraw'), 'withdraw', snapshot)
 
+/** Borrower declines an offer; the ledger refunds the lender's escrow. */
+export const rejectOffer = (offer: Contract, snapshot = captureSession()) =>
+  isCoin(offer)
+    ? submit(cfg.parties.borrower, exercise(template('CoinLoanOffer'), offer.contractId, 'RejectCoinOffer'), 'reject', snapshot)
+    : submit(cfg.parties.borrower, exercise(template('LoanOffer'), offer.contractId, 'RejectOffer'), 'reject', snapshot)
+
 /** Borrower repays from a cash holding covering the outstanding balance. */
-export async function repayLoan(loan: Contract, repayment: number, snapshot = captureSession()): Promise<TxResult> {
+export async function repayLoan(loan: Contract, amount: number, snapshot = captureSession()): Promise<TxResult> {
+  const repayment = toDecimal(amount)
   if (isCoin(loan)) return repayCoinLoan(loan, repayment, snapshot)
   const repaymentCid = await findCash(cfg.parties.borrower, repayment, snapshot)
   return submit(cfg.parties.borrower, exercise(template('Loan'), loan.contractId, 'Repay', { repaymentCid }), 'repay', snapshot)
@@ -467,7 +490,7 @@ export async function repayLoan(loan: Contract, repayment: number, snapshot = ca
  * margin call the ledger requires a fresh mark proving the payment cures it. */
 export async function partialRepay(loan: Contract, amount: number, valuationCid: string | null, snapshot = captureSession()): Promise<TxResult> {
   if (!Number.isFinite(amount) || amount <= 0) throw new Error('Payment amount must be greater than zero.')
-  const paymentCid = await findCash(cfg.parties.borrower, amount, snapshot)
+  const paymentCid = await findCash(cfg.parties.borrower, toDecimal(amount), snapshot)
   const [templateName, choice] = isCoin(loan) ? ['CoinLoan', 'PartialRepayCoin'] as const : ['Loan', 'PartialRepay'] as const
   return submit(cfg.parties.borrower, exercise(template(templateName), loan.contractId, choice, { paymentCid, valuationCid }), 'partial-repay', snapshot)
 }
@@ -566,12 +589,23 @@ export const liquidateLoan = (loan: Contract, valuationCid: string, snapshot = c
     ? liquidateCoinLoan(loan, valuationCid, snapshot)
     : submit(cfg.parties.lender, exercise(template('Loan'), loan.contractId, 'Liquidate', { valuationCid }), 'liquidate', snapshot)
 
-/** Close a loan after its exact ledger maturity instant, without a price mark
- * or margin call. The Daml choice enforces now > maturity. */
-export const liquidateOverdueLoan = (loan: Contract, snapshot = captureSession()): Promise<TxResult> =>
-  isCoin(loan)
-    ? liquidateCoinLoan(loan, null, snapshot)
-    : submit(cfg.parties.lender, exercise(template('Loan'), loan.contractId, 'LiquidateOverdue'), 'liquidate-overdue', snapshot)
+/** Close a loan after its exact ledger maturity instant, without a margin call.
+ * The Daml choice enforces now > maturity. A T-Bill loan nets at the current
+ * mark of its own stream so any surplus collateral returns to the borrower. */
+export async function liquidateOverdueLoan(loan: Contract, snapshot = captureSession()): Promise<TxResult> {
+  if (isCoin(loan)) return liquidateCoinLoan(loan, null, snapshot)
+  const { contracts } = await listActive(cfg.parties.lender, snapshot)
+  const marks = contracts.filter((c) => c.template === 'CollateralValuation' && c.args.streamId === loan.args.valuationStreamId)
+  if (marks.length !== 1) {
+    throw new Error(`Expected exactly one current valuation on this loan's stream; found ${marks.length}. Publish a fresh mark before liquidating.`)
+  }
+  return submit(
+    cfg.parties.lender,
+    exercise(template('Loan'), loan.contractId, 'LiquidateOverdue', { valuationCid: marks[0].contractId }),
+    'liquidate-overdue',
+    snapshot,
+  )
+}
 
 /* ------------------------------------------------ Canton Coin (CIP-112) -- */
 
@@ -668,6 +702,7 @@ async function createCoinOffer(draft: Draft, snapshot: AuthSnapshot): Promise<Tx
       liquidationThresholdLtv: String(draft.thresholdLtv),
       marginCallWindowSeconds: String(draft.marginCallWindowSeconds),
       settlementRef: `veil-${Date.now()}`,
+      expiresAt: offerExpiry(draft.maturity),
     }),
     'coin-offer',
     snapshot,

@@ -1,5 +1,6 @@
 module Veil where
 
+import DA.Numeric (cast, mul)
 import DA.Optional (fromOptional)
 import DA.Time (addRelTime, days, seconds)
 import Splice.Api.Token.AllocationInstructionV2 qualified as Instr
@@ -116,14 +117,12 @@ template CashHolding
         maturity : Time
         liquidationThresholdLtv : Decimal
         marginCallWindowSeconds : Int
+        expiresAt : Optional Time
       controller owner
       do
-        now <- getTime
-        assertMsg "offer maturity must be in the future" (now < maturity)
-        assertMsg "principal must be positive" (principal > 0.0)
+        validateOfferTerms owner borrower regulator principal interest collateralQuantity maturity expiresAt
         mark <- fetch valuationCid
         unitPrice <- checkedPrice valuationAgent owner borrower regulator collateralAsset mark.streamId valuationCid
-        assertMsg "collateral quantity must be positive" (collateralQuantity > 0.0)
         assertMsg "offer LTV must be below the liquidation threshold"
           ((principal / (collateralQuantity * unitPrice)) * 100.0 < liquidationThresholdLtv)
         assertMsg "insufficient cash to fund offer" (amount >= principal)
@@ -146,7 +145,8 @@ template CashHolding
           maturity
           liquidationThresholdLtv
           marginCallWindowSeconds
-    
+          expiresAt
+
     -- | Lender funds an offer secured by real Canton Coin. The principal is
     -- escrowed exactly as in MakeOffer; the collateral side is only a quantity
     -- until the borrower locks it in a committed allocation on acceptance.
@@ -164,14 +164,12 @@ template CashHolding
         liquidationThresholdLtv : Decimal
         marginCallWindowSeconds : Int
         settlementRef : Text
+        expiresAt : Optional Time
       controller owner
       do
-        now <- getTime
-        assertMsg "offer maturity must be in the future" (now < maturity)
-        assertMsg "principal must be positive" (principal > 0.0)
+        validateOfferTerms owner borrower regulator principal interest collateralQuantity maturity expiresAt
         mark <- fetch valuationCid
         unitPrice <- checkedPrice valuationAgent owner borrower regulator coinAsset mark.streamId valuationCid
-        assertMsg "collateral quantity must be positive" (collateralQuantity > 0.0)
         assertMsg "offer LTV must be below the liquidation threshold"
           ((principal / (collateralQuantity * unitPrice)) * 100.0 < liquidationThresholdLtv)
         assertMsg "insufficient cash to fund offer" (amount >= principal)
@@ -195,6 +193,7 @@ template CashHolding
           liquidationThresholdLtv
           marginCallWindowSeconds
           settlementRef
+          expiresAt
 
     choice Split : (ContractId CashHolding, ContractId CashHolding)
       with
@@ -304,6 +303,8 @@ template LoanOffer
     maturity : Time
     liquidationThresholdLtv : Decimal
     marginCallWindowSeconds : Int
+    -- Appended in 0.9.0; None on offers created by earlier versions.
+    expiresAt : Optional Time
   where
     signatory issuer, lender
     observer borrower, regulator
@@ -324,8 +325,7 @@ template LoanOffer
         valuationCid : ContractId CollateralValuation
       controller borrower
       do
-        now <- getTime
-        assertMsg "cannot accept an offer at or after maturity" (now < maturity)
+        assertOfferLive maturity expiresAt
         unitPrice <- checkedPrice valuationAgent lender borrower regulator collateralAsset valuationStreamId valuationCid
         assertMsg "acceptance LTV must be below the liquidation threshold"
           ((principal / (collateralQuantity * unitPrice)) * 100.0 < liquidationThresholdLtv)
@@ -358,6 +358,13 @@ template LoanOffer
     -- refunded to the lender.
     choice Withdraw : ContractId CashHolding
       controller lender
+      do
+        create CashHolding with issuer; owner = lender; amount = principal
+
+    -- | Borrower declines the offer, before or after expiry; the escrowed
+    -- principal goes back to the lender exactly as on Withdraw.
+    choice RejectOffer : ContractId CashHolding
+      controller borrower
       do
         create CashHolding with issuer; owner = lender; amount = principal
 
@@ -533,6 +540,7 @@ template Loan
         archive repaymentCid
         _ <- create CashHolding with issuer; owner = lender; amount = repayment
         _ <- create CollateralHolding with issuer; owner = borrower; asset = collateralAsset; quantity = collateralQuantity
+        now <- getTime
         create LoanClosed with
           issuer
           lender
@@ -548,9 +556,15 @@ template Loan
           reason = "Repaid"
           collateralReleased = True
           amountRepaid = Some (principal + interest)
+          closedAt = Some now
+          liquidationUnitPrice = None
+          collateralSeized = None
+          collateralReturned = Some collateralQuantity
 
     -- | A call must have expired and a fresh attested mark must still show a
-    -- breach. There is no lender-supplied price or grace-period bypass.
+    -- breach. There is no lender-supplied price or grace-period bypass. The
+    -- lender receives only the units covering the outstanding balance at that
+    -- mark; any surplus returns to the borrower.
     choice Liquidate : ContractId LoanClosed
       with
         valuationCid : ContractId CollateralValuation
@@ -564,37 +578,24 @@ template Loan
         unitPrice <- checkedPrice valuationAgent lender borrower regulator collateralAsset valuationStreamId valuationCid
         assertMsg "liquidation requires an LTV breach"
           ((outstandingPrincipal principal interest amountRepaid / (collateralQuantity * unitPrice)) * 100.0 >= liquidationThresholdLtv)
-        _ <- create CollateralHolding with issuer; owner = lender; asset = collateralAsset; quantity = collateralQuantity
-        create LoanClosed with
-          issuer
-          lender
-          borrower
-          regulator
-          valuationAgent
-          valuationStreamId
-          principal
-          interest
-          collateralAsset
-          collateralQuantity
-          maturity
-          reason = "Liquidated"
-          collateralReleased = False
-          amountRepaid
+        closeOut this "Liquidated" unitPrice
 
     -- Repayment default is distinct from a price breach. Repayment can still
     -- win the race; either consuming choice closes the loan exactly once.
+    -- Default close-out nets at a fresh attested mark, exactly like a margin
+    -- liquidation: the argument is Optional only for upgrade compatibility.
     choice LiquidateOverdue : ContractId LoanClosed
+      with
+        valuationCid : Optional (ContractId CollateralValuation)
       controller lender
       do
         now <- getTime
         assertMsg "loan is not past maturity" (now > maturity)
-        _ <- create CollateralHolding with issuer; owner = lender; asset = collateralAsset; quantity = collateralQuantity
-        create LoanClosed with
-          issuer; lender; borrower; regulator; valuationAgent; valuationStreamId
-          principal; interest; collateralAsset; collateralQuantity; maturity
-          reason = "LiquidatedAtMaturity"
-          collateralReleased = False
-          amountRepaid
+        markCid <- case valuationCid of
+          None -> abort "overdue liquidation requires a fresh valuation to return any surplus"
+          Some markCid -> pure markCid
+        unitPrice <- checkedPrice valuationAgent lender borrower regulator collateralAsset valuationStreamId markCid
+        closeOut this "LiquidatedAtMaturity" unitPrice
 
 -- | Terminal settlement record created when a loan closes, either through
 -- borrower repayment or lender liquidation.
@@ -617,6 +618,12 @@ template LoanClosed
     reason : Text
     collateralReleased : Bool
     amountRepaid : Optional Decimal
+    -- Appended in 0.9.0 so a close can be audited afterwards; None on records
+    -- created by earlier versions.
+    closedAt : Optional Time
+    liquidationUnitPrice : Optional Decimal
+    collateralSeized : Optional Decimal
+    collateralReturned : Optional Decimal
   where
     signatory issuer, lender, borrower
     observer regulator
@@ -625,12 +632,48 @@ template LoanClosed
       && collateralAsset /= "" && lender /= borrower
       && issuer /= lender && issuer /= borrower && issuer /= regulator && issuer /= valuationAgent
 
-    -- | Archive the settlement record. Used to clear ledger state when the
-    -- demo is reset; the closed loan has already settled.
+    -- | Archive the shared settlement record. Both counterparties must agree,
+    -- so neither can erase the other's proof of settlement alone. The demo
+    -- reset submits with issuer, lender and borrower authority.
     choice Dismiss : ()
-      controller lender
+      controller lender, borrower
       do
         pure ()
+
+-- | Settle a T-Bill loan by close-out netting at an attested unit price.
+closeOut : Loan -> Text -> Decimal -> Update (ContractId LoanClosed)
+closeOut loan reason unitPrice = do
+  now <- getTime
+  let owed = loan.principal + loan.interest - repaidTotal loan.amountRepaid
+      seized = seizedQuantity loan.collateralQuantity owed unitPrice
+      returned = loan.collateralQuantity - seized
+  _ <- create CollateralHolding with
+    issuer = loan.issuer; owner = loan.lender; asset = loan.collateralAsset; quantity = seized
+  if returned > 0.0
+    then do
+      _ <- create CollateralHolding with
+        issuer = loan.issuer; owner = loan.borrower; asset = loan.collateralAsset; quantity = returned
+      pure ()
+    else pure ()
+  create LoanClosed with
+    issuer = loan.issuer
+    lender = loan.lender
+    borrower = loan.borrower
+    regulator = loan.regulator
+    valuationAgent = loan.valuationAgent
+    valuationStreamId = loan.valuationStreamId
+    principal = loan.principal
+    interest = loan.interest
+    collateralAsset = loan.collateralAsset
+    collateralQuantity = loan.collateralQuantity
+    maturity = loan.maturity
+    reason
+    collateralReleased = False
+    amountRepaid = loan.amountRepaid
+    closedAt = Some now
+    liquidationUnitPrice = Some unitPrice
+    collateralSeized = Some seized
+    collateralReturned = Some returned
 
 -- ---------------------------------------------------------------------------
 -- Canton Coin collateral (CIP-112 Token Standard V2)
@@ -723,6 +766,8 @@ template CoinLoanOffer
     liquidationThresholdLtv : Decimal
     marginCallWindowSeconds : Int
     settlementRef : Text
+    -- Appended in 0.9.0; None on offers created by earlier versions.
+    expiresAt : Optional Time
   where
     signatory issuer, lender
     observer borrower, regulator
@@ -746,8 +791,7 @@ template CoinLoanOffer
         extraArgs : ExtraArgs
       controller borrower
       do
-        now <- getTime
-        assertMsg "cannot accept an offer at or after maturity" (now < maturity)
+        assertOfferLive maturity expiresAt
         unitPrice <- checkedPrice valuationAgent lender borrower regulator coinAsset valuationStreamId valuationCid
         assertMsg "acceptance LTV must be below the liquidation threshold"
           ((principal / (collateralQuantity * unitPrice)) * 100.0 < liquidationThresholdLtv)
@@ -764,6 +808,13 @@ template CoinLoanOffer
 
     choice WithdrawCoinOffer : ContractId CashHolding
       controller lender
+      do
+        create CashHolding with issuer; owner = lender; amount = principal
+
+    -- | Borrower declines; the escrowed principal returns to the lender. No
+    -- Canton Coin was locked yet, so nothing else needs releasing.
+    choice RejectCoinOffer : ContractId CashHolding
+      controller borrower
       do
         create CashHolding with issuer; owner = lender; amount = principal
 
@@ -872,7 +923,7 @@ template CoinLoan
         archive repaymentCid
         _ <- create CashHolding with issuer; owner = lender; amount = repayment
         releaseCoin allocationCid lender cancelExtraArgs
-        closeCoinLoan this "Repaid" True (Some (principal + interest))
+        closeCoinLoan this "Repaid" True (Some (principal + interest)) None
 
     -- | Lender prepares the receiving side of a liquidation: an uncommitted
     -- allocation that credits the lender when the batch settles.
@@ -905,7 +956,7 @@ template CoinLoan
         assertMsg "liquidation requires an LTV breach"
           ((outstandingPrincipal principal interest amountRepaid / (collateralQuantity * unitPrice)) * 100.0 >= liquidationThresholdLtv)
         settleCoin this settlementFactoryCid receiptAllocationCid extraArgs
-        closeCoinLoan this "Liquidated" False amountRepaid
+        closeCoinLoan this "Liquidated" False amountRepaid (Some unitPrice)
 
     choice LiquidateCoinOverdue : ContractId LoanClosed
       with
@@ -917,7 +968,7 @@ template CoinLoan
         now <- getTime
         assertMsg "loan is not past maturity" (now > maturity)
         settleCoin this settlementFactoryCid receiptAllocationCid extraArgs
-        closeCoinLoan this "LiquidatedAtMaturity" False amountRepaid
+        closeCoinLoan this "LiquidatedAtMaturity" False amountRepaid None
 
     -- | The lender forgives the loan and releases the Canton Coin. Also used by
     -- the demo reset so no borrower funds stay locked.
@@ -927,7 +978,7 @@ template CoinLoan
       controller lender
       do
         releaseCoin allocationCid lender cancelExtraArgs
-        closeCoinLoan this "WrittenOff" True amountRepaid
+        closeCoinLoan this "WrittenOff" True amountRepaid None
 
 releaseCoin : ContractId Token.Allocation -> Party -> ExtraArgs -> Update ()
 releaseCoin allocationCid lender extraArgs = do
@@ -970,8 +1021,12 @@ settleCoin loan settlementFactoryCid receiptAllocationCid extraArgs = do
         _ -> False
   assertMsg "collateral settlement did not settle" (all settled result.allocationSettleResults)
 
-closeCoinLoan : CoinLoan -> Text -> Bool -> Optional Decimal -> Update (ContractId LoanClosed)
-closeCoinLoan loan reason collateralReleased amountRepaid =
+-- A CIP-112 allocation settles exactly its one fixed collateral leg, so a Canton
+-- Coin liquidation always transfers the whole locked quantity: the record says
+-- so explicitly rather than implying a surplus refund.
+closeCoinLoan : CoinLoan -> Text -> Bool -> Optional Decimal -> Optional Decimal -> Update (ContractId LoanClosed)
+closeCoinLoan loan reason collateralReleased amountRepaid liquidationUnitPrice = do
+  now <- getTime
   create LoanClosed with
     issuer = loan.issuer
     lender = loan.lender
@@ -987,3 +1042,55 @@ closeCoinLoan loan reason collateralReleased amountRepaid =
     reason
     collateralReleased
     amountRepaid
+    closedAt = Some now
+    liquidationUnitPrice
+    collateralSeized = if collateralReleased then None else Some loan.collateralQuantity
+    collateralReturned = Some (if collateralReleased then loan.collateralQuantity else 0.0)
+
+-- ---------------------------------------------------------------------------
+-- Origination and close-out rules added in 0.9.0 (docs/AUDIT-TRIAGE.md).
+
+-- Close-out netting: the lender takes only the units that cover the balance at
+-- the attested mark, rounded up to the Decimal grain, capped at what is locked.
+seizedQuantity : Decimal -> Decimal -> Decimal -> Decimal
+seizedQuantity locked owed unitPrice
+  | owed >= locked * unitPrice = locked
+  | otherwise =
+      -- Compare at scale 20: at scale 10 the product can round up to exactly
+      -- `owed` although the rounded-down quantity is worth slightly less.
+      let units = owed / unitPrice
+          value = mul units unitPrice : Numeric 20
+          covering = if value < cast owed then units + 0.0000000001 else units
+      in min locked covering
+
+-- Upper bounds keep every sum (principal + interest, quantity × price) far
+-- from the Decimal limit and reject terms entered in the wrong unit.
+maxTermAmount : Decimal
+maxTermAmount = 1000000000000.0
+
+maxTermDays : Int
+maxTermDays = 3660
+
+-- Terms checked once, at origination, for both collateral types.
+validateOfferTerms : Party -> Party -> Party -> Decimal -> Decimal -> Decimal -> Time -> Optional Time -> Update ()
+validateOfferTerms lender borrower regulator principal interest collateralQuantity maturity expiresAt = do
+  now <- getTime
+  assertMsg "offer maturity must be in the future" (now < maturity)
+  assertMsg "offer maturity must be within ten years" (maturity <= addRelTime now (days maxTermDays))
+  assertMsg "principal must be positive" (principal > 0.0)
+  assertMsg "principal exceeds the maximum" (principal <= maxTermAmount)
+  assertMsg "interest must be between zero and the principal" (interest >= 0.0 && interest <= principal)
+  assertMsg "collateral quantity must be positive" (collateralQuantity > 0.0)
+  assertMsg "collateral quantity exceeds the maximum" (collateralQuantity <= maxTermAmount)
+  assertMsg "regulator must differ from lender and borrower" (regulator /= lender && regulator /= borrower)
+  case expiresAt of
+    None -> pure ()
+    Some expiry -> assertMsg "offer expiry must be in the future and no later than maturity" (now < expiry && expiry <= maturity)
+
+assertOfferLive : Time -> Optional Time -> Update ()
+assertOfferLive maturity expiresAt = do
+  now <- getTime
+  assertMsg "cannot accept an offer at or after maturity" (now < maturity)
+  case expiresAt of
+    None -> pure ()
+    Some expiry -> assertMsg "offer has expired" (now < expiry)

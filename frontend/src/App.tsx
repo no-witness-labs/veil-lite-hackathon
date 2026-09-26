@@ -28,6 +28,7 @@ import {
   resetDemo,
   topUpCollateral,
   withdrawOffer,
+  rejectOffer,
 } from './runtime'
 import {
   DEFAULT_DRAFT,
@@ -64,6 +65,8 @@ import { LedgerInspector } from './components/LedgerInspector'
 import { ViewpointRail } from './components/ViewpointRail'
 import { ConnectionGate, OutsiderEmpty, Waiting } from './components/EmptyStates'
 import { SignIn } from './components/SignIn'
+import { LoanBook } from './components/LoanBook'
+import { selectDeal } from './loanBook'
 
 /** Sections are linkable (`?section=disclosure`), so a walkthrough can jump
  * straight to the disclosure matrix or the raw ledger response. */
@@ -101,6 +104,8 @@ export default function App() {
   const [activity, setActivity] = useState<ActivityEntry[]>([])
   const [draft, setDraft] = useState<Draft>({ ...DEFAULT_DRAFT })
   const [coinAvailable, setCoinAvailable] = useState(false)
+  // A deal picked in the loan book; the Position tab falls back to the latest.
+  const [selectedDealId, setSelectedDealId] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -270,7 +275,8 @@ export default function App() {
     }
   }
 
-  const deal = currentDeal(contracts, getIssuer())
+  const deal = selectDeal(contracts, getIssuer(), selectedDealId)
+  const latestDeal = currentDeal(contracts, getIssuer())
   const status = statusOf(deal)
   const holdings = parseHoldings(contracts)
   const valuation = valuationFor(contracts, deal)
@@ -390,6 +396,7 @@ export default function App() {
     { key: 'disclosure', label: 'Disclosure' },
     ...(privateSections
       ? [
+          { key: 'book' as const, label: 'Loan book' },
           { key: 'holdings' as const, label: 'Holdings', count: holdings.length },
           { key: 'activity' as const, label: 'Activity', count: activity.length },
         ]
@@ -453,6 +460,11 @@ export default function App() {
                       {valuation.valuationAgent ? ` by ${valuation.valuationAgent.split('::')[0]}.` : '.'}
                     </Banner>
                   )}
+                  {showPosition && deal && latestDeal && deal.contractId !== latestDeal.contractId && (
+                    <Banner tone="info" title="Showing a deal selected in the Loan book." onDismiss={() => setSelectedDealId(null)}>
+                      Dismiss to return to the most recent deal.
+                    </Banner>
+                  )}
                   {isOutsider && <OutsiderEmpty />}
                   {isValuer && (
                     <ValuationPanel
@@ -486,6 +498,7 @@ export default function App() {
                       actions={{
                         onWithdraw: () => act('Withdraw offer', PARTY_NAMES.lender, (snapshot) => withdrawOffer(deal, snapshot)),
                         onAccept: () => act('Accept offer', PARTY_NAMES.borrower, (snapshot) => acceptOffer(deal.contractId, snapshot)),
+                        onReject: () => act('Reject offer', PARTY_NAMES.borrower, (snapshot) => rejectOffer(deal, snapshot)),
                         onRepay: () =>
                           act('Repay loan', PARTY_NAMES.borrower, (snapshot) =>
                             repayLoan(deal, balance.outstandingDue, snapshot),
@@ -566,6 +579,20 @@ export default function App() {
                 </>
               )}
 
+              {activeSection === 'book' && (
+                <LoanBook
+                  role={role}
+                  partyId={parties[role]}
+                  contracts={contracts}
+                  issuer={getIssuer()}
+                  offset={offset}
+                  selectedId={deal?.contractId ?? null}
+                  onSelect={(contractId) => {
+                    setSelectedDealId(contractId)
+                    selectSection('position')
+                  }}
+                />
+              )}
               {activeSection === 'holdings' && <PositionsTable role={role} holdings={holdings} />}
               {activeSection === 'activity' && <ActivityLog entries={activity} />}
               {activeSection === 'ledger' && <LedgerInspector role={role} raw={raw} offset={offset} />}

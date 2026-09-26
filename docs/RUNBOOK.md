@@ -68,7 +68,7 @@ No hosted ledger deployment is validated by this increment.
 2. Launches `dpm sandbox` (single-process Canton) in the background.
 3. Waits for `HTTP JSON API Server started`, then for `/readyz` = 200.
 4. Runs `scripts/bootstrap.sh`, which is idempotent:
-   - uploads `.daml/dist/veil-lite-0.8.1.dar`,
+   - uploads `.daml/dist/veil-lite-0.9.0.dar`,
    - allocates `Lender` / `Borrower` / `Regulator` / `Valuer` / `Outsider` / `DemoIssuer` (reuses existing),
    - writes `frontend/public/ledger-config.json` (gitignored; the UI fetches it at runtime).
    - initializes the agreed valuation stream with price 1 using simulated lender/borrower/valuer consent.

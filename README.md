@@ -199,6 +199,8 @@ single ledger user for all parties, so Veil's server alone enforces the role
 boundary; see **[docs/DEVNET.md](./docs/DEVNET.md)** and
 **[docs/VERCEL.md](./docs/VERCEL.md)**.
 
+A dry-run-by-default [lender keeper](docs/KEEPER.md) can issue margin calls and liquidations on the lender's behalf.
+
 3-minute click path (if the price is older than five minutes, first publish `Healthy · 1.00` as **Valuer**): **Lender** create offer → **Borrower** sees it → **Outsider** sees nothing →
 **Borrower** accepts → **Valuer** publishes 0.62 → **Lender** issues margin call → **Borrower** tops up (30 units suggested) → repays and receives all locked collateral. "Reset demo" clears the demo ledger for another run.
 
