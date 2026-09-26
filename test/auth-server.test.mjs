@@ -301,7 +301,7 @@ function loginReq(body, method = 'POST') {
 test('demo login is disabled without a long passcode and signing key', async () => {
   const res = response()
   await demoLoginHandler(loginReq(undefined, 'GET'), res)
-  assert.deepEqual(JSON.parse(res.body), { enabled: false, operator: false })
+  assert.deepEqual(JSON.parse(res.body), { enabled: false, open: false, operator: false })
 
   Object.assign(process.env, { VEIL_DEMO_PASSCODE: 'short', VEIL_AUTH_PRIVATE_KEY: privatePem })
   const post = response()
@@ -317,7 +317,7 @@ test('demo login issues a verifiable five-minute role token only for the right p
   })
   const info = response()
   await demoLoginHandler(loginReq(undefined, 'GET'), info)
-  assert.deepEqual(JSON.parse(info.body), { enabled: true, operator: true })
+  assert.deepEqual(JSON.parse(info.body), { enabled: true, open: false, operator: true })
 
   const wrong = response()
   await demoLoginHandler(loginReq({ role: 'lender', passcode: 'nope' }), wrong)
@@ -342,4 +342,45 @@ test('demo login issues a verifiable five-minute role token only for the right p
   const extra = response()
   await demoLoginHandler(loginReq({ role: 'lender', passcode: 'judge-passcode-123', sub: 'veil-operator' }), extra)
   assert.equal(extra.statusCode, 400)
+})
+
+test('open demo: ordinary parties need no passcode, the operator still does', async () => {
+  Object.assign(process.env, {
+    VEIL_DEMO_OPEN: 'true',
+    VEIL_OPERATOR_PASSCODE: 'operator-passcode-456',
+    VEIL_AUTH_PRIVATE_KEY: privatePem,
+  })
+  const info = response()
+  await demoLoginHandler(loginReq(undefined, 'GET'), info)
+  assert.deepEqual(JSON.parse(info.body), { enabled: true, open: true, operator: true })
+
+  const lender = response()
+  await demoLoginHandler(loginReq({ role: 'lender' }), lender)
+  assert.equal(lender.statusCode, 200)
+  const auth = authenticate(req(JSON.parse(lender.body).token))
+  assert.equal(auth.role, 'lender')
+  assert.ok(auth.expiresAt - Math.floor(Date.now() / 1000) <= 300)
+  // The open session is still bound to its own party.
+  assertAuthError(
+    () => authorizeLedgerRequest(req(JSON.parse(lender.body).token, 'POST', '/v2/state/active-contracts'), '/v2/state/active-contracts', activeBody('Borrower::local')),
+    403,
+    'PARTY_FORBIDDEN',
+  )
+
+  const operatorNoCode = response()
+  await demoLoginHandler(loginReq({ role: 'operator' }), operatorNoCode)
+  assert.equal(operatorNoCode.statusCode, 401)
+  const operator = response()
+  await demoLoginHandler(loginReq({ role: 'operator', passcode: 'operator-passcode-456' }), operator)
+  assert.equal(authenticate(req(JSON.parse(operator.body).token)).role, 'operator')
+
+  const extra = response()
+  await demoLoginHandler(loginReq({ role: 'lender', sub: 'veil-operator' }), extra)
+  assert.equal(extra.statusCode, 400)
+
+  // Without the signing key nothing is issued, open or not.
+  process.env.VEIL_AUTH_PRIVATE_KEY = ''
+  const disabled = response()
+  await demoLoginHandler(loginReq({ role: 'lender' }), disabled)
+  assert.equal(disabled.statusCode, 404)
 })

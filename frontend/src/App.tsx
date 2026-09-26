@@ -104,7 +104,7 @@ export default function App() {
   const [authBusy, setAuthBusy] = useState(false)
   const [configOk, setConfigOk] = useState<boolean | null>(null)
   const [configIssue, setConfigIssue] = useState<string | null>(null)
-  const [demoLogin, setDemoLogin] = useState<DemoLoginInfo>({ enabled: false, operator: false })
+  const [demoLogin, setDemoLogin] = useState<DemoLoginInfo>({ enabled: false, open: false, operator: false })
   const { theme, toggle: toggleTheme } = useTheme()
   const refreshGeneration = useRef(0)
   const authGeneration = useRef(0)
@@ -178,7 +178,7 @@ export default function App() {
   }
 
   const submitPasscode = (sessionRole: SessionRole, passcode: string) => {
-    void completeSignIn(() => signInWithPasscode(sessionRole, passcode))
+    void completeSignIn(() => signInWithPasscode(sessionRole, passcode, !demoLogin.open || sessionRole === 'operator'))
   }
 
   const completeSignIn = async (attempt: () => Promise<Session>) => {

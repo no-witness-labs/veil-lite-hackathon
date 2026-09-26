@@ -7,6 +7,10 @@ const { parseJsonBody, requestBody } = require('./_ledger')
 // same short-lived RS256 role credential the local issuer produces and goes
 // through the same verification and per-role party checks afterwards. The
 // operator role (reset, cross-role viewing) needs its own passcode.
+//
+// With VEIL_DEMO_OPEN=true the ordinary parties need no passcode at all, so
+// anyone can try the public demo. Each still gets its own role session and
+// the same server-side party checks; only the operator stays gated.
 const TOKEN_TTL_SECONDS = 300
 const MIN_PASSCODE_LENGTH = 12
 const FAILURE_DELAY_MS = 750
@@ -17,12 +21,13 @@ function envValue(name, env) {
 }
 
 function loginConfig(env = process.env) {
+  const open = envValue('VEIL_DEMO_OPEN', env) === 'true'
   const passcode = envValue('VEIL_DEMO_PASSCODE', env)
   const operatorPasscode = envValue('VEIL_OPERATOR_PASSCODE', env)
   const privateKeyPem = envValue('VEIL_AUTH_PRIVATE_KEY', env).replace(/\\n/g, '\n')
-  if (passcode.length < MIN_PASSCODE_LENGTH || !privateKeyPem) return null
+  if (!privateKeyPem || (!open && passcode.length < MIN_PASSCODE_LENGTH)) return null
   const operator = operatorPasscode.length >= MIN_PASSCODE_LENGTH && operatorPasscode !== passcode ? operatorPasscode : null
-  return { passcode, operatorPasscode: operator, privateKeyPem }
+  return { open, passcode: open ? null : passcode, operatorPasscode: operator, privateKeyPem }
 }
 
 function sameSecret(candidate, expected) {
@@ -63,7 +68,7 @@ module.exports = async function handler(req, res) {
   const config = loginConfig(env)
 
   if (method === 'GET') {
-    sendJson(res, 200, { enabled: Boolean(config), operator: Boolean(config?.operatorPasscode) })
+    sendJson(res, 200, { enabled: Boolean(config), open: Boolean(config?.open), operator: Boolean(config?.operatorPasscode) })
     return
   }
   if (method !== 'POST') {
@@ -75,12 +80,13 @@ module.exports = async function handler(req, res) {
   try {
     if (!config) throw new AuthError(404, 'DEMO_LOGIN_DISABLED')
     const body = parseJsonBody(await requestBody(req))
-    const { role, passcode } = body
-    if (!ROLES.includes(role) || typeof passcode !== 'string' || Object.keys(body).length !== 2) {
+    const { role, passcode = '' } = body
+    if (!ROLES.includes(role) || typeof passcode !== 'string' || Object.keys(body).some((key) => key !== 'role' && key !== 'passcode')) {
       throw new AuthError(400, 'REQUEST_INVALID')
     }
+    const openRole = config.open && role !== 'operator'
     const expected = role === 'operator' ? config.operatorPasscode : config.passcode
-    if (!expected || !sameSecret(passcode, expected)) {
+    if (!openRole && (!expected || !sameSecret(passcode, expected))) {
       await new Promise((resolve) => setTimeout(resolve, FAILURE_DELAY_MS))
       throw new AuthError(401, 'PASSCODE_INVALID')
     }

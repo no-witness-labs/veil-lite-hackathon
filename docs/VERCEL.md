@@ -29,7 +29,8 @@ and URLs are printed by `python3 scripts/bootstrap-devnet.py`.
 | `VEIL_AUTH_PRIVATE_KEY` | **yes** | PEM that signs hosted role tokens |
 | `VEIL_AUTH_PUBLIC_KEY` | no | matching public PEM |
 | `VEIL_AUTH_AUDIENCE` | no | `veil-local` |
-| `VEIL_DEMO_PASSCODE` | **yes** | judge passcode, at least 12 characters |
+| `VEIL_DEMO_OPEN` | no | `true` lets anyone enter as lender, borrower, valuer, regulator or outsider without a passcode |
+| `VEIL_DEMO_PASSCODE` | **yes** | passcode for those parties when the demo is not open, at least 12 characters |
 | `VEIL_OPERATOR_PASSCODE` | **yes** | different operator passcode, at least 12 characters; omit to hide the operator |
 
 Generate a dedicated RSA key pair for the hosted app rather than reusing the local
@@ -40,8 +41,9 @@ openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out .local/devnet/
 openssl pkey -in .local/devnet/hosted-private.pem -pubout -out .local/devnet/hosted-public.pem
 ```
 
-Passcode sign-in is disabled unless both `VEIL_DEMO_PASSCODE` (12+ characters) and
-`VEIL_AUTH_PRIVATE_KEY` are set. Failed attempts are delayed but not rate limited
+Party sign-in is disabled unless `VEIL_AUTH_PRIVATE_KEY` is set together with either
+`VEIL_DEMO_OPEN=true` or a `VEIL_DEMO_PASSCODE` of 12+ characters. The operator always
+needs `VEIL_OPERATOR_PASSCODE`. Failed attempts are delayed but not rate limited
 across function instances, so use long random passcodes. Never use `VITE_`
 variables for secrets.
 
