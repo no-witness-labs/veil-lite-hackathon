@@ -137,10 +137,21 @@ describe('decide', () => {
     assert.match(action.reason, /ambiguous/)
   })
 
-  test('past maturity liquidates as overdue without a mark', () => {
-    const [action] = decide([tbillLoan({ maturity: iso(-60_000) })], [], NOW)
+  test('past maturity liquidates a T-Bill loan as overdue on a fresh mark', () => {
+    const [action] = decide([tbillLoan({ maturity: iso(-60_000) })], [mark('stream-tbill', '1.0')], NOW)
     assert.equal(action.kind, 'liquidateOverdue')
     assert.equal(action.choice, 'LiquidateOverdue')
+    assert.equal(action.valuationCid, 'mark-stream-tbill')
+  })
+
+  test('past maturity without a fresh mark asks for a price instead of failing on-ledger', () => {
+    // 0.9.0 returns surplus collateral at the attested price, so overdue
+    // liquidation of a T-Bill loan needs a fresh mark.
+    const [none] = decide([tbillLoan({ maturity: iso(-60_000) })], [], NOW)
+    assert.equal(none.kind, 'needsFreshPrice')
+    assert.match(none.reason, /past maturity/)
+    const [stale] = decide([tbillLoan({ maturity: iso(-60_000) })], [mark('stream-tbill', '1.0', iso(-10 * 60_000))], NOW)
+    assert.equal(stale.kind, 'needsFreshPrice')
   })
 
   test('at maturity (within skew) no margin call is issued', () => {
@@ -292,13 +303,14 @@ describe('keeper I/O', () => {
     assert.ok(events.some((e) => e.event === 'submitted' && e.updateId === 'u1'))
   })
 
-  test('execute submits LiquidateOverdue with an empty argument', async () => {
+  test('execute submits LiquidateOverdue with the fresh mark', async () => {
     const loan = tbillLoan({ maturity: iso(-HOUR) })
-    ledgerState([acsEntry('pkg:Veil:Loan', loan.contractId, loan.args)])
+    const m = mark('stream-tbill', '1.0')
+    ledgerState([acsEntry('pkg:Veil:Loan', loan.contractId, loan.args), acsEntry('pkg:Veil:CollateralValuation', m.contractId, m.args)])
     routes.push({ match: (c) => c.url.endsWith('/v2/commands/submit-and-wait-for-transaction'), reply: { json: { transaction: { updateId: 'u2', events: [] } } } })
     await keeper(true).k.tick()
     assert.deepEqual(submits()[0].body.commands.commands[0].ExerciseCommand, {
-      templateId: '#veil-lite:Veil:Loan', contractId: 'loan-1', choice: 'LiquidateOverdue', choiceArgument: {},
+      templateId: '#veil-lite:Veil:Loan', contractId: 'loan-1', choice: 'LiquidateOverdue', choiceArgument: { valuationCid: 'mark-stream-tbill' },
     })
   })
 
@@ -386,7 +398,8 @@ describe('keeper I/O', () => {
   test('already-consumed contract is benign; other failures are errors', async () => {
     const a = tbillLoan({ maturity: iso(-HOUR) })
     const b = { ...tbillLoan({ maturity: iso(-HOUR) }), contractId: 'loan-2' }
-    ledgerState([acsEntry('pkg:Veil:Loan', a.contractId, a.args), acsEntry('pkg:Veil:Loan', b.contractId, b.args)])
+    const m = mark('stream-tbill', '1.0')
+    ledgerState([acsEntry('pkg:Veil:Loan', a.contractId, a.args), acsEntry('pkg:Veil:Loan', b.contractId, b.args), acsEntry('pkg:Veil:CollateralValuation', m.contractId, m.args)])
     routes.push({
       match: (c) => c.url.endsWith('/v2/commands/submit-and-wait-for-transaction'),
       reply: (c) => c.body.commands.commands[0].ExerciseCommand.contractId === 'loan-1'
@@ -413,7 +426,8 @@ describe('keeper I/O', () => {
 
   test('refresh-token auth exchanges once and derives the user id from the token', async () => {
     const loan = tbillLoan({ maturity: iso(-HOUR) })
-    ledgerState([acsEntry('pkg:Veil:Loan', loan.contractId, loan.args)])
+    const m = mark('stream-tbill', '1.0')
+    ledgerState([acsEntry('pkg:Veil:Loan', loan.contractId, loan.args), acsEntry('pkg:Veil:CollateralValuation', m.contractId, m.args)])
     const jwt = `x.${Buffer.from(JSON.stringify({ sub: 'user-from-token' })).toString('base64url')}.y`
     routes.push(
       { match: (c) => c.url === 'http://oidc.test/token', reply: { json: { access_token: jwt, expires_in: 3600 } } },

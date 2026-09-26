@@ -353,7 +353,8 @@ export function createKeeper(config, { now = () => Date.now(), emit = defaultEmi
 
   async function perform(loan, action) {
     if (loan.template === 'CoinLoan' && action.kind !== 'issueMarginCall') return liquidateCoin(loan, action)
-    const choiceArgument = action.kind === 'liquidateOverdue' ? {} : { valuationCid: action.valuationCid }
+    // T-Bill LiquidateOverdue takes an Optional mark (0.9.0), the others a plain one.
+    const choiceArgument = action.kind === 'liquidateOverdue' ? { valuationCid: action.valuationCid ?? null } : { valuationCid: action.valuationCid }
     return submit(exercise(loan.template, loan.contractId, action.choice, choiceArgument), commandId(action.kind, loan.contractId))
   }
 

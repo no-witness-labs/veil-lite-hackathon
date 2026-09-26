@@ -19,7 +19,7 @@ For every active loan where the configured party is the lender:
 | Call open, deadline not passed | nothing (waits) |
 | Call deadline passed, fresh mark, still breached | `Liquidate`, or for Canton Coin `PrepareCoinReceipt` → `LiquidateCoin` |
 | Call deadline passed, price recovered | nothing (the borrower can resolve the call) |
-| Ledger time past maturity | `LiquidateOverdue` / `PrepareCoinReceipt` → `LiquidateCoinOverdue` (no mark needed) |
+| Ledger time past maturity | T-Bill: `LiquidateOverdue` with the fresh mark (0.9.0 returns surplus collateral at that price; without a fresh mark the keeper reports `needsFreshPrice`). Canton Coin: `PrepareCoinReceipt` → `LiquidateCoinOverdue` (no mark needed) |
 | No mark, ambiguous marks, or a mark older than 300 s | nothing; logs `needsFreshPrice` |
 | CoinLoan within `--warn-hours` of its allocation settlement deadline (maturity + 1 day) | warning on stdout and stderr: after that deadline the borrower can withdraw the locked coin |
 

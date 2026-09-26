@@ -9,7 +9,8 @@
 //   - outstandingPrincipal = principal - max(0, amountRepaid - interest);
 //   - margin calls only before maturity; liquidation only once the call
 //     deadline has passed on a fresh, still-breaching mark;
-//   - overdue liquidation once now > maturity, no mark required.
+//   - overdue liquidation once now > maturity. A T-Bill Loan needs a fresh mark
+//     (0.9.0 returns surplus collateral at that price); a CoinLoan needs none.
 
 export const COIN_ASSET = 'Canton Coin'
 export const FRESHNESS_MS = 300_000
@@ -136,6 +137,36 @@ function base(loan) {
   return { template: loan.template, loanCid: loan.contractId }
 }
 
+/** The loan's single current mark if it is fresh, else a needsFreshPrice action. */
+function freshMark(loan, marks, nowMs, skewMs) {
+  const candidates = marksForLoan(loan, marks)
+  if (candidates.length !== 1) {
+    return {
+      needs: {
+        ...base(loan),
+        kind: 'needsFreshPrice',
+        reason: candidates.length === 0
+          ? 'no current mark on the loan\'s valuation stream'
+          : `ambiguous: ${candidates.length} current marks on the loan's valuation stream`,
+      },
+    }
+  }
+  const mark = candidates[0]
+  const observedMs = timeMs(mark.args.observedAt, 'observedAt')
+  if (observedMs > nowMs || nowMs + skewMs > observedMs + FRESHNESS_MS) {
+    return {
+      needs: {
+        ...base(loan),
+        kind: 'needsFreshPrice',
+        valuationCid: mark.contractId,
+        observedAt: mark.args.observedAt,
+        reason: observedMs > nowMs ? 'mark is ahead of this host\'s clock' : 'mark is older than 300s; ask the valuer to publish',
+      },
+    }
+  }
+  return { mark }
+}
+
 function decideLoan(loan, marks, nowMs, skewMs, settlementWarnHours) {
   const a = loan.args
   const choices = CHOICES[loan.template]
@@ -159,9 +190,20 @@ function decideLoan(loan, marks, nowMs, skewMs, settlementWarnHours) {
     }
   }
 
-  // Repayment default needs no price: the ledger only checks now > maturity.
   if (nowMs > maturityMs + skewMs) {
-    out.push({ ...base(loan), kind: 'liquidateOverdue', choice: choices.liquidateOverdue, reason: `past maturity ${a.maturity}` })
+    if (loan.template === 'CoinLoan') {
+      // The Canton Coin allocation settles its fixed leg; no price is involved.
+      out.push({ ...base(loan), kind: 'liquidateOverdue', choice: choices.liquidateOverdue, reason: `past maturity ${a.maturity}` })
+      return out
+    }
+    // A T-Bill Loan returns surplus collateral at the attested price, so the
+    // ledger requires a fresh mark for overdue liquidation too.
+    const fresh = freshMark(loan, marks, nowMs, skewMs)
+    if (fresh.needs) {
+      out.push({ ...fresh.needs, reason: `past maturity ${a.maturity}; ${fresh.needs.reason}` })
+      return out
+    }
+    out.push({ ...base(loan), kind: 'liquidateOverdue', choice: choices.liquidateOverdue, valuationCid: fresh.mark.contractId, reason: `past maturity ${a.maturity}` })
     return out
   }
 
@@ -180,29 +222,12 @@ function decideLoan(loan, marks, nowMs, skewMs, settlementWarnHours) {
     }
   }
 
-  const candidates = marksForLoan(loan, marks)
-  if (candidates.length !== 1) {
-    out.push({
-      ...base(loan),
-      kind: 'needsFreshPrice',
-      reason: candidates.length === 0
-        ? 'no current mark on the loan\'s valuation stream'
-        : `ambiguous: ${candidates.length} current marks on the loan's valuation stream`,
-    })
+  const fresh = freshMark(loan, marks, nowMs, skewMs)
+  if (fresh.needs) {
+    out.push(fresh.needs)
     return out
   }
-  const mark = candidates[0]
-  const observedMs = timeMs(mark.args.observedAt, 'observedAt')
-  if (observedMs > nowMs || nowMs + skewMs > observedMs + FRESHNESS_MS) {
-    out.push({
-      ...base(loan),
-      kind: 'needsFreshPrice',
-      valuationCid: mark.contractId,
-      observedAt: mark.args.observedAt,
-      reason: observedMs > nowMs ? 'mark is ahead of this host\'s clock' : 'mark is older than 300s; ask the valuer to publish',
-    })
-    return out
-  }
+  const mark = fresh.mark
 
   const ltv = loanLtv(a, mark.args.unitPrice)
   const threshold = parseDecimal(a.liquidationThresholdLtv)
