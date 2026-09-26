@@ -141,6 +141,8 @@ export async function signIn(token: string): Promise<Session> {
 
 export interface DemoLoginInfo {
   enabled: boolean
+  /** Ordinary parties sign in without a passcode; the operator still needs one. */
+  open: boolean
   operator: boolean
 }
 
@@ -148,18 +150,18 @@ export interface DemoLoginInfo {
 export async function demoLoginInfo(): Promise<DemoLoginInfo> {
   try {
     const response = await fetch('/api/demo-login', { headers: { Accept: 'application/json' }, cache: 'no-store' })
-    if (!response.ok) return { enabled: false, operator: false }
+    if (!response.ok) return { enabled: false, open: false, operator: false }
     const payload = (await response.json()) as Record<string, unknown>
-    return { enabled: payload.enabled === true, operator: payload.operator === true }
+    return { enabled: payload.enabled === true, open: payload.open === true, operator: payload.operator === true }
   } catch {
-    return { enabled: false, operator: false }
+    return { enabled: false, open: false, operator: false }
   }
 }
 
 /** Exchange the demo passcode for a role token, then verify it exactly as a
  * pasted token would be. The passcode is never kept after this call. */
-export async function signInWithPasscode(role: SessionRole, passcode: string): Promise<Session> {
-  if (!passcode.trim()) throw new SessionError('Enter the demo passcode to sign in.', 400)
+export async function signInWithPasscode(role: SessionRole, passcode: string, passcodeRequired = true): Promise<Session> {
+  if (passcodeRequired && !passcode.trim()) throw new SessionError('Enter the demo passcode to sign in.', 400)
   let response: Response
   try {
     response = await fetch('/api/demo-login', {

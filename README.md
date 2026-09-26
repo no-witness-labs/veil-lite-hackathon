@@ -2,7 +2,7 @@
 
 > HackCanton Season 3 development: private financing with controlled demo issuance, funded offers, attested prices, margin calls, collateral top-ups, and enforced maturity.
 
-**Live demo:** <https://veil-lite-hackathon.vercel.app/> runs the current Season 3 version on the HackCanton DevNet node. Sign in by choosing a party and entering the demo passcode from the submission notes; each party is a separate five-minute session, so sign out and back in to switch.
+**Live demo:** <https://veil-lite-hackathon.vercel.app/> runs the current Season 3 version on the HackCanton DevNet node. No account or passcode is needed: choose a party and click **Enter**. Each party is a separate five-minute session that sees only its own contracts, so sign out and back in to switch. Only the demo operator (reset) needs a passcode.
 
 **Try it:**
 

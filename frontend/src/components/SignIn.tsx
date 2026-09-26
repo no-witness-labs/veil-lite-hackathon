@@ -66,6 +66,7 @@ export function SignIn({
             busy={busy}
             error={error}
             roles={demoLogin.operator ? [...PASSCODE_ROLES, 'operator'] : PASSCODE_ROLES}
+            open={demoLogin.open}
             onSubmit={onPasscodeSubmit}
             onUseToken={() => setUseToken(true)}
           />
@@ -128,18 +129,21 @@ function PasscodeForm({
   busy,
   error,
   roles,
+  open,
   onSubmit,
   onUseToken,
 }: {
   busy: boolean
   error: string | null
   roles: SessionRole[]
+  open: boolean
   onSubmit: (role: SessionRole, passcode: string) => void
   onUseToken: () => void
 }) {
   const [role, setRole] = useState<SessionRole>('lender')
   const [passcode, setPasscode] = useState('')
-  const canSubmit = !busy && passcode.trim().length > 0
+  const needsPasscode = !open || role === 'operator'
+  const canSubmit = !busy && (!needsPasscode || passcode.trim().length > 0)
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -182,6 +186,7 @@ function PasscodeForm({
           </div>
         </div>
 
+        {needsPasscode && (
         <div className="v-field">
           <label htmlFor="demo-passcode" className="v-label">
             {role === 'operator' ? 'Operator passcode' : 'Demo passcode'}
@@ -195,9 +200,10 @@ function PasscodeForm({
             value={passcode}
             onChange={(event) => setPasscode(event.target.value)}
             disabled={busy}
-            placeholder="Passcode from the submission notes"
+            placeholder={role === 'operator' ? 'Operator passcode' : 'Passcode from the submission notes'}
           />
         </div>
+        )}
 
         {error && (
           <div className="v-banner v-banner--danger" role="alert">
@@ -207,7 +213,7 @@ function PasscodeForm({
         )}
 
         <button type="submit" disabled={!canSubmit} className="v-btn v-btn--primary v-btn--lg v-btn--block">
-          {busy ? 'Signing in…' : 'Sign in'}
+          {busy ? 'Signing in…' : role === 'operator' || needsPasscode ? 'Sign in' : `Enter as ${ROLE_LABELS[role]}`}
         </button>
       </div>
 

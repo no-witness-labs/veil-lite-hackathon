@@ -89,7 +89,9 @@ A hosted deployment can set `VEIL_DEMO_PASSCODE` and a server-side signing key.
 The sign-in page then offers a party picker: the server exchanges the passcode for
 the same five-minute role token the local issuer produces, and every later request
 goes through the checks above. The operator role needs a separate
-`VEIL_OPERATOR_PASSCODE`; the judge passcode never grants it. Sessions expire after
+`VEIL_OPERATOR_PASSCODE`; the judge passcode never grants it. With `VEIL_DEMO_OPEN=true`
+the ordinary parties need no passcode at all: anyone can enter the public demo, and
+each session is still bound to one party by the same server checks. Sessions expire after
 five minutes; sign in again to continue. See [VERCEL.md](VERCEL.md).
 
 Direct requests to Canton's JSON/gRPC Ledger API also require an authorized token.
@@ -102,8 +104,8 @@ do not expose its admin interface as a public service.
 - One participant hosts all parties; these checks establish user access control,
   not privacy against the participant operator.
 - On the shared DevNet node, Canton does not re-check the role: one ledger user can
-  act for every party, and the server is the only role boundary. Anyone holding the
-  demo passcode can sign in as any ordinary role.
+  act for every party, and the server is the only role boundary. In the open public
+  demo anyone can sign in as any ordinary role and act on the shared demo ledger.
 - Assets and manually published valuations are still simulated/trusted inputs.
 - Reset is privileged, cooperative demo cleanup. It is not a business cancellation
   workflow or proof of independent counterparty approval.
