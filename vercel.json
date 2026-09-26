@@ -25,6 +25,10 @@
       "destination": "/api/ledger-config"
     },
     {
+      "source": "/api/registry/(.*)",
+      "destination": "/api/registry?path=$1"
+    },
+    {
       "source": "/(.*)",
       "destination": "/index.html"
     }
