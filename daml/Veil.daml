@@ -685,8 +685,11 @@ coinAllocationSpec coinAdmin authorizer committed leg maturity = Token.Allocatio
 
 allocateCoin : ContractId Instr.AllocationFactory -> Party -> Token.SettlementInfo -> Token.AllocationSpecification -> [ContractId Holding.Holding] -> ExtraArgs -> Update (ContractId Token.Allocation)
 allocateCoin factoryCid coinAdmin settlement spec inputHoldingCids extraArgs = do
-  factory <- fetch factoryCid
-  assertMsg "allocation factory admin must be the Canton Coin admin" ((view factory).admin == coinAdmin)
+  let authorizer = fromSomeNote "allocation authorizer" spec.authorizer.owner
+  -- The factory is disclosed by the DSO, its only stakeholder, so it is read
+  -- through the public-fetch choice rather than `fetch`.
+  factoryView <- exercise factoryCid Instr.AllocationFactory_PublicFetch with actors = [authorizer]
+  assertMsg "allocation factory admin must be the Canton Coin admin" (factoryView.admin == coinAdmin)
   now <- getTime
   result <- exercise factoryCid Instr.AllocationFactory_Allocate with
     settlement
@@ -694,7 +697,7 @@ allocateCoin factoryCid coinAdmin settlement spec inputHoldingCids extraArgs = d
     requestedAt = now
     inputHoldingCids
     extraArgs
-    actors = [fromSomeNote "allocation authorizer" spec.authorizer.owner]
+    actors = [authorizer]
   case result.output of
     Instr.AllocationInstructionResult_Completed allocationCid -> pure allocationCid
     _ -> abort "Canton Coin allocation did not complete in one step"
@@ -937,8 +940,8 @@ releaseCoin allocationCid lender extraArgs = do
 
 settleCoin : CoinLoan -> ContractId Token.SettlementFactory -> ContractId Token.Allocation -> ExtraArgs -> Update ()
 settleCoin loan settlementFactoryCid receiptAllocationCid extraArgs = do
-  factory <- fetch settlementFactoryCid
-  assertMsg "settlement factory admin must be the Canton Coin admin" ((view factory).admin == loan.coinAdmin)
+  factoryView <- exercise settlementFactoryCid Token.SettlementFactory_PublicFetch with actors = [loan.lender]
+  assertMsg "settlement factory admin must be the Canton Coin admin" (factoryView.admin == loan.coinAdmin)
   receipt <- fetch receiptAllocationCid
   let receiptView = view receipt
   assertMsg "receipt allocation must belong to the lender and this loan"

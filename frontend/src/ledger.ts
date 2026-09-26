@@ -255,7 +255,10 @@ async function submitAs(actAs: string[], command: unknown, prefix: string, snaps
       commandId: nextCommandId(prefix),
       actAs,
       userId,
-      ...(disclosedContracts && disclosedContracts.length > 0 ? { disclosedContracts } : {}),
+      // The registry adds debug fields; the Ledger API needs only these four.
+      ...(disclosedContracts && disclosedContracts.length > 0
+        ? { disclosedContracts: disclosedContracts.map(({ templateId, contractId, createdEventBlob, synchronizerId }) => ({ templateId, contractId, createdEventBlob, synchronizerId })) }
+        : {}),
     },
   }, snapshot)
   const tx = res.transaction ?? {}
@@ -431,7 +434,7 @@ export async function acceptOffer(offerCid: string, snapshot = captureSession())
       && contract.args.lender === offer.args.lender
       && contract.args.borrower === offer.args.borrower
       && contract.args.regulator === offer.args.regulator
-      && contract.args.collateralAsset === offer.args.collateralAsset
+      && contract.args.collateralAsset === (offer.template === 'CoinLoanOffer' ? COIN_ASSET : offer.args.collateralAsset)
   )
   if (marks.length !== 1) {
     throw new Error(`Expected exactly one current valuation for the offer's agreed stream; found ${marks.length}. Refresh or publish the agreed stream mark before accepting.`)

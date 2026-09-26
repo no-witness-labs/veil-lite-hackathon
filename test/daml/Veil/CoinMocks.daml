@@ -12,13 +12,12 @@ import Splice.Api.Token.AllocationInstructionV2 qualified as Instr
 import Splice.Api.Token.AllocationV2 qualified as Token
 import Splice.Api.Token.MetadataV1
 
+-- No observers: like the real registry, callers see it only via disclosure.
 template MockAllocationFactory
   with
     admin : Party
-    users : [Party]
   where
     signatory admin
-    observer users
 
     interface instance Instr.AllocationFactory for MockAllocationFactory where
       view = Instr.AllocationFactoryView with admin; meta = emptyMetadata
@@ -76,13 +75,12 @@ template MockAllocation
       allocation_cancelExtraObservers _ = []
       allocation_withdrawExtraObservers _ = []
 
+-- No observers: like the real registry, callers see it only via disclosure.
 template MockSettlementFactory
   with
     admin : Party
-    users : [Party]
   where
     signatory admin
-    observer users
 
     interface instance Token.SettlementFactory for MockSettlementFactory where
       view = Token.SettlementFactoryView with admin; meta = emptyMetadata

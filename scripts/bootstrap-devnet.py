@@ -38,7 +38,7 @@ CLIENT_ID = os.environ.get("VEIL_OIDC_CLIENT_ID", "web-app-ui-hackcanton-01-devn
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TOKENS_FILE = os.path.join(ROOT, ".local", "devnet", "tokens.json")
-DAR = os.path.join(ROOT, ".daml", "dist", "veil-lite-0.8.0.dar")
+DAR = os.path.join(ROOT, ".daml", "dist", "veil-lite-0.8.1.dar")
 CONFIG = os.path.join(ROOT, "frontend", "public", "ledger-config.json")
 PACKAGE_REF = "#veil-lite"
 COLLATERAL_ASSET = "Tokenized T-Bill"
@@ -126,7 +126,7 @@ def discover_parties(token, user_id):
 
 def local_package_id():
     with zipfile.ZipFile(DAR) as dar:
-        prefix = "veil-lite-0.8.0-"
+        prefix = "veil-lite-0.8.1-"
         for name in dar.namelist():
             top = name.split("/", 1)[0]
             if top.startswith(prefix):

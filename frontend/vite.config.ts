@@ -49,7 +49,7 @@ function ledgerApiProxy(target: string, env: Record<string, string>): Plugin {
     }
     if (pathname.startsWith('/api/registry/')) {
       authReq.veilEnv = env
-      await registryApi.proxyRegistryRequest(authReq, res, pathname.replace(/^\/api/, ''), env)
+      await registryApi.proxyRegistryRequest(authReq, res, pathname.replace(/^\/api\/registry/, ''), env)
       return
     }
     if (pathname === '/api/demo-login') {

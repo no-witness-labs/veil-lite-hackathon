@@ -1,13 +1,13 @@
 sdk-version: 3.5.1
 name: veil-lite-test
 source: daml
-version: 0.8.0
+version: 0.8.1
 dependencies:
   - daml-prim
   - daml-stdlib
   - daml-script
 data-dependencies:
-  - ../.daml/dist/veil-lite-0.8.0.dar
+  - ../.daml/dist/veil-lite-0.8.1.dar
   - ../vendor/splice-token-standard/splice-api-token-metadata-v1-1.0.0.dar
   - ../vendor/splice-token-standard/splice-api-token-holding-v2-1.0.0.dar
   - ../vendor/splice-token-standard/splice-api-token-allocation-v2-1.0.0.dar
