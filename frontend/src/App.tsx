@@ -5,6 +5,7 @@ import {
   acceptOffer,
   applySubstitution,
   cancelSubstitution,
+  partialRepay,
   COLLATERAL_ASSETS,
   proposeSubstitution,
   rejectSubstitution,
@@ -31,8 +32,11 @@ import {
   DEFAULT_DRAFT,
   PARTY_NAMES,
   UNIT_CASH,
+  balanceOf,
   currentDeal,
   fmtTimestamp,
+  marginCallOf,
+  repaidOf,
   substitutionRequestFor,
   isRole,
   valuationCandidates,
@@ -49,6 +53,7 @@ import { OfferTicket } from './components/OfferTicket'
 import { PositionPanel } from './components/PositionPanel'
 import { ValuationPanel } from './components/ValuationPanel'
 import { SubstitutionPanel } from './components/SubstitutionPanel'
+import { PaydownPanel } from './components/PaydownPanel'
 import { DisclosureMatrix } from './components/DisclosureMatrix'
 import { PositionsTable } from './components/PositionsTable'
 import { ActivityLog } from './components/ActivityLog'
@@ -280,7 +285,8 @@ export default function App() {
     .filter((amount) => amount > 0)
     .sort((a, b) => a - b)
   const liquidationThreshold = deal ? Number(deal.args.liquidationThresholdLtv) : Number.NaN
-  const markedLtv = deal && valuation ? Number(deal.args.principal) / (Number(deal.args.collateralQuantity) * valuation.unitPrice) * 100 : 0
+  const balance = balanceOf(Number(deal?.args.principal), Number(deal?.args.interest), repaidOf(deal))
+  const markedLtv = deal && valuation ? balance.outstandingPrincipal / (Number(deal.args.collateralQuantity) * valuation.unitPrice) * 100 : 0
   const showShockBanner = !isOutsider && !isValuer && status === 'active' && Number.isFinite(liquidationThreshold) && Boolean(valuation && markedLtv >= liquidationThreshold)
   const substitution = substitutionRequestFor(contracts, deal)
   const replacementHolding = holdings
@@ -291,7 +297,7 @@ export default function App() {
     ? valuationCandidates(contracts).filter((mark) => mark.streamId === substitution.args.newValuationStreamId)
     : []
   const availableTopUp = deal && valuation && Number.isFinite(liquidationThreshold)
-    ? collateralCandidates.find((amount) => Number(deal.args.principal) / ((Number(deal.args.collateralQuantity) + amount) * valuation.unitPrice) * 100 < liquidationThreshold) ?? 0
+    ? collateralCandidates.find((amount) => balance.outstandingPrincipal / ((Number(deal.args.collateralQuantity) + amount) * valuation.unitPrice) * 100 < liquidationThreshold) ?? 0
     : collateralCandidates[0] ?? 0
 
   const onReset = async () => {
@@ -467,7 +473,7 @@ export default function App() {
                         onAccept: () => act('Accept offer', PARTY_NAMES.borrower, (snapshot) => acceptOffer(deal.contractId, snapshot)),
                         onRepay: () =>
                           act('Repay loan', PARTY_NAMES.borrower, (snapshot) =>
-                            repayLoan(deal.contractId, Number(deal.args.principal) + Number(deal.args.interest), snapshot),
+                            repayLoan(deal.contractId, balance.outstandingDue, snapshot),
                           ),
                         onLiquidate: () =>
                           act('Liquidate collateral', PARTY_NAMES.lender, (snapshot) => {
@@ -492,6 +498,18 @@ export default function App() {
                             return resolveMarginCall(deal.contractId, valuation.contractId, snapshot)
                           }),
                       }}
+                    />
+                  )}
+                  {showPosition && deal && status === 'active' && role === 'borrower' && (
+                    <PaydownPanel
+                      loan={deal}
+                      valuation={valuation}
+                      availableCash={holdings.filter((holding) => holding.kind === 'cash').reduce((sum, holding) => sum + holding.amount, 0)}
+                      busy={busy}
+                      onPayDown={(amount) =>
+                        act(`Pay down ${amount}`, PARTY_NAMES.borrower, (snapshot) =>
+                          partialRepay(deal.contractId, amount, marginCallOf(deal) ? valuation?.contractId ?? null : null, snapshot),
+                        )}
                     />
                   )}
                   {showPosition && deal && status === 'active' && (

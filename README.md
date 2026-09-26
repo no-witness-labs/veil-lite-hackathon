@@ -14,6 +14,8 @@
 5. **Borrower** → `Top up 50 units`, then `Repay`.
 6. **Regulator** sees the settlement; **Outsider** → `Raw ledger` shows `[]`.
 
+Paying down instead of topping up (step 5 alternative): **Borrower** → `Pay down` 30. It settles the 5 interest and 25 principal, bringing LTV to about 80.6% at the 0.62 price, so Canton clears the call. The final `Repay` is then 75.
+
 Collateral substitution (between steps 2 and 5, with no margin call open): **Borrower** → `Propose substitution` escrows 160 units of Tokenized MMF against the 150 locked T-Bills → **Valuer** selects `Tokenized MMF` → `Healthy · 1.00` → `Publish mark` → **Lender** → `Approve substitution`. In one transaction Canton rechecks LTV on the MMF price, locks the MMF, rebinds the loan to the MMF price stream, and returns the T-Bills. The lender approves without ever seeing the borrower's wallet.
 
 **Current scope, baseline, policies, and review handoff:** [Season 3](docs/SEASON3.md).

@@ -35,6 +35,9 @@ export const repayLoan = (loanCid: string, repayment: number, snapshot?: AuthSna
 export const publishValuation = (unitPrice: number, asset: string, snapshot?: AuthSnapshot): Promise<TxResult> =>
   ledger.publishValuation(unitPrice, asset, snapshot)
 
+export const partialRepay = (loanCid: string, amount: number, valuationCid: string | null, snapshot?: AuthSnapshot): Promise<TxResult> =>
+  ledger.partialRepay(loanCid, amount, valuationCid, snapshot)
+
 export const issueMarginCall = (loanCid: string, valuationCid: string, snapshot?: AuthSnapshot): Promise<TxResult> =>
   ledger.issueMarginCall(loanCid, valuationCid, snapshot)
 

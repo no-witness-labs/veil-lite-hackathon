@@ -17,6 +17,7 @@ import {
   fmtUtcTime,
   ltvBand,
   marginCallOf,
+  repaidOf,
   shortId,
 } from '../state'
 import { Banner, Button, Label, Meter, Metric, MetricRow, Section, Tag } from '../ui/primitives'
@@ -66,7 +67,10 @@ export function PositionPanel({
   const parsedThreshold = Number(deal.args.liquidationThresholdLtv)
   const threshold = Number.isFinite(parsedThreshold) && parsedThreshold > 0 ? parsedThreshold : undefined
   const markPrice = valuation?.unitPrice
-  const { collateralValue, ltv, repayment, couponPct } = dealNumbers({ principal, interest, collateral }, markPrice ?? 1)
+  const { collateralValue, ltv, repayment, couponPct, outstandingPrincipal, repaid } = dealNumbers(
+    { principal, interest, collateral, repaid: repaidOf(deal) },
+    markPrice ?? 1,
+  )
   const marginCall = marginCallOf(deal)
   const deadlineMs = marginCall ? Date.parse(marginCall.deadline) : Number.NaN
   const maturity = deal.args.maturity ?? ''
@@ -89,7 +93,7 @@ export function PositionPanel({
   const markIssue = markAgeMs < 0 ? 'future-dated — use a synchronised ledger clock' : 'stale — publish a fresh mark'
   const markBreach = Boolean(markFresh && threshold !== undefined && ltv >= threshold)
   const topUpLtv = availableTopUp > 0 && markPrice && collateral + availableTopUp > 0
-    ? (principal / ((collateral + availableTopUp) * markPrice)) * 100
+    ? (outstandingPrincipal / ((collateral + availableTopUp) * markPrice)) * 100
     : Number.POSITIVE_INFINITY
   const topUpRestores = threshold !== undefined && topUpLtv < threshold
 
@@ -146,7 +150,14 @@ export function PositionPanel({
           size="lg"
           note={`${fmtPct(couponPct)} coupon`}
         />
-        <Metric label="Repayment" value={fmtAmount(repayment)} unit={UNIT_CASH} size="lg" tone="ok" />
+        <Metric
+          label={repaid > 0 && status === 'active' ? 'Outstanding' : 'Repayment'}
+          value={fmtAmount(status === 'active' ? repayment : principal + interest)}
+          unit={UNIT_CASH}
+          size="lg"
+          tone="ok"
+          note={repaid > 0 ? `${fmtAmount(repaid)} ${UNIT_CASH} paid down` : undefined}
+        />
         <Metric
           label="Maturity · ledger UTC"
           value={fmtDate(maturity)}

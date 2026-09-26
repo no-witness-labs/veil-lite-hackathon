@@ -879,6 +879,7 @@ testIssuerAuthorizationBoundaries = script do
           marginCallWindowSeconds = 60
           marginCall = None
           collateralLocked = True
+          amountRepaid = None
   submitMustFail lender directLoan
   submitMustFail borrower directLoan
   submitMustFail (actAs lender <> actAs borrower) directLoan
@@ -933,6 +934,7 @@ testIssuerAuthorizationBoundaries = script do
       marginCallWindowSeconds = 60
       marginCall = None
       collateralLocked = True
+      amountRepaid = None
   submitMustFail (actAs lender <> actAs borrower) do
     createCmd Loan with
       issuer = borrower
@@ -950,6 +952,7 @@ testIssuerAuthorizationBoundaries = script do
       marginCallWindowSeconds = 60
       marginCall = None
       collateralLocked = True
+      amountRepaid = None
 
   let directClosed = do
         createCmd LoanClosed with
@@ -966,6 +969,7 @@ testIssuerAuthorizationBoundaries = script do
           maturity = maturityTime
           reason = "Repaid"
           collateralReleased = True
+          amountRepaid = None
   submitMustFail (actAs lender <> actAs borrower) directClosed
   submitMustFail (actAs lender <> actAs borrower) do
     createCmd LoanClosed with
@@ -982,6 +986,7 @@ testIssuerAuthorizationBoundaries = script do
       maturity = maturityTime
       reason = "Repaid"
       collateralReleased = True
+      amountRepaid = None
   submitMustFail (actAs lender <> actAs borrower) do
     createCmd LoanClosed with
       issuer = borrower
@@ -997,6 +1002,7 @@ testIssuerAuthorizationBoundaries = script do
       maturity = maturityTime
       reason = "Repaid"
       collateralReleased = True
+      amountRepaid = None
 
 -- The offer is the escrow. Its principal is conserved while reserved, and a
 -- refund restores the exact amount for both exact and oversized funding.
@@ -1262,4 +1268,110 @@ testSubstitutionMaturityAndAuthority = script do
   setTime maturityTime
   freshMmf <- publishPrice valuationAgent mmfMark 1.0
   submitMustFail lender do exerciseCmd loanCid ApplySubstitution with requestCid = request; newValuationCid = freshMmf
+  pure ()
+
+-- An active 100 principal + 5 interest loan on 150 T-Bill units at 1.0, and
+-- extra borrower cash for paydowns.
+paydownSetup : Script ((Party, Party, Party, Party, Party), (ContractId Loan, ContractId CollateralValuation, ContractId CashHolding))
+paydownSetup = do
+  ((issuer, lender, borrower, regulator, valuationAgent, _), (initialMark, lenderCash, _, borrowerColl)) <- setup
+  offerCid <- makeOffer lender borrower regulator valuationAgent lenderCash initialMark
+  loanCid <- acceptLoan borrower offerCid borrowerColl initialMark
+  paydownCash <- issueCash issuer borrower 200.0
+  pure ((issuer, lender, borrower, regulator, valuationAgent), (loanCid, initialMark, paydownCash))
+
+payDown : Party -> ContractId Loan -> ContractId CashHolding -> Decimal -> Optional (ContractId CollateralValuation) -> Script (ContractId Loan, ContractId CashHolding)
+payDown borrower loanCid cashCid amount valuationCid = do
+  (exact, rest) <- submit borrower do exerciseCmd cashCid Split with splitAmount = amount
+  loanCid' <- submit borrower do exerciseCmd loanCid PartialRepay with paymentCid = exact; valuationCid
+  pure (loanCid', rest)
+
+testPartialRepaymentLifecycle : Script ()
+testPartialRepaymentLifecycle = script do
+  setTime testStart
+  ((issuer, lender, borrower, regulator, _), (loanCid, _, cash)) <- paydownSetup
+  (paidCid, rest) <- payDown borrower loanCid cash 30.0 None
+  Some paid <- queryContractId regulator paidCid
+  paid.amountRepaid === Some 30.0
+  (paid.principal, paid.interest) === (100.0, 5.0)
+  cashAmounts lender >>= \amounts -> amounts === [30.0]
+  -- 30 paid: 5 interest, 25 principal. The final repayment is exactly 75.
+  (wrongAmount, rest2) <- submit borrower do exerciseCmd rest Split with splitAmount = 105.0
+  submitMustFail borrower do exerciseCmd paidCid Repay with repaymentCid = wrongAmount
+  _ <- submit borrower do exerciseCmd wrongAmount Split with splitAmount = 75.0
+  finalCash <- query @CashHolding borrower
+  let [(finalCid, _)] = filter (\(_, h) -> h.amount == 75.0) finalCash
+  closedCid <- submit borrower do exerciseCmd paidCid Repay with repaymentCid = finalCid
+  Some closed <- queryContractId regulator closedCid
+  closed.reason === "Repaid"
+  closed.amountRepaid === Some 105.0
+  closed.issuer === issuer
+  cashAmounts lender >>= \amounts -> amounts === [30.0, 75.0]
+  collateralQuantities borrower >>= \quantities -> quantities === [150.0]
+  Some _ <- queryContractId borrower rest2
+  pure ()
+
+testPartialRepaymentCuresMarginCall : Script ()
+testPartialRepaymentCuresMarginCall = script do
+  setTime testStart
+  ((_, lender, borrower, regulator, valuationAgent), (loanCid, mark, cash)) <- paydownSetup
+  stressed <- publishPrice valuationAgent mark 0.62
+  calledCid <- submit lender do exerciseCmd loanCid IssueMarginCall with valuationCid = stressed
+  (exact20, rest) <- submit borrower do exerciseCmd cash Split with splitAmount = 20.0
+  -- During a call the payment needs a fresh mark and must restore LTV.
+  submitMustFail borrower do exerciseCmd calledCid PartialRepay with paymentCid = exact20; valuationCid = None
+  -- 20 leaves 85 principal: 85 / (150 * 0.62) = 91.4%, still a breach.
+  submitMustFail borrower do exerciseCmd calledCid PartialRepay with paymentCid = exact20; valuationCid = Some stressed
+  (exact30, _) <- submit borrower do exerciseCmd rest Split with splitAmount = 30.0
+  setTime (addRelTime testStart (seconds 301))
+  submitMustFail borrower do exerciseCmd calledCid PartialRepay with paymentCid = exact30; valuationCid = Some stressed
+  fresh <- publishPrice valuationAgent stressed 0.62
+  -- 30 leaves 75 principal: 75 / 93 = 80.6%, which cures the call.
+  curedCid <- submit borrower do exerciseCmd calledCid PartialRepay with paymentCid = exact30; valuationCid = Some fresh
+  Some cured <- queryContractId regulator curedCid
+  cured.marginCall === None
+  cured.amountRepaid === Some 30.0
+  -- A new call is judged on the reduced principal: 80.6% is no breach.
+  submitMustFail lender do exerciseCmd curedCid IssueMarginCall with valuationCid = fresh
+  -- The unused 20 is still the borrower's.
+  Some _ <- queryContractId borrower exact20
+  pure ()
+
+testPartialRepaymentGuards : Script ()
+testPartialRepaymentGuards = script do
+  setTime testStart
+  ((issuer, lender, borrower, regulator, valuationAgent), (loanCid, mark, cash)) <- paydownSetup
+  (full, rest) <- submit borrower do exerciseCmd cash Split with splitAmount = 105.0
+  -- Paying the whole balance must go through Repay so collateral is released.
+  submitMustFail borrower do exerciseCmd loanCid PartialRepay with paymentCid = full; valuationCid = None
+  -- Only the borrower may pay, with the loan's issuer.
+  (ten, rest2) <- submit borrower do exerciseCmd rest Split with splitAmount = 10.0
+  submitMustFail lender do exerciseCmd loanCid PartialRepay with paymentCid = ten; valuationCid = None
+  otherIssuer <- allocateParty "OtherIssuer"
+  foreign <- issueCash otherIssuer borrower 10.0
+  submitMustFail borrower do exerciseCmd loanCid PartialRepay with paymentCid = foreign; valuationCid = None
+  -- Liquidation after a paydown keeps the running total on the record.
+  (paidCid, _) <- payDown borrower loanCid rest2 55.0 None
+  deep <- publishPrice valuationAgent mark 0.4
+  -- 50 principal left: 50 / 60 = 83.3%, no breach at a price that would
+  -- have breached the original 100.
+  submitMustFail lender do exerciseCmd paidCid IssueMarginCall with valuationCid = deep
+  deeper <- publishPrice valuationAgent deep 0.3
+  calledCid <- submit lender do exerciseCmd paidCid IssueMarginCall with valuationCid = deeper
+  setTime (addRelTime testStart (seconds 61))
+  freshDeep <- publishPrice valuationAgent deeper 0.3
+  closedCid <- submit lender do exerciseCmd calledCid Liquidate with valuationCid = freshDeep
+  Some closed <- queryContractId regulator closedCid
+  closed.reason === "Liquidated"
+  closed.amountRepaid === Some 55.0
+  closed.issuer === issuer
+  pure ()
+
+testPartialRepaymentMaturity : Script ()
+testPartialRepaymentMaturity = script do
+  setTime testStart
+  ((_, _, borrower, _, _), (loanCid, _, cash)) <- paydownSetup
+  (ten, _) <- submit borrower do exerciseCmd cash Split with splitAmount = 10.0
+  setTime maturityTime
+  submitMustFail borrower do exerciseCmd loanCid PartialRepay with paymentCid = ten; valuationCid = None
   pure ()

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { Contract, Holding, Role, Valuation } from '../types'
-import { assessValuation, fmtAmount, marginCallOf } from '../state'
+import { assessValuation, balanceOf, fmtAmount, marginCallOf, repaidOf } from '../state'
 import { Banner, Button, Panel } from '../ui/primitives'
 
 export interface SubstitutionActions {
@@ -37,7 +37,7 @@ export function SubstitutionPanel({
     return () => window.clearInterval(timer)
   }, [])
 
-  const principal = Number(loan.args.principal)
+  const principal = balanceOf(Number(loan.args.principal), Number(loan.args.interest), repaidOf(loan)).outstandingPrincipal
   const threshold = Number(loan.args.liquidationThresholdLtv)
   const lockedAsset = loan.args.collateralAsset ?? ''
   const lockedQuantity = Number(loan.args.collateralQuantity)
