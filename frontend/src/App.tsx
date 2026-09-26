@@ -38,7 +38,6 @@ import {
   currentDeal,
   fmtTimestamp,
   isCoinDeal,
-  marginCallOf,
   repaidOf,
   substitutionRequestFor,
   isRole,
@@ -519,11 +518,11 @@ export default function App() {
                     <PaydownPanel
                       loan={deal}
                       valuation={valuation}
-                      availableCash={holdings.filter((holding) => holding.kind === 'cash').reduce((sum, holding) => sum + holding.amount, 0)}
+                      largestCash={holdings.filter((holding) => holding.kind === 'cash').reduce((max, holding) => Math.max(max, holding.amount), 0)}
                       busy={busy}
-                      onPayDown={(amount) =>
+                      onPayDown={(amount, cure) =>
                         act(`Pay down ${amount}`, PARTY_NAMES.borrower, (snapshot) =>
-                          partialRepay(deal, amount, marginCallOf(deal) ? valuation?.contractId ?? null : null, snapshot),
+                          partialRepay(deal, amount, cure ? valuation?.contractId ?? null : null, snapshot),
                         )}
                     />
                   )}

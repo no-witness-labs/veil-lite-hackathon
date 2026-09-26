@@ -463,8 +463,9 @@ export async function repayLoan(loan: Contract, repayment: number, snapshot = ca
   return submit(cfg.parties.borrower, exercise(template('Loan'), loan.contractId, 'Repay', { repaymentCid }), 'repay', snapshot)
 }
 
-/** Borrower pays part of the balance with an exact cash holding. During a
- * margin call the ledger requires a fresh mark proving the payment cures it. */
+/** Borrower pays part of the balance with an exact cash holding. Passing a
+ * fresh mark during a margin call asks the ledger to cure it; without one the
+ * payment only reduces the balance and the call stays open. */
 export async function partialRepay(loan: Contract, amount: number, valuationCid: string | null, snapshot = captureSession()): Promise<TxResult> {
   if (!Number.isFinite(amount) || amount <= 0) throw new Error('Payment amount must be greater than zero.')
   const paymentCid = await findCash(cfg.parties.borrower, amount, snapshot)

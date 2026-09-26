@@ -1322,23 +1322,60 @@ testPartialRepaymentCuresMarginCall = script do
   stressed <- publishPrice valuationAgent mark 0.62
   calledCid <- submit lender do exerciseCmd loanCid IssueMarginCall with valuationCid = stressed
   (exact20, rest) <- submit borrower do exerciseCmd cash Split with splitAmount = 20.0
-  -- During a call the payment needs a fresh mark and must restore LTV.
-  submitMustFail borrower do exerciseCmd calledCid PartialRepay with paymentCid = exact20; valuationCid = None
-  -- 20 leaves 85 principal: 85 / (150 * 0.62) = 91.4%, still a breach.
+  -- 20 leaves 85 principal: 85 / (150 * 0.62) = 91.4%, still a breach, so it
+  -- cannot cure on a mark.
   submitMustFail borrower do exerciseCmd calledCid PartialRepay with paymentCid = exact20; valuationCid = Some stressed
-  (exact30, _) <- submit borrower do exerciseCmd rest Split with splitAmount = 30.0
+  -- Without a mark the same payment only reduces the balance.
+  partCid <- submit borrower do exerciseCmd calledCid PartialRepay with paymentCid = exact20; valuationCid = None
+  Some part <- queryContractId regulator partCid
+  part.amountRepaid === Some 20.0
+  (part.marginCall /= None) === True
+  (exact10, _) <- submit borrower do exerciseCmd rest Split with splitAmount = 10.0
   setTime (addRelTime testStart (seconds 301))
-  submitMustFail borrower do exerciseCmd calledCid PartialRepay with paymentCid = exact30; valuationCid = Some stressed
+  submitMustFail borrower do exerciseCmd partCid PartialRepay with paymentCid = exact10; valuationCid = Some stressed
   fresh <- publishPrice valuationAgent stressed 0.62
-  -- 30 leaves 75 principal: 75 / 93 = 80.6%, which cures the call.
-  curedCid <- submit borrower do exerciseCmd calledCid PartialRepay with paymentCid = exact30; valuationCid = Some fresh
+  -- 30 in total leaves 75 principal: 75 / 93 = 80.6%, which cures the call,
+  -- even past its deadline, as long as the lender has not liquidated.
+  curedCid <- submit borrower do exerciseCmd partCid PartialRepay with paymentCid = exact10; valuationCid = Some fresh
   Some cured <- queryContractId regulator curedCid
   cured.marginCall === None
   cured.amountRepaid === Some 30.0
   -- A new call is judged on the reduced principal: 80.6% is no breach.
   submitMustFail lender do exerciseCmd curedCid IssueMarginCall with valuationCid = fresh
-  -- The unused 20 is still the borrower's.
-  Some _ <- queryContractId borrower exact20
+  pure ()
+
+-- A payment too small to cure and a top-up too small to cure together restore
+-- LTV, because the top-up is judged on the reduced principal.
+testPaydownThenTopUpCures : Script ()
+testPaydownThenTopUpCures = script do
+  setTime testStart
+  ((issuer, lender, borrower, regulator, valuationAgent), (loanCid, mark, cash)) <- paydownSetup
+  stressed <- publishPrice valuationAgent mark 0.62
+  calledCid <- submit lender do exerciseCmd loanCid IssueMarginCall with valuationCid = stressed
+  topUp <- issueCollateral issuer borrower tbill 10.0
+  -- 10 more units alone: 100 / (160 * 0.62) = 100.8%.
+  submitMustFail borrower do exerciseCmd calledCid TopUpCollateral with collateralCid = topUp; topUpQuantity = 10.0; valuationCid = stressed
+  (paidCid, _) <- payDown borrower calledCid cash 20.0 None
+  -- After paying 20: 85 / (160 * 0.62) = 85.7%.
+  curedCid <- submit borrower do exerciseCmd paidCid TopUpCollateral with collateralCid = topUp; topUpQuantity = 10.0; valuationCid = stressed
+  Some cured <- queryContractId regulator curedCid
+  (cured.marginCall, cured.amountRepaid, cured.collateralQuantity) === (None, Some 20.0, 160.0)
+  pure ()
+
+-- Top-up follows the same rule as the other cures: it can land after the
+-- deadline, and liquidation then fails for want of a breach.
+testTopUpAfterDeadline : Script ()
+testTopUpAfterDeadline = script do
+  setTime testStart
+  ((issuer, lender, borrower, _, valuationAgent), (loanCid, mark, _)) <- paydownSetup
+  stressed <- publishPrice valuationAgent mark 0.62
+  calledCid <- submit lender do exerciseCmd loanCid IssueMarginCall with valuationCid = stressed
+  topUp <- issueCollateral issuer borrower tbill 50.0
+  setTime (addRelTime testStart (seconds 61))
+  fresh <- publishPrice valuationAgent stressed 0.62
+  -- 100 / (200 * 0.62) = 80.6%.
+  curedCid <- submit borrower do exerciseCmd calledCid TopUpCollateral with collateralCid = topUp; topUpQuantity = 50.0; valuationCid = fresh
+  submitMustFail lender do exerciseCmd curedCid Liquidate with valuationCid = fresh
   pure ()
 
 testPartialRepaymentGuards : Script ()
