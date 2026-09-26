@@ -31,6 +31,7 @@ const MARK_MAX_AGE_MS = 5 * 60 * 1000
 export interface PositionActions {
   onWithdraw: () => void
   onAccept: () => void
+  onReject: () => void
   onRepay: () => void
   onIssueMarginCall: () => void
   onTopUp: (quantity: number) => void
@@ -90,6 +91,8 @@ export function PositionPanel({
   const beforeDeadline = Number.isFinite(deadlineMs) ? now < deadlineMs : false
   const beforeMaturity = Number.isFinite(maturityMs) ? now < maturityMs : false
   const pastMaturity = Number.isFinite(maturityMs) ? now > maturityMs : false
+  const expiresMs = deal.args.expiresAt ? Date.parse(deal.args.expiresAt) : Number.NaN
+  const offerExpired = Number.isFinite(expiresMs) && now >= expiresMs
   const markAgeMs = valuation?.observedAt ? now - Date.parse(valuation.observedAt) : Number.POSITIVE_INFINITY
   const markFresh = Boolean(valuation && Number.isFinite(markAgeMs) && markAgeMs >= 0 && markAgeMs <= MARK_MAX_AGE_MS)
   const markIssue = markAgeMs < 0 ? 'future-dated — use a synchronised ledger clock' : 'stale — publish a fresh mark'
@@ -113,7 +116,7 @@ export function PositionPanel({
   const gates: Gates = {
     observer: role === 'regulator',
     withdraw: role === 'lender' && status === 'offered',
-    accept: role === 'borrower' && status === 'offered' && beforeMaturity && acceptance?.status === 'healthy',
+    accept: role === 'borrower' && status === 'offered' && beforeMaturity && !offerExpired && acceptance?.status === 'healthy',
     repay: role === 'borrower' && status === 'active',
     issue: role === 'lender' && status === 'active' && beforeMaturity && !marginCall && markBreach,
     topUp: role === 'borrower' && status === 'active' && beforeMaturity && Boolean(marginCall) && beforeDeadline && markBreach && topUpRestores,
@@ -233,6 +236,7 @@ export function PositionPanel({
               </span>
             )}
             {status === 'offered' && <OfferTerms deal={deal} />}
+            {closed && deal.args.collateralSeized != null && <CloseOut deal={deal} />}
           </div>
         </div>
 
@@ -287,7 +291,7 @@ export function PositionPanel({
         markFresh={markFresh}
         markBreach={markBreach}
         threshold={threshold}
-        acceptanceMessage={acceptance?.message}
+        acceptanceMessage={offerExpired ? 'the offer has expired; reject it or wait for the lender to withdraw' : acceptance?.message}
         availableTopUp={availableTopUp}
         topUpQty={topUpQty}
         onTopUpQtyChange={setTopUpInput}
@@ -362,6 +366,28 @@ function OfferTerms({ deal }: { deal: Contract }) {
         <Label>Margin-call window</Label>
         <div className="v-id">{Number.isFinite(window) ? `${window} seconds` : 'not set'}</div>
       </div>
+      <div>
+        <Label>Offer expires</Label>
+        <div className="v-id">{deal.args.expiresAt ? fmtTimestamp(deal.args.expiresAt) : 'at maturity'}</div>
+      </div>
+    </div>
+  )
+}
+
+/** Close-out netting recorded on LoanClosed (0.9.0): what the lender took at
+ * which mark, and what came back to the borrower. */
+function CloseOut({ deal }: { deal: Contract }) {
+  const price = deal.args.liquidationUnitPrice
+  return (
+    <div className="v-row" style={{ gap: 'var(--space-5)', flexWrap: 'wrap', marginTop: 'var(--space-2)' }}>
+      <div>
+        <Label>Seized by lender</Label>
+        <div className="v-id">{Number(deal.args.collateralSeized)} units{price != null ? ` at ${Number(price)}` : ''}</div>
+      </div>
+      <div>
+        <Label>Returned to borrower</Label>
+        <div className="v-id">{Number(deal.args.collateralReturned ?? 0)} units</div>
+      </div>
     </div>
   )
 }
@@ -428,7 +454,7 @@ function ActionBar({
   else if (role === 'borrower' && status === 'offered' && !gates.accept) {
     hint = !beforeMaturity ? 'Offer expired at maturity' : `Cannot accept — ${acceptanceMessage ?? 'matching valuation unavailable'}`
     hintTone = 'danger'
-  } else if (gates.overdue) hint = 'Loan past maturity — lender may liquidate without a valuation'
+  } else if (gates.overdue) hint = 'Loan past maturity — lender may liquidate at a fresh mark; surplus returns to the borrower'
   else if (lenderActive && !marginCall) {
     hint = !markFresh || threshold === undefined
       ? 'Fresh ledger valuation required'
@@ -472,6 +498,11 @@ function ActionBar({
         {gates.withdraw && (
           <Button variant="danger-ghost" onClick={actions.onWithdraw} busy={busy}>
             Withdraw offer
+          </Button>
+        )}
+        {role === 'borrower' && status === 'offered' && (
+          <Button variant="danger-ghost" onClick={actions.onReject} busy={busy}>
+            Reject offer
           </Button>
         )}
         {role === 'borrower' && status === 'offered' && (

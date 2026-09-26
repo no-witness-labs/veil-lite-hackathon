@@ -54,6 +54,12 @@ export interface DealArgs {
   reason?: string
   collateralReleased?: boolean
   amountRepaid?: string | null
+  // 0.9.0: offer expiry and the close-out record
+  expiresAt?: string | null
+  closedAt?: string | null
+  liquidationUnitPrice?: string | null
+  collateralSeized?: string | null
+  collateralReturned?: string | null
   // Canton Coin collateral (CIP-112 committed allocation)
   coinAdmin?: string
   settlementRef?: string
