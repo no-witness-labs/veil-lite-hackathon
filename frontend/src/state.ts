@@ -63,6 +63,7 @@ export const DEFAULT_DRAFT: Draft = {
   maturity: new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10),
   thresholdLtv: 90,
   marginCallWindowSeconds: 60,
+  collateralAsset: 'Tokenized T-Bill',
 }
 
 /* ------------------------------------------------------------ formatting -- */
@@ -126,9 +127,16 @@ export function shortParty(party: string): string {
 /** The contract that defines the party's current view: the most recently
  * created issuer-matching LoanOffer / Loan / LoanClosed. Lets the demo be
  * re-run cleanly while keeping an accidental foreign issuer out of the UI. */
+const DEAL_TEMPLATES = new Set(['LoanOffer', 'Loan', 'LoanClosed', 'CoinLoanOffer', 'CoinLoan'])
+
+/** Canton Coin deals carry no asset field: the collateral is always CC. */
+export const COIN_ASSET_NAME = 'Canton Coin'
+export const isCoinDeal = (deal: Contract | undefined) => deal?.template === 'CoinLoanOffer' || deal?.template === 'CoinLoan'
+export const assetOf = (deal: Contract | undefined) => (isCoinDeal(deal) ? COIN_ASSET_NAME : deal?.args.collateralAsset)
+
 export function currentDeal(contracts: Contract[], issuer?: string): Contract | undefined {
   const relevant = contracts.filter(
-    (c) => (c.template === 'LoanOffer' || c.template === 'Loan' || c.template === 'LoanClosed')
+    (c) => DEAL_TEMPLATES.has(c.template)
       && (issuer === undefined || c.args.issuer === issuer),
   )
   if (relevant.length === 0) return undefined
@@ -148,13 +156,13 @@ export function substitutionRequestFor(contracts: Contract[], deal: Contract | u
 
 export function statusOf(deal: Contract | undefined): Status {
   if (!deal) return 'none'
-  if (deal.template === 'LoanOffer') return 'offered'
-  if (deal.template === 'Loan') return 'active'
+  if (deal.template === 'LoanOffer' || deal.template === 'CoinLoanOffer') return 'offered'
+  if (deal.template === 'Loan' || deal.template === 'CoinLoan') return 'active'
   return deal.args.reason === 'Liquidated' || deal.args.reason === 'LiquidatedAtMaturity' ? 'liquidated' : 'repaid'
 }
 
 export function marginCallOf(deal: Contract | undefined): MarginCall | undefined {
-  if (!deal || deal.template !== 'Loan') return undefined
+  if (!deal || (deal.template !== 'Loan' && deal.template !== 'CoinLoan')) return undefined
   const call = deal.args.marginCall
   if (!call || typeof call !== 'object') return undefined
   if (typeof call.issuedAt !== 'string' || typeof call.deadline !== 'string') return undefined
@@ -169,7 +177,7 @@ export function valuationCandidates(contracts: Contract[], deal?: Contract): Val
       if (typeof contract.args.streamId !== 'string') return false
       if (deal && contract.args.streamId !== deal.args.valuationStreamId) return false
       if (!deal) return true
-      return contract.args.collateralAsset === deal.args.collateralAsset
+      return contract.args.collateralAsset === assetOf(deal)
         && contract.args.lender === deal.args.lender
         && contract.args.borrower === deal.args.borrower
         && contract.args.regulator === deal.args.regulator
@@ -381,6 +389,16 @@ export const DISCLOSURE: DisclosureRow[] = [
     template: 'SubstitutionRequest',
     note: 'Escrowed replacement collateral; the lender approves without seeing the wallet',
     by: { lender: 'observer', borrower: 'signatory', regulator: 'observer', valuer: 'none', issuer: 'signatory', outsider: 'none' },
+  },
+  {
+    template: 'CoinLoan',
+    note: 'Loan secured by real Canton Coin; same stakeholders as Loan',
+    by: { lender: 'signatory', borrower: 'signatory', regulator: 'observer', valuer: 'none', issuer: 'signatory', outsider: 'none' },
+  },
+  {
+    template: 'CC allocation (CIP-112)',
+    note: 'Committed Canton Coin lock: the DSO and borrower sign; the lender executes. Not visible to the regulator.',
+    by: { lender: 'observer', borrower: 'signatory', regulator: 'none', valuer: 'none', issuer: 'none', outsider: 'none' },
   },
   {
     template: 'LoanClosed',

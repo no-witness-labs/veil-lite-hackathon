@@ -12,6 +12,10 @@ export const getConfigIssue = (): string | null => ledger.getConfigIssue()
 
 export const COLLATERAL_ASSET = ledger.COLLATERAL_ASSET
 export const COLLATERAL_ASSETS = ledger.COLLATERAL_ASSETS
+export const COIN_ASSET = ledger.COIN_ASSET
+export const VALUED_ASSETS = ledger.VALUED_ASSETS
+
+export const coinAdmin = (snapshot?: AuthSnapshot): Promise<string | null> => ledger.coinAdmin(snapshot)
 
 export const listActive = (role: Role, snapshot?: AuthSnapshot): Promise<ActiveState> =>
   ledger.listActive(ledger.getParties()[role], snapshot)
@@ -25,20 +29,20 @@ export const createOffer = (draft: Draft, snapshot?: AuthSnapshot): Promise<TxRe
 export const acceptOffer = (offerCid: string, snapshot?: AuthSnapshot): Promise<TxResult> =>
   ledger.acceptOffer(offerCid, snapshot)
 
-export const withdrawOffer = (offerCid: string, snapshot?: AuthSnapshot): Promise<TxResult> =>
-  ledger.withdrawOffer(offerCid, snapshot)
+export const withdrawOffer = (offer: Contract, snapshot?: AuthSnapshot): Promise<TxResult> =>
+  ledger.withdrawOffer(offer, snapshot)
 
-export const repayLoan = (loanCid: string, repayment: number, snapshot?: AuthSnapshot): Promise<TxResult> =>
-  ledger.repayLoan(loanCid, repayment, snapshot)
+export const repayLoan = (loan: Contract, repayment: number, snapshot?: AuthSnapshot): Promise<TxResult> =>
+  ledger.repayLoan(loan, repayment, snapshot)
 
 export const publishValuation = (unitPrice: number, asset: string, snapshot?: AuthSnapshot): Promise<TxResult> =>
   ledger.publishValuation(unitPrice, asset, snapshot)
 
-export const partialRepay = (loanCid: string, amount: number, valuationCid: string | null, snapshot?: AuthSnapshot): Promise<TxResult> =>
-  ledger.partialRepay(loanCid, amount, valuationCid, snapshot)
+export const partialRepay = (loan: Contract, amount: number, valuationCid: string | null, snapshot?: AuthSnapshot): Promise<TxResult> =>
+  ledger.partialRepay(loan, amount, valuationCid, snapshot)
 
-export const issueMarginCall = (loanCid: string, valuationCid: string, snapshot?: AuthSnapshot): Promise<TxResult> =>
-  ledger.issueMarginCall(loanCid, valuationCid, snapshot)
+export const issueMarginCall = (loan: Contract, valuationCid: string, snapshot?: AuthSnapshot): Promise<TxResult> =>
+  ledger.issueMarginCall(loan, valuationCid, snapshot)
 
 export const topUpCollateral = (loanCid: string, asset: string, topUpQuantity: number, valuationCid: string, snapshot?: AuthSnapshot): Promise<TxResult> =>
   ledger.topUpCollateral(loanCid, asset, topUpQuantity, valuationCid, snapshot)
@@ -55,14 +59,14 @@ export const rejectSubstitution = (requestCid: string, snapshot?: AuthSnapshot):
 export const cancelSubstitution = (requestCid: string, snapshot?: AuthSnapshot): Promise<TxResult> =>
   ledger.cancelSubstitution(requestCid, snapshot)
 
-export const resolveMarginCall = (loanCid: string, valuationCid: string, snapshot?: AuthSnapshot): Promise<TxResult> =>
-  ledger.resolveMarginCall(loanCid, valuationCid, snapshot)
+export const resolveMarginCall = (loan: Contract, valuationCid: string, snapshot?: AuthSnapshot): Promise<TxResult> =>
+  ledger.resolveMarginCall(loan, valuationCid, snapshot)
 
-export const liquidateLoan = (loanCid: string, valuationCid: string, snapshot?: AuthSnapshot): Promise<TxResult> =>
-  ledger.liquidateLoan(loanCid, valuationCid, snapshot)
+export const liquidateLoan = (loan: Contract, valuationCid: string, snapshot?: AuthSnapshot): Promise<TxResult> =>
+  ledger.liquidateLoan(loan, valuationCid, snapshot)
 
-export const liquidateOverdueLoan = (loanCid: string, snapshot?: AuthSnapshot): Promise<TxResult> =>
-  ledger.liquidateOverdueLoan(loanCid, snapshot)
+export const liquidateOverdueLoan = (loan: Contract, snapshot?: AuthSnapshot): Promise<TxResult> =>
+  ledger.liquidateOverdueLoan(loan, snapshot)
 
 export const resetDemo = (snapshot?: AuthSnapshot): Promise<void> => {
   requireOperator(snapshot)

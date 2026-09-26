@@ -7,6 +7,8 @@ import {
   cancelSubstitution,
   partialRepay,
   COLLATERAL_ASSETS,
+  VALUED_ASSETS,
+  coinAdmin,
   proposeSubstitution,
   rejectSubstitution,
   COLLATERAL_ASSET,
@@ -32,8 +34,10 @@ import {
   PARTY_NAMES,
   UNIT_CASH,
   balanceOf,
+  assetOf,
   currentDeal,
   fmtTimestamp,
+  isCoinDeal,
   marginCallOf,
   repaidOf,
   substitutionRequestFor,
@@ -96,6 +100,7 @@ export default function App() {
   const [offset, setOffset] = useState(0)
   const [activity, setActivity] = useState<ActivityEntry[]>([])
   const [draft, setDraft] = useState<Draft>({ ...DEFAULT_DRAFT })
+  const [coinAvailable, setCoinAvailable] = useState(false)
   const [busy, setBusy] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -218,6 +223,14 @@ export default function App() {
     if (session && configOk === true) void refresh(role)
   }, [role, configOk, session, refresh])
 
+  // Canton Coin collateral is offered only where the token registry is reachable.
+  useEffect(() => {
+    if (!session || configOk !== true) return
+    let current = true
+    void coinAdmin().then((admin) => { if (current) setCoinAvailable(Boolean(admin)) })
+    return () => { current = false }
+  }, [session, configOk])
+
   useEffect(() => {
     if (!session) return
     const delay = Math.max(0, session.expiresAt * 1000 - Date.now())
@@ -268,7 +281,7 @@ export default function App() {
       && mark.lender === parties.lender
       && mark.borrower === parties.borrower
       && mark.regulator === parties.regulator
-      && mark.collateralAsset === COLLATERAL_ASSET
+      && mark.collateralAsset === draft.collateralAsset
   )
 
   const isOutsider = role === 'outsider'
@@ -277,7 +290,8 @@ export default function App() {
   const showCreateForm = !isOutsider && role === 'lender' && status === 'none'
   const showWaiting = !isOutsider && !isValuer && (role === 'borrower' || role === 'regulator') && status === 'none'
   const showPosition = !isOutsider && !isValuer && hasDeal && !!deal
-  const dealAsset = deal?.args.collateralAsset ?? COLLATERAL_ASSET
+  const coinDeal = isCoinDeal(deal)
+  const dealAsset = assetOf(deal) ?? COLLATERAL_ASSET
   const collateralCandidates = holdings
     .filter((holding) => holding.kind === 'collateral' && holding.asset === dealAsset)
     .map((holding) => holding.amount)
@@ -297,7 +311,8 @@ export default function App() {
     : []
   // The largest single reserve holding: a top-up of any size up to this is
   // carved out of it privately before the loan sees it.
-  const availableTopUp = collateralCandidates.length > 0 ? collateralCandidates[collateralCandidates.length - 1] : 0
+  // Canton Coin loans have no top-up choice: they cure by pay-down or recovery.
+  const availableTopUp = !coinDeal && collateralCandidates.length > 0 ? collateralCandidates[collateralCandidates.length - 1] : 0
 
   const onReset = async () => {
     if (session?.role !== 'operator' || configOk !== true || busy) return
@@ -442,7 +457,7 @@ export default function App() {
                   {isValuer && (
                     <ValuationPanel
                       contracts={contracts}
-                      assets={COLLATERAL_ASSETS}
+                      assets={VALUED_ASSETS}
                       onPublish={(price, asset) => act(`Publish ${asset} valuation ${price.toFixed(2)}`, PARTY_NAMES.valuer, (snapshot) => publishValuation(price, asset, snapshot))}
                       busy={busy}
                     />
@@ -450,6 +465,7 @@ export default function App() {
                   {showCreateForm && (
                     <OfferTicket
                       draft={draft}
+                      coinAvailable={coinAvailable}
                       valuations={availableValuations}
                       availableCash={holdings.filter((holding) => holding.kind === 'cash').reduce((sum, holding) => sum + holding.amount, 0)}
                       onChange={(field, value) => setDraft((d) => ({ ...d, [field]: value }) as Draft)}
@@ -468,23 +484,23 @@ export default function App() {
                       availableTopUp={availableTopUp}
                       busy={busy}
                       actions={{
-                        onWithdraw: () => act('Withdraw offer', PARTY_NAMES.lender, (snapshot) => withdrawOffer(deal.contractId, snapshot)),
+                        onWithdraw: () => act('Withdraw offer', PARTY_NAMES.lender, (snapshot) => withdrawOffer(deal, snapshot)),
                         onAccept: () => act('Accept offer', PARTY_NAMES.borrower, (snapshot) => acceptOffer(deal.contractId, snapshot)),
                         onRepay: () =>
                           act('Repay loan', PARTY_NAMES.borrower, (snapshot) =>
-                            repayLoan(deal.contractId, balance.outstandingDue, snapshot),
+                            repayLoan(deal, balance.outstandingDue, snapshot),
                           ),
                         onLiquidate: () =>
                           act('Liquidate collateral', PARTY_NAMES.lender, (snapshot) => {
                             if (!valuation) throw new Error('No ledger valuation is visible. Publish a fresh mark before liquidating.')
-                            return liquidateLoan(deal.contractId, valuation.contractId, snapshot)
+                            return liquidateLoan(deal, valuation.contractId, snapshot)
                           }),
                         onLiquidateOverdue: () =>
-                          act('Liquidate after maturity', PARTY_NAMES.lender, (snapshot) => liquidateOverdueLoan(deal.contractId, snapshot)),
+                          act('Liquidate after maturity', PARTY_NAMES.lender, (snapshot) => liquidateOverdueLoan(deal, snapshot)),
                         onIssueMarginCall: () =>
                           act('Issue margin call', PARTY_NAMES.lender, (snapshot) => {
                             if (!valuation) throw new Error('No ledger valuation is visible. Publish a fresh breached mark first.')
-                            return issueMarginCall(deal.contractId, valuation.contractId, snapshot)
+                            return issueMarginCall(deal, valuation.contractId, snapshot)
                           }),
                         onTopUp: (quantity) =>
                           act(`Top up collateral · ${quantity} units`, PARTY_NAMES.borrower, (snapshot) => {
@@ -494,7 +510,7 @@ export default function App() {
                         onResolveMarginCall: () =>
                           act('Resolve margin call', PARTY_NAMES.borrower, (snapshot) => {
                             if (!valuation) throw new Error('No ledger valuation is visible. Publish a fresh healthy mark first.')
-                            return resolveMarginCall(deal.contractId, valuation.contractId, snapshot)
+                            return resolveMarginCall(deal, valuation.contractId, snapshot)
                           }),
                       }}
                     />
@@ -507,11 +523,11 @@ export default function App() {
                       busy={busy}
                       onPayDown={(amount) =>
                         act(`Pay down ${amount}`, PARTY_NAMES.borrower, (snapshot) =>
-                          partialRepay(deal.contractId, amount, marginCallOf(deal) ? valuation?.contractId ?? null : null, snapshot),
+                          partialRepay(deal, amount, marginCallOf(deal) ? valuation?.contractId ?? null : null, snapshot),
                         )}
                     />
                   )}
-                  {showPosition && deal && status === 'active' && (
+                  {showPosition && deal && status === 'active' && !coinDeal && (
                     <SubstitutionPanel
                       role={role}
                       loan={deal}

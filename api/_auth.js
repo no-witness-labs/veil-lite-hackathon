@@ -269,7 +269,8 @@ function validateCommands(body, auth, env = process.env) {
   const config = knownParties(env)
   if (!exactKeys(body, ['commands'])) throw new AuthError(400, 'REQUEST_INVALID')
   const commands = body.commands
-  if (!exactKeys(commands, ['commands', 'commandId', 'actAs', 'readAs', 'userId'])) throw new AuthError(400, 'REQUEST_INVALID')
+  if (!exactKeys(commands, ['commands', 'commandId', 'actAs', 'readAs', 'userId', 'disclosedContracts'])) throw new AuthError(400, 'REQUEST_INVALID')
+  validateDisclosedContracts(commands.disclosedContracts)
   if (!Array.isArray(commands.commands) || commands.commands.length !== 1) throw new AuthError(400, 'REQUEST_INVALID')
   if (typeof commands.commandId !== 'string' || commands.commandId.length === 0 || commands.commandId.length > 200) {
     throw new AuthError(400, 'REQUEST_INVALID')
@@ -294,6 +295,27 @@ function validateCommands(body, auth, env = process.env) {
     throw new AuthError(403, 'COMMAND_FORBIDDEN')
   }
   return { config, actAs, readAs }
+}
+
+// Registry contracts (e.g. the Canton Coin allocation factory) are disclosed by
+// the token admin so a Veil choice can exercise them. They only widen what the
+// submitter can *see*; authority still comes from actAs and the Daml choice.
+const MAX_DISCLOSED_CONTRACTS = 16
+const MAX_DISCLOSED_BLOB = 64 * 1024
+
+function validateDisclosedContracts(value) {
+  if (value === undefined) return
+  if (!Array.isArray(value) || value.length > MAX_DISCLOSED_CONTRACTS) throw new AuthError(400, 'REQUEST_INVALID')
+  for (const entry of value) {
+    if (!exactKeys(entry, ['templateId', 'contractId', 'createdEventBlob', 'synchronizerId'])) throw new AuthError(400, 'REQUEST_INVALID')
+    for (const key of ['contractId', 'createdEventBlob']) {
+      if (typeof entry[key] !== 'string' || !entry[key]) throw new AuthError(400, 'REQUEST_INVALID')
+    }
+    if (entry.createdEventBlob.length > MAX_DISCLOSED_BLOB) throw new AuthError(400, 'REQUEST_INVALID')
+    for (const key of ['templateId', 'synchronizerId']) {
+      if (entry[key] !== undefined && typeof entry[key] !== 'string') throw new AuthError(400, 'REQUEST_INVALID')
+    }
+  }
 }
 
 function routePolicy(pathname, method) {

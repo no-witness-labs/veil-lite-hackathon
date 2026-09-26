@@ -11,6 +11,7 @@ export function OfferTicket({
   draft,
   valuations,
   availableCash,
+  coinAvailable,
   onChange,
   onSubmit,
   busy,
@@ -18,6 +19,7 @@ export function OfferTicket({
   draft: Draft
   valuations: Valuation[]
   availableCash: number
+  coinAvailable: boolean
   onChange: (field: keyof Draft, value: number | string) => void
   onSubmit: () => void
   busy: boolean
@@ -29,6 +31,7 @@ export function OfferTicket({
   }, [])
 
   const liquidationThresholdLtv = draft.thresholdLtv
+  const coinCollateral = draft.collateralAsset === 'Canton Coin'
   const repayment = draft.principal + draft.interest
   const coupon = draft.principal > 0 ? (draft.interest / draft.principal) * 100 : 0
   const maturityMs = parseMaturity(draft.maturity)
@@ -77,7 +80,30 @@ export function OfferTicket({
           <Field label="Interest · simulated USDC" hint={`${fmtPct(coupon)} coupon`}>
             <NumberInput value={draft.interest} onChange={(v) => onChange('interest', v)} />
           </Field>
-          <Field label="Collateral · units" hint="Simulated tokenised T-Bill">
+          <Field label="Collateral asset" hint={coinCollateral ? 'Real DevNet Canton Coin, locked in a CIP-112 committed allocation' : 'Simulated tokenised T-Bill'}>
+            <div className="v-row" role="radiogroup" aria-label="Collateral asset" style={{ gap: 'var(--space-2)', flexWrap: 'wrap' }}>
+              {[
+                { value: 'Tokenized T-Bill', label: 'Tokenized T-Bill', enabled: true },
+                { value: 'Canton Coin', label: 'Canton Coin (real)', enabled: coinAvailable },
+              ].map((option) => (
+                <Button
+                  key={option.value}
+                  size="sm"
+                  variant={draft.collateralAsset === option.value ? 'primary' : 'ghost'}
+                  disabled={busy || !option.enabled}
+                  title={option.enabled ? undefined : 'Needs the DevNet token registry'}
+                  onClick={() => {
+                    onChange('collateralAsset', option.value)
+                    // A sensible starting size for each asset's price level.
+                    onChange('collateral', option.value === 'Canton Coin' ? 1000 : 150)
+                  }}
+                >
+                  {option.label}
+                </Button>
+              ))}
+            </div>
+          </Field>
+          <Field label={coinCollateral ? 'Collateral · CC' : 'Collateral · units'} hint={coinCollateral ? 'Canton Coin locked from the borrower on acceptance' : 'Simulated tokenised T-Bill'}>
             <NumberInput value={draft.collateral} onChange={(v) => onChange('collateral', v)} />
           </Field>
           <Field label="Liquidation threshold · LTV %" hint="Margin calls and liquidation start at this LTV.">

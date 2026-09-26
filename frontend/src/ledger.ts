@@ -9,7 +9,7 @@
 // scripts/bootstrap.sh writes into frontend/public. Keeping it out of the source
 // import means `npm run build` succeeds on a clean checkout (CI / Vercel) before
 // any sandbox has run; the app shows a clear "run start-sandbox" message instead.
-import { assertSession, captureSession, clearSession, requireOperator, requireSession } from './auth'
+import { assertSession, captureSession, clearSession, requireOperator, requireSession, type AuthSnapshot } from './auth'
 import type { ActiveState, Contract, DealArgs, Draft, Holding, Role, TemplateName, TxResult } from './types'
 
 interface LedgerConfig {
@@ -36,6 +36,8 @@ const ISSUER_SCOPED_TEMPLATES = new Set<TemplateName>([
   'LoanClosed',
   'CashHolding',
   'CollateralHolding',
+  'CoinLoanOffer',
+  'CoinLoan',
 ])
 
 /** Load runtime config written by scripts/bootstrap.sh. Returns false when it
@@ -106,6 +108,9 @@ const KNOWN_TEMPLATES: TemplateName[] = [
   'ValuationStream',
   'CollateralValuation',
   'SubstitutionRequest',
+  'CoinLoanOffer',
+  'CoinLoan',
+  'Amulet',
 ]
 
 /** The asset offers are written against, and the eligible replacement the
@@ -114,6 +119,12 @@ const KNOWN_TEMPLATES: TemplateName[] = [
 export const COLLATERAL_ASSET = 'Tokenized T-Bill'
 export const SUBSTITUTE_ASSET = 'Tokenized MMF'
 export const COLLATERAL_ASSETS = [COLLATERAL_ASSET, SUBSTITUTE_ASSET] as const
+/** Real Canton Coin collateral, locked in a CIP-112 committed allocation. */
+export const COIN_ASSET = 'Canton Coin'
+/** Every asset the valuer prices, each on its own agreed stream. */
+export const VALUED_ASSETS = [COLLATERAL_ASSET, SUBSTITUTE_ASSET, COIN_ASSET] as const
+/** Seed mark per asset; Canton Coin is priced near its market level. */
+const SEED_PRICE: Record<string, string> = { [COIN_ASSET]: '0.15' }
 
 /** Canonical demo seed (kept in sync with scripts/bootstrap.sh). */
 const SEED = { lenderCash: 10000, borrowerCash: 10500, borrowerCollateral: 15000, borrowerReserve: 5000, borrowerSubstitute: 16000 }
@@ -216,6 +227,8 @@ export async function listActive(party: string, snapshot = captureSession()): Pr
     if (!ce) continue
     const entity = templateName(ce.templateId) as TemplateName
     if (!KNOWN_TEMPLATES.includes(entity)) continue
+    // Only Canton Coin's own Amulet template counts as a coin holding.
+    if (entity === 'Amulet' && !String(ce.templateId).includes(':Splice.Amulet:Amulet')) continue
     // Keep the raw ACS response intact for the inspector, but never surface
     // holdings or deal contracts issued by another configured issuer as
     // normalized application state.
@@ -234,7 +247,7 @@ async function submit(actAs: string, command: unknown, prefix: string, snapshot 
   return submitAs([actAs], command, prefix, snapshot)
 }
 
-async function submitAs(actAs: string[], command: unknown, prefix: string, snapshot = captureSession()): Promise<TxResult> {
+async function submitAs(actAs: string[], command: unknown, prefix: string, snapshot = captureSession(), disclosedContracts?: DisclosedContract[]): Promise<TxResult> {
   const { userId } = requireSession(snapshot)
   const res = await api<any>('/v2/commands/submit-and-wait-for-transaction', {
     commands: {
@@ -242,6 +255,10 @@ async function submitAs(actAs: string[], command: unknown, prefix: string, snaps
       commandId: nextCommandId(prefix),
       actAs,
       userId,
+      // The registry adds debug fields; the Ledger API needs only these four.
+      ...(disclosedContracts && disclosedContracts.length > 0
+        ? { disclosedContracts: disclosedContracts.map(({ templateId, contractId, createdEventBlob, synchronizerId }) => ({ templateId, contractId, createdEventBlob, synchronizerId })) }
+        : {}),
     },
   }, snapshot)
   const tx = res.transaction ?? {}
@@ -281,6 +298,11 @@ export function parseHoldings(contracts: Contract[]): Holding[] {
       out.push({ contractId: c.contractId, kind: 'cash', amount: Number(c.args.amount), issuer: c.args.issuer })
     else if (c.template === 'CollateralHolding' && c.args.issuer === cfg.issuer)
       out.push({ contractId: c.contractId, kind: 'collateral', amount: Number(c.args.quantity), asset: c.args.asset, issuer: c.args.issuer })
+    else if (c.template === 'Amulet') {
+      // Holding fees decay the amount slowly; the initial amount is shown.
+      const amount = (c.args as unknown as { amount?: { initialAmount?: string } }).amount?.initialAmount
+      out.push({ contractId: c.contractId, kind: 'coin', amount: Number(amount), asset: COIN_ASSET })
+    }
   }
   return out
 }
@@ -366,6 +388,7 @@ function ledgerMaturity(value: string): string {
 
 /** Lender funds + creates the offer from a cash holding (MakeOffer). */
 export async function createOffer(draft: Draft, snapshot = captureSession()): Promise<TxResult> {
+  if (draft.collateralAsset === COIN_ASSET) return createCoinOffer(draft, snapshot)
   const valuation = await findCurrentValuation(cfg.parties.lender, COLLATERAL_ASSET, snapshot)
   const cashCid = await findCash(cfg.parties.lender, draft.principal, snapshot)
   return submit(
@@ -391,7 +414,7 @@ export async function createOffer(draft: Draft, snapshot = captureSession()): Pr
 /** Borrower accepts, locking their collateral holding into the loan. */
 export async function acceptOffer(offerCid: string, snapshot = captureSession()): Promise<TxResult> {
   const { contracts } = await listActive(cfg.parties.borrower, snapshot)
-  const offer = contracts.find((c) => c.contractId === offerCid && c.template === 'LoanOffer')
+  const offer = contracts.find((c) => c.contractId === offerCid && (c.template === 'LoanOffer' || c.template === 'CoinLoanOffer'))
   if (!offer) throw new Error('Offer is not visible to the borrower or is no longer active; refresh before accepting.')
   if (offer.args.issuer !== cfg.issuer) {
     throw new Error('Refusing to accept an offer issued by a different issuer; refresh the configured issuer view.')
@@ -411,11 +434,12 @@ export async function acceptOffer(offerCid: string, snapshot = captureSession())
       && contract.args.lender === offer.args.lender
       && contract.args.borrower === offer.args.borrower
       && contract.args.regulator === offer.args.regulator
-      && contract.args.collateralAsset === offer.args.collateralAsset
+      && contract.args.collateralAsset === (offer.template === 'CoinLoanOffer' ? COIN_ASSET : offer.args.collateralAsset)
   )
   if (marks.length !== 1) {
     throw new Error(`Expected exactly one current valuation for the offer's agreed stream; found ${marks.length}. Refresh or publish the agreed stream mark before accepting.`)
   }
+  if (offer.template === 'CoinLoanOffer') return acceptCoinOffer(offer, marks[0].contractId, snapshot)
   const collateralCid = await findCollateral(cfg.parties.borrower, offer.args.collateralAsset ?? COLLATERAL_ASSET, requestedQuantity, snapshot)
   return submit(
     cfg.parties.borrower,
@@ -425,21 +449,27 @@ export async function acceptOffer(offerCid: string, snapshot = captureSession())
   )
 }
 
-export const withdrawOffer = (cid: string, snapshot = captureSession()) =>
-  submit(cfg.parties.lender, exercise(template('LoanOffer'), cid, 'Withdraw'), 'withdraw', snapshot)
+const isCoin = (deal: Contract) => deal.template === 'CoinLoanOffer' || deal.template === 'CoinLoan'
 
-/** Borrower repays from a cash holding covering principal + interest. */
-export async function repayLoan(loanCid: string, repayment: number, snapshot = captureSession()): Promise<TxResult> {
+export const withdrawOffer = (offer: Contract, snapshot = captureSession()) =>
+  isCoin(offer)
+    ? submit(cfg.parties.lender, exercise(template('CoinLoanOffer'), offer.contractId, 'WithdrawCoinOffer'), 'withdraw', snapshot)
+    : submit(cfg.parties.lender, exercise(template('LoanOffer'), offer.contractId, 'Withdraw'), 'withdraw', snapshot)
+
+/** Borrower repays from a cash holding covering the outstanding balance. */
+export async function repayLoan(loan: Contract, repayment: number, snapshot = captureSession()): Promise<TxResult> {
+  if (isCoin(loan)) return repayCoinLoan(loan, repayment, snapshot)
   const repaymentCid = await findCash(cfg.parties.borrower, repayment, snapshot)
-  return submit(cfg.parties.borrower, exercise(template('Loan'), loanCid, 'Repay', { repaymentCid }), 'repay', snapshot)
+  return submit(cfg.parties.borrower, exercise(template('Loan'), loan.contractId, 'Repay', { repaymentCid }), 'repay', snapshot)
 }
 
 /** Borrower pays part of the balance with an exact cash holding. During a
  * margin call the ledger requires a fresh mark proving the payment cures it. */
-export async function partialRepay(loanCid: string, amount: number, valuationCid: string | null, snapshot = captureSession()): Promise<TxResult> {
+export async function partialRepay(loan: Contract, amount: number, valuationCid: string | null, snapshot = captureSession()): Promise<TxResult> {
   if (!Number.isFinite(amount) || amount <= 0) throw new Error('Payment amount must be greater than zero.')
   const paymentCid = await findCash(cfg.parties.borrower, amount, snapshot)
-  return submit(cfg.parties.borrower, exercise(template('Loan'), loanCid, 'PartialRepay', { paymentCid, valuationCid }), 'partial-repay', snapshot)
+  const [templateName, choice] = isCoin(loan) ? ['CoinLoan', 'PartialRepayCoin'] as const : ['Loan', 'PartialRepay'] as const
+  return submit(cfg.parties.borrower, exercise(template(templateName), loan.contractId, choice, { paymentCid, valuationCid }), 'partial-repay', snapshot)
 }
 
 /** Replace the current mark on the configured stream. This is manually
@@ -469,8 +499,10 @@ export async function publishValuation(unitPrice: number, asset: string, snapsho
   )
 }
 
-export const issueMarginCall = (loanCid: string, valuationCid: string, snapshot = captureSession()): Promise<TxResult> =>
-  submit(cfg.parties.lender, exercise(template('Loan'), loanCid, 'IssueMarginCall', { valuationCid }), 'margin-call', snapshot)
+export const issueMarginCall = (loan: Contract, valuationCid: string, snapshot = captureSession()): Promise<TxResult> =>
+  isCoin(loan)
+    ? submit(cfg.parties.lender, exercise(template('CoinLoan'), loan.contractId, 'IssueCoinMarginCall', { valuationCid }), 'margin-call', snapshot)
+    : submit(cfg.parties.lender, exercise(template('Loan'), loan.contractId, 'IssueMarginCall', { valuationCid }), 'margin-call', snapshot)
 
 export async function topUpCollateral(loanCid: string, asset: string, topUpQuantity: number, valuationCid: string, snapshot = captureSession()): Promise<TxResult> {
   if (!Number.isFinite(topUpQuantity) || topUpQuantity <= 0) throw new Error('Top-up quantity must be greater than zero.')
@@ -487,8 +519,10 @@ export async function topUpCollateral(loanCid: string, asset: string, topUpQuant
   )
 }
 
-export const resolveMarginCall = (loanCid: string, valuationCid: string, snapshot = captureSession()): Promise<TxResult> =>
-  submit(cfg.parties.borrower, exercise(template('Loan'), loanCid, 'ResolveMarginCall', { valuationCid }), 'resolve-call', snapshot)
+export const resolveMarginCall = (loan: Contract, valuationCid: string, snapshot = captureSession()): Promise<TxResult> =>
+  isCoin(loan)
+    ? submit(cfg.parties.borrower, exercise(template('CoinLoan'), loan.contractId, 'ResolveCoinMarginCall', { valuationCid }), 'resolve-call', snapshot)
+    : submit(cfg.parties.borrower, exercise(template('Loan'), loan.contractId, 'ResolveMarginCall', { valuationCid }), 'resolve-call', snapshot)
 
 /** Borrower escrows an exact quantity of the other eligible asset as a
  * replacement for the loan's locked collateral, naming that asset's agreed
@@ -527,20 +561,209 @@ export const cancelSubstitution = (requestCid: string, snapshot = captureSession
 /** Liquidation uses only a ledger valuation CID. The lender never supplies a
  * private mark directly; freshness, deadline, counterparties, and LTV are
  * checked by the Loan choice. */
-export const liquidateLoan = (cid: string, valuationCid: string, snapshot = captureSession()): Promise<TxResult> =>
-  submit(cfg.parties.lender, exercise(template('Loan'), cid, 'Liquidate', { valuationCid }), 'liquidate', snapshot)
+export const liquidateLoan = (loan: Contract, valuationCid: string, snapshot = captureSession()): Promise<TxResult> =>
+  isCoin(loan)
+    ? liquidateCoinLoan(loan, valuationCid, snapshot)
+    : submit(cfg.parties.lender, exercise(template('Loan'), loan.contractId, 'Liquidate', { valuationCid }), 'liquidate', snapshot)
 
 /** Close a loan after its exact ledger maturity instant, without a price mark
  * or margin call. The Daml choice enforces now > maturity. */
-export const liquidateOverdueLoan = (cid: string, snapshot = captureSession()): Promise<TxResult> =>
-  submit(cfg.parties.lender, exercise(template('Loan'), cid, 'LiquidateOverdue'), 'liquidate-overdue', snapshot)
+export const liquidateOverdueLoan = (loan: Contract, snapshot = captureSession()): Promise<TxResult> =>
+  isCoin(loan)
+    ? liquidateCoinLoan(loan, null, snapshot)
+    : submit(cfg.parties.lender, exercise(template('Loan'), loan.contractId, 'LiquidateOverdue'), 'liquidate-overdue', snapshot)
+
+/* ------------------------------------------------ Canton Coin (CIP-112) -- */
+
+interface DisclosedContract {
+  templateId?: string
+  contractId: string
+  createdEventBlob: string
+  synchronizerId?: string
+}
+interface ChoiceContext {
+  choiceContextData: unknown
+  disclosedContracts: DisclosedContract[]
+}
+interface FactoryWithContext {
+  factoryId: string
+  choiceContext: ChoiceContext
+}
+
+const META = { values: {} }
+const EMPTY_EXTRA = { context: { values: {} }, meta: META }
+const COIN_INSTRUMENT = 'Amulet'
+const coinAccount = (party: string) => ({ owner: party, provider: null, id: '' })
+
+/** Registry reads go through the server, which holds the node credential. */
+async function registry<T>(path: string, body?: unknown, snapshot = captureSession()): Promise<T> {
+  const res = await authorizedFetch(`/api/registry${path}`, body === undefined
+    ? { method: 'GET' }
+    : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }, snapshot)
+  const text = await res.text()
+  assertSession(snapshot)
+  if (!res.ok) throw new LedgerHttpError(`/api/registry${path}`, res.status, text)
+  return JSON.parse(text) as T
+}
+
+let coinAdminCache: string | null = null
+/** The Canton Coin admin (DSO) party, or null when no registry is configured. */
+export async function coinAdmin(snapshot = captureSession()): Promise<string | null> {
+  if (coinAdminCache) return coinAdminCache
+  try {
+    coinAdminCache = (await registry<{ adminId: string }>('/registry/metadata/v1/info', undefined, snapshot)).adminId
+    return coinAdminCache
+  } catch {
+    return null
+  }
+}
+
+function settlementDeadline(maturity: string): string {
+  return new Date(Date.parse(maturity) + 86400e3).toISOString()
+}
+
+function coinSpec(admin: string, authorizer: string, committed: boolean, side: 'SenderSide' | 'ReceiverSide', otherside: string, quantity: string, maturity: string) {
+  return {
+    admin,
+    authorizer: coinAccount(authorizer),
+    transferLegSides: [{ transferLegId: 'collateral', side, otherside: coinAccount(otherside), amount: quantity, instrumentId: COIN_INSTRUMENT, meta: META }],
+    settlementDeadline: settlementDeadline(maturity),
+    nextIterationFunding: null,
+    committed,
+    meta: META,
+  }
+}
+
+const coinSettlement = (lender: string, id: string) => ({ executors: [lender], id, cid: null, meta: META })
+
+async function allocationFactory(settlement: unknown, allocation: unknown, inputHoldingCids: string[], actor: string, snapshot: AuthSnapshot): Promise<FactoryWithContext> {
+  return registry<FactoryWithContext>('/registry/allocation-instruction/v2/allocation-factory', {
+    choiceArguments: { settlement, allocation, requestedAt: new Date().toISOString(), inputHoldingCids, extraArgs: EMPTY_EXTRA, actors: [actor] },
+    excludeDebugFields: true,
+  }, snapshot)
+}
+
+async function cancelContext(allocationCid: string, snapshot: AuthSnapshot): Promise<ChoiceContext> {
+  return registry<ChoiceContext>(`/registry/allocations/v2/${encodeURIComponent(allocationCid)}/choice-contexts/cancel`, { excludeDebugFields: true }, snapshot)
+}
+
+/** Lender funds an offer secured by real Canton Coin. */
+async function createCoinOffer(draft: Draft, snapshot: AuthSnapshot): Promise<TxResult> {
+  const admin = await coinAdmin(snapshot)
+  if (!admin) throw new Error('Canton Coin collateral needs the DevNet token registry, which is not configured here.')
+  const valuation = await findCurrentValuation(cfg.parties.lender, COIN_ASSET, snapshot)
+  const cashCid = await findCash(cfg.parties.lender, draft.principal, snapshot)
+  return submit(
+    cfg.parties.lender,
+    exercise(template('CashHolding'), cashCid, 'MakeCoinOffer', {
+      borrower: cfg.parties.borrower,
+      regulator: cfg.parties.regulator,
+      valuationAgent: cfg.parties.valuer,
+      valuationCid: valuation.contractId,
+      coinAdmin: admin,
+      principal: String(draft.principal),
+      interest: String(draft.interest),
+      collateralQuantity: String(draft.collateral),
+      maturity: ledgerMaturity(draft.maturity),
+      liquidationThresholdLtv: String(draft.thresholdLtv),
+      marginCallWindowSeconds: String(draft.marginCallWindowSeconds),
+      settlementRef: `veil-${Date.now()}`,
+    }),
+    'coin-offer',
+    snapshot,
+  )
+}
+
+/** Borrower accepts: in one transaction the Canton Coin is locked in a
+ * committed allocation executed only by the lender, and the loan opens. */
+async function acceptCoinOffer(offer: Contract, valuationCid: string, snapshot: AuthSnapshot): Promise<TxResult> {
+  const a = offer.args
+  if (!a.coinAdmin || !a.lender || !a.settlementRef || !a.collateralQuantity || !a.maturity) throw new Error('Canton Coin offer is incomplete; refresh before accepting.')
+  const coins = parseHoldings((await listActive(cfg.parties.borrower, snapshot)).contracts).filter((h) => h.kind === 'coin')
+  const available = coins.reduce((sum, h) => sum + h.amount, 0)
+  if (available < Number(a.collateralQuantity)) throw new Error(`The borrower holds ${available.toFixed(2)} CC; ${a.collateralQuantity} CC must be locked.`)
+  const settlement = coinSettlement(a.lender, a.settlementRef)
+  const spec = coinSpec(a.coinAdmin, cfg.parties.borrower, true, 'SenderSide', a.lender, a.collateralQuantity, a.maturity)
+  const inputHoldingCids = coins.map((h) => h.contractId)
+  const factory = await allocationFactory(settlement, spec, inputHoldingCids, cfg.parties.borrower, snapshot)
+  return submitAs(
+    [cfg.parties.borrower],
+    exercise(template('CoinLoanOffer'), offer.contractId, 'AcceptCoin', {
+      valuationCid,
+      allocationFactoryCid: factory.factoryId,
+      inputHoldingCids,
+      extraArgs: { context: factory.choiceContext.choiceContextData, meta: META },
+    }),
+    'accept-coin',
+    snapshot,
+    factory.choiceContext.disclosedContracts,
+  )
+}
+
+/** Borrower settles the balance; the Canton Coin allocation is cancelled in
+ * the same transaction and the coin unlocks. */
+async function repayCoinLoan(loan: Contract, repayment: number, snapshot: AuthSnapshot): Promise<TxResult> {
+  if (!loan.args.allocationCid) throw new Error('Loan has no recorded allocation.')
+  const repaymentCid = await findCash(cfg.parties.borrower, repayment, snapshot)
+  const ctx = await cancelContext(loan.args.allocationCid, snapshot)
+  return submitAs(
+    [cfg.parties.borrower],
+    exercise(template('CoinLoan'), loan.contractId, 'RepayCoin', { repaymentCid, cancelExtraArgs: { context: ctx.choiceContextData, meta: META } }),
+    'repay-coin',
+    snapshot,
+    ctx.disclosedContracts,
+  )
+}
+
+/** Lender liquidates: prepare the receiving allocation, then settle the batch
+ * so the locked Canton Coin moves to the lender. */
+async function liquidateCoinLoan(loan: Contract, valuationCid: string | null, snapshot: AuthSnapshot): Promise<TxResult> {
+  const a = loan.args
+  if (!a.coinAdmin || !a.lender || !a.borrower || !a.settlementRef || !a.collateralQuantity || !a.maturity || !a.allocationCid) throw new Error('Loan is incomplete; refresh before liquidating.')
+  const settlement = coinSettlement(a.lender, a.settlementRef)
+  const receiptSpec = coinSpec(a.coinAdmin, a.lender, false, 'ReceiverSide', a.borrower, a.collateralQuantity, a.maturity)
+  const factory = await allocationFactory(settlement, receiptSpec, [], a.lender, snapshot)
+  const prepared = await submitAs(
+    [cfg.parties.lender],
+    exercise(template('CoinLoan'), loan.contractId, 'PrepareCoinReceipt', { allocationFactoryCid: factory.factoryId, extraArgs: { context: factory.choiceContext.choiceContextData, meta: META } }),
+    'coin-receipt',
+    snapshot,
+    factory.choiceContext.disclosedContracts,
+  )
+  const receipt = prepared.created.find((c) => /Allocation/.test(c.template))
+  if (!receipt) throw new Error('The receiving allocation was not created.')
+  const legs = [{ transferLegId: 'collateral', sender: coinAccount(a.borrower), receiver: coinAccount(a.lender), amount: a.collateralQuantity, instrumentId: COIN_INSTRUMENT, meta: META }]
+  const allocations = [a.allocationCid, receipt.contractId].map((allocationCid) => ({ allocationCid, extraTransferLegSides: [], nextIterationFunding: null }))
+  const settle = await registry<FactoryWithContext>('/registry/allocation/v2/settlement-factory', {
+    choiceArguments: { settlement, transferLegs: legs, allocations, actors: [a.lender], extraArgs: EMPTY_EXTRA },
+    excludeDebugFields: true,
+  }, snapshot)
+  const extraArgs = { context: settle.choiceContext.choiceContextData, meta: META }
+  const choice = valuationCid
+    ? exercise(template('CoinLoan'), loan.contractId, 'LiquidateCoin', { valuationCid, settlementFactoryCid: settle.factoryId, receiptAllocationCid: receipt.contractId, extraArgs })
+    : exercise(template('CoinLoan'), loan.contractId, 'LiquidateCoinOverdue', { settlementFactoryCid: settle.factoryId, receiptAllocationCid: receipt.contractId, extraArgs })
+  return submitAs([cfg.parties.lender], choice, 'liquidate-coin', snapshot, settle.choiceContext.disclosedContracts)
+}
+
+/** Lender releases the Canton Coin and closes the loan (used by reset). */
+async function writeOffCoinLoan(loan: Contract, snapshot: AuthSnapshot): Promise<TxResult> {
+  if (!loan.args.allocationCid) throw new Error('Loan has no recorded allocation.')
+  const ctx = await cancelContext(loan.args.allocationCid, snapshot)
+  return submitAs(
+    [cfg.parties.lender],
+    exercise(template('CoinLoan'), loan.contractId, 'WriteOffCoin', { cancelExtraArgs: { context: ctx.choiceContextData, meta: META } }),
+    'write-off-coin',
+    snapshot,
+    ctx.disclosedContracts,
+  )
+}
 
 /** Seed demo wallets large enough for user-chosen terms: lender 10,000 cash;
  * borrower 10,500 cash, 15,000 + 5,000 T-Bill units and 16,000 MMF units. The
  * default offer (100 / 5 / 150) splits exact holdings out of these. */
 export async function seedDemo(snapshot = captureSession()): Promise<void> {
   requireOperator(snapshot)
-  for (const asset of COLLATERAL_ASSETS) {
+  for (const asset of VALUED_ASSETS) {
     await submitAs(
       [cfg.parties.lender, cfg.parties.borrower, cfg.parties.valuer],
       createAndExercise(
@@ -553,7 +776,7 @@ export async function seedDemo(snapshot = captureSession()): Promise<void> {
           collateralAsset: asset,
         },
         'PublishInitial',
-        { unitPrice: '1' },
+        { unitPrice: SEED_PRICE[asset] ?? '1' },
       ),
       'seed-valuation',
       snapshot,
@@ -596,7 +819,9 @@ export async function resetDemo(snapshot = captureSession()): Promise<void> {
   requireOperator(snapshot)
   let { contracts } = await listActive(cfg.parties.lender, snapshot)
   for (const c of contracts) {
-    if (c.template === 'LoanOffer') await withdrawOffer(c.contractId, snapshot)
+    if (c.template === 'LoanOffer' || c.template === 'CoinLoanOffer') await withdrawOffer(c, snapshot)
+    // Never strand a borrower's Canton Coin: the lender releases it first.
+    else if (c.template === 'CoinLoan') await writeOffCoinLoan(c, snapshot)
     else if (c.template === 'Loan') {
       await submitReset(
         [cfg.issuer, cfg.parties.lender, cfg.parties.borrower],

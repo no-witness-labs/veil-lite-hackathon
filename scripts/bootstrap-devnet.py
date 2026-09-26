@@ -38,11 +38,13 @@ CLIENT_ID = os.environ.get("VEIL_OIDC_CLIENT_ID", "web-app-ui-hackcanton-01-devn
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TOKENS_FILE = os.path.join(ROOT, ".local", "devnet", "tokens.json")
-DAR = os.path.join(ROOT, ".daml", "dist", "veil-lite-0.7.0.dar")
+DAR = os.path.join(ROOT, ".daml", "dist", "veil-lite-0.8.1.dar")
 CONFIG = os.path.join(ROOT, "frontend", "public", "ledger-config.json")
 PACKAGE_REF = "#veil-lite"
 COLLATERAL_ASSET = "Tokenized T-Bill"
 SUBSTITUTE_ASSET = "Tokenized MMF"
+COIN_ASSET = "Canton Coin"
+SEED_PRICE = {COIN_ASSET: "0.15"}
 ROLES = ("issuer", "lender", "borrower", "regulator", "valuer", "outsider")
 
 
@@ -124,7 +126,7 @@ def discover_parties(token, user_id):
 
 def local_package_id():
     with zipfile.ZipFile(DAR) as dar:
-        prefix = "veil-lite-0.7.0-"
+        prefix = "veil-lite-0.8.1-"
         for name in dar.namelist():
             top = name.split("/", 1)[0]
             if top.startswith(prefix):
@@ -207,7 +209,7 @@ def seed_valuation(token, user_id, parties):
     marks = [e for e in events if e.get("templateId", "").endswith(":Veil:CollateralValuation")]
     if any(e.get("templateId", "").endswith(":Veil:ValuationStream") for e in events):
         sys.exit("Unpublished valuation stream found; reset the demo as operator before re-seeding.")
-    for asset in (COLLATERAL_ASSET, SUBSTITUTE_ASSET):
+    for asset in (COLLATERAL_ASSET, SUBSTITUTE_ASSET, COIN_ASSET):
         current = [e for e in marks if e.get("createArgument", {}).get("collateralAsset") == asset]
         if len(current) > 1:
             sys.exit(f"Ambiguous {asset} valuation streams; reset the demo as operator before re-seeding.")
@@ -221,7 +223,7 @@ def seed_valuation(token, user_id, parties):
                 "borrower": parties["borrower"], "regulator": parties["regulator"],
                 "collateralAsset": asset,
             },
-            "choice": "PublishInitial", "choiceArgument": {"unitPrice": "1"},
+            "choice": "PublishInitial", "choiceArgument": {"unitPrice": SEED_PRICE.get(asset, "1")},
         }}
         submit(token, user_id, [parties["lender"], parties["borrower"], parties["valuer"]], command, "valuation")
         print(f"✓ seeded jointly authorized {asset} valuation stream")

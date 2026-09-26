@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import type { Contract, MarginCall, Role, Status, Valuation } from '../types'
 import {
   PARTY_NAMES,
+  assetOf,
+  isCoinDeal,
   STATUS_LABEL,
   STATUS_TONE,
   UNIT_CASH,
@@ -184,10 +186,18 @@ export function PositionPanel({
             </Tag>
           </div>
           <div style={{ fontSize: 'var(--text-md)', fontWeight: 600 }}>
-            {deal.args.collateralAsset ?? 'Tokenized T-Bill'} <span className="v-muted">(simulated)</span>
+            {assetOf(deal) ?? 'Tokenized T-Bill'}{' '}
+            <span className="v-muted">{isCoinDeal(deal) ? '(DevNet Canton Coin)' : '(simulated)'}</span>
           </div>
+          {deal.template === 'CoinLoan' && (
+            <div className="v-metric__note" style={{ marginTop: 'var(--space-2)' }}>
+              Locked by the token standard itself: a CIP-112 committed allocation that only the lender can settle
+              (liquidation) or cancel (release on repayment).{' '}
+              {deal.args.allocationCid && <span className="v-id" title={deal.args.allocationCid}>allocation {shortId(deal.args.allocationCid, 10, 6)}</span>}
+            </div>
+          )}
           <div className="v-row" style={{ gap: 'var(--space-5)', marginTop: 'var(--space-3)', flexWrap: 'wrap' }}>
-            <Metric label="Quantity" value={fmtAmount(collateral, 0)} unit="units" />
+            <Metric label="Quantity" value={fmtAmount(collateral, 0)} unit={isCoinDeal(deal) ? 'CC' : 'units'} />
             <Metric label="Unit mark" value={markPrice ? markPrice.toFixed(2) : '—'} unit={markPrice ? UNIT_CASH : undefined} />
             <Metric
               label="Market value"

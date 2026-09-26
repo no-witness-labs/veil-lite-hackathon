@@ -33,7 +33,7 @@ party namespace (the first segment of the user ID, e.g. `8e0db906-`).
 1. Create six parties whose names end in `veil-issuer`, `veil-lender`,
    `veil-borrower`, `veil-regulator`, `veil-valuer` and `veil-outsider`
    (e.g. `8e0db906-veil-lender`). The console grants your user act-as and read-as.
-2. Build the DAR with `dpm build` and upload `.daml/dist/veil-lite-0.7.0.dar` in the
+2. Build the DAR with `dpm build` and upload `.daml/dist/veil-lite-0.8.1.dar` in the
    Collections tab. Re-uploads need a version bump in `daml.yaml`, and the
    participant checks upgrade compatibility for the same package name.
 
@@ -75,6 +75,17 @@ rights, confirms the DAR's package ID is on the participant, seeds the canonical
 issuer-signed holdings and the jointly authorized valuation stream (skipping what
 already exists), writes `frontend/public/ledger-config.json`, and prints the
 non-secret settings for Vercel. It never prints tokens.
+
+### Canton Coin collateral
+
+CC loans use the Canton Coin registry through the validator's scan proxy
+(`VEIL_REGISTRY_URL`), read-only and behind the server's role check. The package
+depends on the Token Standard V2 interfaces vendored in `vendor/splice-token-standard/`;
+`splice-api-token-allocation-instruction-v2` is the exact archive vetted on
+hackcanton-01 (its SHA-256 equals its package ID). The borrower party needs DevNet
+CC to post as collateral; it was funded from the team's own party with a V2
+allocation settlement. Reset never strands coin: it writes open CC loans off, which
+cancels their allocations.
 
 ## 4. Run against DevNet locally (optional)
 

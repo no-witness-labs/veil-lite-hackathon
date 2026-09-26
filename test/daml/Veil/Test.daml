@@ -4,8 +4,12 @@ import Daml.Script
 import DA.Assert ((===))
 import DA.Date
 import DA.List (sort)
-import DA.Time (addRelTime, seconds, time)
+import DA.Time (addRelTime, days, seconds, time)
 import Veil
+import Veil.CoinMocks
+import Splice.Api.Token.AllocationInstructionV2 qualified as Instr
+import Splice.Api.Token.AllocationV2 qualified as Token
+import Splice.Api.Token.MetadataV1 (ExtraArgs(..), emptyChoiceContext, emptyMetadata)
 
 tbill : Text
 tbill = "Tokenized T-Bill / MMF"
@@ -1375,3 +1379,165 @@ testPartialRepaymentMaturity = script do
   setTime maturityTime
   submitMustFail borrower do exerciseCmd loanCid PartialRepay with paymentCid = ten; valuationCid = None
   pure ()
+
+
+noExtra : ExtraArgs
+noExtra = ExtraArgs with context = emptyChoiceContext; meta = emptyMetadata
+
+data CoinFixture = CoinFixture with
+    issuer : Party
+    lender : Party
+    borrower : Party
+    regulator : Party
+    valuer : Party
+    dso : Party
+    offerCid : ContractId CoinLoanOffer
+    mark : ContractId CollateralValuation
+    factory : ContractId MockAllocationFactory
+    settle : ContractId MockSettlementFactory
+    factoryDisclosure : Disclosure
+    settleDisclosure : Disclosure
+    borrowerCash : ContractId CashHolding
+
+-- An offer secured by 150 Canton Coin at a CC price of 1.0. The mock registry
+-- factories have no observers, so every use passes them as disclosed contracts,
+-- exactly as the real DSO registry requires.
+coinSetup : Script CoinFixture
+coinSetup = do
+  ((issuer, lender, borrower, regulator, valuer, _), (_, lenderCash, borrowerCash, _)) <- setup
+  dso <- allocateParty "DSO"
+  ccStream <- createStream lender borrower regulator valuer "Canton Coin"
+  mark <- publishInitial valuer ccStream 1.0
+  factory <- submit dso do createCmd MockAllocationFactory with admin = dso
+  settle <- submit dso do createCmd MockSettlementFactory with admin = dso
+  Some factoryDisclosure <- queryDisclosure dso factory
+  Some settleDisclosure <- queryDisclosure dso settle
+  offerCid <- submit lender do
+    exerciseCmd lenderCash MakeCoinOffer with
+      borrower; regulator; valuationAgent = valuer
+      valuationCid = mark
+      coinAdmin = dso
+      principal = 100.0; interest = 5.0; collateralQuantity = 150.0
+      maturity = maturityTime; liquidationThresholdLtv = 90.0; marginCallWindowSeconds = 60
+      settlementRef = "veil-coin-1"
+  pure CoinFixture with ..
+
+acceptCoin : CoinFixture -> ContractId CollateralValuation -> Script (ContractId CoinLoan)
+acceptCoin f markCid =
+  (actAs f.borrower <> disclose f.factoryDisclosure) `submit` do
+    exerciseCmd f.offerCid AcceptCoin with
+      valuationCid = markCid
+      allocationFactoryCid = toInterfaceContractId f.factory
+      inputHoldingCids = []
+      extraArgs = noExtra
+
+prepareReceipt : CoinFixture -> ContractId CoinLoan -> Script (ContractId Token.Allocation)
+prepareReceipt f loanCid =
+  (actAs f.lender <> disclose f.factoryDisclosure) `submit` do
+    exerciseCmd loanCid PrepareCoinReceipt with allocationFactoryCid = toInterfaceContractId f.factory; extraArgs = noExtra
+
+testCoinLoanRepayReleasesCollateral : Script ()
+testCoinLoanRepayReleasesCollateral = script do
+  setTime testStart
+  f <- coinSetup
+  -- Without the disclosed factory the borrower cannot even reach the registry.
+  submitMustFail f.borrower do
+    exerciseCmd f.offerCid AcceptCoin with valuationCid = f.mark; allocationFactoryCid = toInterfaceContractId f.factory; inputHoldingCids = []; extraArgs = noExtra
+  loanCid <- acceptCoin f f.mark
+  -- The Canton Coin sits in one committed allocation executed only by the lender.
+  [(allocCid, alloc)] <- query @MockAllocation f.borrower
+  alloc.allocation.committed === True
+  alloc.settlement.executors === [f.lender]
+  alloc.settlement.id === "veil-coin-1"
+  alloc.allocation.settlementDeadline === Some (addRelTime maturityTime (days 1))
+  query @MockAllocation f.lender >>= \as -> length as === 1
+  -- The token standard refuses the borrower's early withdrawal.
+  submitMustFail f.borrower do
+    exerciseCmd (toInterfaceContractId @Token.Allocation allocCid) Token.Allocation_Withdraw with actors = [f.borrower]; extraArgs = noExtra
+  Some loan <- queryContractId f.regulator loanCid
+  loan.allocationCid === toInterfaceContractId allocCid
+  query @CoinLoan f.valuer >>= \ls -> length ls === 0
+  cashAmounts f.borrower >>= \amounts -> amounts === [100.0, 105.0]
+  closedCid <- submit f.borrower do exerciseCmd loanCid RepayCoin with repaymentCid = f.borrowerCash; cancelExtraArgs = noExtra
+  Some closed <- queryContractId f.regulator closedCid
+  (closed.reason, closed.collateralAsset, closed.collateralQuantity, closed.collateralReleased) === ("Repaid", "Canton Coin", 150.0, True)
+  closed.issuer === f.issuer
+  query @MockAllocation f.borrower >>= \as -> length as === 0
+
+testCoinLiquidationSettlesToLender : Script ()
+testCoinLiquidationSettlesToLender = script do
+  setTime testStart
+  f <- coinSetup
+  loanCid <- acceptCoin f f.mark
+  stressed <- publishPrice f.valuer f.mark 0.62
+  calledCid <- submit f.lender do exerciseCmd loanCid IssueCoinMarginCall with valuationCid = stressed
+  receipt <- prepareReceipt f calledCid
+  let liquidate markCid receiptCid = (actAs f.lender <> disclose f.settleDisclosure) `submit` do
+        exerciseCmd calledCid LiquidateCoin with valuationCid = markCid; settlementFactoryCid = toInterfaceContractId f.settle; receiptAllocationCid = receiptCid; extraArgs = noExtra
+  -- Liquidation waits for the call deadline.
+  (actAs f.lender <> disclose f.settleDisclosure) `submitMustFail` do
+    exerciseCmd calledCid LiquidateCoin with valuationCid = stressed; settlementFactoryCid = toInterfaceContractId f.settle; receiptAllocationCid = receipt; extraArgs = noExtra
+  setTime (addRelTime testStart (seconds 61))
+  fresh <- publishPrice f.valuer stressed 0.62
+  -- A receiving allocation that does not mirror the locked collateral is refused.
+  Some loan <- queryContractId f.lender calledCid
+  wrongReceipt <- (actAs f.lender <> disclose f.factoryDisclosure) `submit` do
+    exerciseCmd (toInterfaceContractId @Instr.AllocationFactory f.factory) Instr.AllocationFactory_Allocate with
+      settlement = coinSettlement f.lender loan.settlementRef
+      allocation = coinAllocationSpec loan.coinAdmin f.lender False (coinCollateralLeg Token.ReceiverSide f.borrower 1.0) loan.maturity
+      requestedAt = addRelTime testStart (seconds 61)
+      inputHoldingCids = []
+      extraArgs = noExtra
+      actors = [f.lender]
+  Instr.AllocationInstructionResult_Completed wrongCid <- pure wrongReceipt.output
+  (actAs f.lender <> disclose f.settleDisclosure) `submitMustFail` do
+    exerciseCmd calledCid LiquidateCoin with valuationCid = fresh; settlementFactoryCid = toInterfaceContractId f.settle; receiptAllocationCid = wrongCid; extraArgs = noExtra
+  closedCid <- liquidate fresh receipt
+  Some closed <- queryContractId f.regulator closedCid
+  (closed.reason, closed.collateralReleased) === ("Liquidated", False)
+  -- Only the unused wrong receipt remains.
+  query @MockAllocation f.lender >>= \as -> map (\(cid, _) -> toInterfaceContractId @Token.Allocation cid) as === [wrongCid]
+
+testCoinLoanGuards : Script ()
+testCoinLoanGuards = script do
+  setTime testStart
+  f <- coinSetup
+  -- A factory run by any other admin cannot lock the collateral.
+  impostor <- allocateParty "Impostor"
+  fakeFactory <- submit impostor do createCmd MockAllocationFactory with admin = impostor
+  Some fakeDisclosure <- queryDisclosure impostor fakeFactory
+  (actAs f.borrower <> disclose fakeDisclosure) `submitMustFail` do
+    exerciseCmd f.offerCid AcceptCoin with valuationCid = f.mark; allocationFactoryCid = toInterfaceContractId fakeFactory; inputHoldingCids = []; extraArgs = noExtra
+  -- A stressed CC price blocks acceptance.
+  stressed <- publishPrice f.valuer f.mark 0.62
+  (actAs f.borrower <> disclose f.factoryDisclosure) `submitMustFail` do
+    exerciseCmd f.offerCid AcceptCoin with valuationCid = stressed; allocationFactoryCid = toInterfaceContractId f.factory; inputHoldingCids = []; extraArgs = noExtra
+  healthy <- publishPrice f.valuer stressed 1.0
+  loanCid <- acceptCoin f healthy
+  -- Only the lender releases the collateral; a pay-down cures a call as before.
+  submitMustFail f.borrower do exerciseCmd loanCid WriteOffCoin with cancelExtraArgs = noExtra
+  stressed2 <- publishPrice f.valuer healthy 0.62
+  calledCid <- submit f.lender do exerciseCmd loanCid IssueCoinMarginCall with valuationCid = stressed2
+  (thirty, _) <- submit f.borrower do exerciseCmd f.borrowerCash Split with splitAmount = 30.0
+  curedCid <- submit f.borrower do exerciseCmd calledCid PartialRepayCoin with paymentCid = thirty; valuationCid = Some stressed2
+  Some cured <- queryContractId f.regulator curedCid
+  (cured.marginCall, cured.amountRepaid) === (None, Some 30.0)
+  -- Overdue liquidation needs maturity to have passed.
+  receipt <- prepareReceipt f curedCid
+  (actAs f.lender <> disclose f.settleDisclosure) `submitMustFail` do
+    exerciseCmd curedCid LiquidateCoinOverdue with settlementFactoryCid = toInterfaceContractId f.settle; receiptAllocationCid = receipt; extraArgs = noExtra
+  setTime (addRelTime maturityTime (seconds 1))
+  closedCid <- (actAs f.lender <> disclose f.settleDisclosure) `submit` do
+    exerciseCmd curedCid LiquidateCoinOverdue with settlementFactoryCid = toInterfaceContractId f.settle; receiptAllocationCid = receipt; extraArgs = noExtra
+  Some closed <- queryContractId f.regulator closedCid
+  (closed.reason, closed.amountRepaid) === ("LiquidatedAtMaturity", Some 30.0)
+
+testCoinWriteOffReleases : Script ()
+testCoinWriteOffReleases = script do
+  setTime testStart
+  f <- coinSetup
+  loanCid <- acceptCoin f f.mark
+  closedCid <- submit f.lender do exerciseCmd loanCid WriteOffCoin with cancelExtraArgs = noExtra
+  Some closed <- queryContractId f.regulator closedCid
+  (closed.reason, closed.collateralReleased) === ("WrittenOff", True)
+  query @MockAllocation f.borrower >>= \as -> length as === 0
