@@ -133,11 +133,11 @@ liquidation threshold 90%.
 ### Liquidate — `Loan.Liquidate`
 - Lender submits `Liquidate {valuationCid}`.
 - Canton requires an open call whose deadline has passed and a fresh, correctly scoped price record that still shows a breach.
-- The loan is consumed; a lender holding receives **all currently locked collateral** and `LoanClosed` records liquidation. The current price is read, not archived by this action.
+- The loan is consumed; a lender holding receives the units that cover the outstanding balance at that price (rounded up, capped at the locked quantity), any surplus returns to the borrower, and `LoanClosed` records the price and both quantities. The current price is read, not archived by this action.
 
 ### Maturity default — `Loan.LiquidateOverdue`
-- Requires lender authority and ledger time strictly after the agreed maturity; no price or margin call is required.
-- Transfers all currently locked collateral to the lender and creates a `LoanClosed` record with reason `LiquidatedAtMaturity`.
+- Requires lender authority, ledger time strictly after the agreed maturity, and a fresh mark on the loan's stream (`valuationCid`); no margin call is required.
+- Nets like `Liquidate`: the lender receives the units covering the outstanding balance, the borrower gets the surplus, and a `LoanClosed` record with reason `LiquidatedAtMaturity` is created.
 - Repayment and liquidation consume the same loan: once either commits the other cannot execute. An ongoing call or a prior top-up never changes maturity.
 
 ### Withdraw — `LoanOffer.Withdraw`

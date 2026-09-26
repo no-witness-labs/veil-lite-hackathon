@@ -28,6 +28,7 @@ import {
   resetDemo,
   topUpCollateral,
   withdrawOffer,
+  rejectOffer,
 } from './runtime'
 import {
   DEFAULT_DRAFT,
@@ -486,6 +487,7 @@ export default function App() {
                       actions={{
                         onWithdraw: () => act('Withdraw offer', PARTY_NAMES.lender, (snapshot) => withdrawOffer(deal, snapshot)),
                         onAccept: () => act('Accept offer', PARTY_NAMES.borrower, (snapshot) => acceptOffer(deal.contractId, snapshot)),
+                        onReject: () => act('Reject offer', PARTY_NAMES.borrower, (snapshot) => rejectOffer(deal, snapshot)),
                         onRepay: () =>
                           act('Repay loan', PARTY_NAMES.borrower, (snapshot) =>
                             repayLoan(deal, balance.outstandingDue, snapshot),

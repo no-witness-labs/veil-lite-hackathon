@@ -32,6 +32,9 @@ export const acceptOffer = (offerCid: string, snapshot?: AuthSnapshot): Promise<
 export const withdrawOffer = (offer: Contract, snapshot?: AuthSnapshot): Promise<TxResult> =>
   ledger.withdrawOffer(offer, snapshot)
 
+export const rejectOffer = (offer: Contract, snapshot?: AuthSnapshot): Promise<TxResult> =>
+  ledger.rejectOffer(offer, snapshot)
+
 export const repayLoan = (loan: Contract, repayment: number, snapshot?: AuthSnapshot): Promise<TxResult> =>
   ledger.repayLoan(loan, repayment, snapshot)
 
