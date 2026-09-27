@@ -30,6 +30,15 @@ USDC are simulated, **Canton Coin is real DevNet CC**.
 | 2:30–2:50 | **Disclosure** tab | "This matrix is the privacy model: who signs and who observes every contract, straight from the Daml." |
 | 2:50–3:00 | Back to Position / README | "Veil also handles top-ups, collateral substitution and maturity. Try it yourself — no sign-up needed." |
 
+## Alternative: record by following the Guided demo
+
+The in-app **Guided demo** panel is a ready-made script: enter as any party, pick the
+track, and press **Continue as …** at each step. Narrate each step's one-line instruction.
+Add a 20-second keeper clip at the margin-call step: run
+`node scripts/keeper.mjs --once` (dry run) and then `--execute` against the loan (see
+`docs/KEEPER.md`) to show the call and, after the deadline, the liquidation happening
+without a click.
+
 ## Notes
 
 - Keep the liquidation branch out of the 3 minutes, or record it separately: it needs

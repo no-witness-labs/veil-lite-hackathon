@@ -25,8 +25,13 @@ acceptance, repayment and lender-priced liquidation. Built during Season 3:
 - Collateral substitution (#47), partial repayment and cure-by-pay-down (#48),
   user-chosen terms and amounts (#49)
 - **Real Canton Coin collateral via CIP-112 committed allocations** (#51, #52)
+- **External review addressed:** audit findings #53–#60 triaged in `docs/AUDIT-TRIAGE.md`; the valid ones fixed in contract release 0.9.0 (surplus returned on liquidation, offer reject/expiry, term bounds, joint record deletion, independent regulator) (#63)
+- **Operations:** an off-ledger lender keeper (`scripts/keeper.mjs`) and a Loan book tab with CSV/JSON export (#63)
+- **Guided demo** that walks a first visit through the T-Bill or Canton Coin loan, and fixes so consecutive visitors can share the demo (#64–#66)
 
 ## Try it (≈2 minutes)
+
+Easiest: open the app, pick any party and follow the **Guided demo** panel; it tells you which party to be and switches for you. By hand:
 
 1. **Valuer** → select *Canton Coin* → enter `0.15` → *Publish mark*.
 2. **Lender** → collateral *Canton Coin (real)* → *Create offer*.
@@ -48,6 +53,8 @@ price, publish a fresh one as Valuer first. The demo ledger is shared by all vis
 
 ## Evidence
 
-49 Daml scripts, 13 server tests, 49 live auth checks and 12 browser checks pass; the
-Canton Coin repay, liquidation and reset flows were run on hackcanton-01 with real CC
-(see PR #51).
+58 Daml scripts, 13 server tests, 27 keeper tests, 18 UI-logic tests, 49 live auth checks
+and 12 browser checks pass. On hackcanton-01 with real DevNet CC: Canton Coin repay,
+liquidation (by hand and by the keeper) and reset; T-Bill liquidation returning surplus
+collateral; and both guided-demo tracks completed by following the guide alone, including
+two consecutive visitors without a reset (PRs #51, #63–#66).
