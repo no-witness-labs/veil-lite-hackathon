@@ -1,5 +1,28 @@
 # Season 3 recordings
 
+## Canton Coin demo on DevNet (submission video)
+
+[**veil-season3-cc-demo.mp4**](veil-season3-cc-demo.mp4) (2:32, 1600 × 900 H.264/AAC, 25 fps;
+[subtitles](veil-season3-cc-demo.srt), [evidence](SEASON3-CC-RECORDING-EVIDENCE.json)).
+Recorded September 27, 2026 on the live app, https://veil-lite-hackathon.vercel.app,
+against the HackCanton DevNet node with contract release 0.9.0 and real DevNet
+Canton Coin. It follows the in-app Guided demo on the Canton Coin track: fresh
+price, funded offer, acceptance locking 1,000 CC in a CIP-112 committed
+allocation, a stressed price, margin call, cure by a 30 pay-down, repayment
+unlocking the coin, the outsider's empty raw-ledger query, and the regulator's
+settlement and disclosure views.
+
+The one step not taken in the UI is the early-withdraw attempt: the recorder
+exercised `Allocation_Withdraw` as the borrower through the Ledger API during the
+scene, and the card on screen shows the actual response
+(`cannot-withdraw-committed-allocation`). Browser actions were automated at normal
+speed; narration is the macOS Samantha voice, placed at each scene's recorded start.
+Borrower CC went from 1,000 locked to 3,000 free after repayment. The demo was
+reset by the operator before and after capture. SHA-256 of the MP4 is in the
+evidence file.
+
+## Local sandbox recordings (0.5.0)
+
 Recorded September 23, 2026 against a local Canton sandbox running Veil 0.5.0.
 These are recordings of actual ledger interactions, with English synthetic
 narration and a caption band below the product viewport.

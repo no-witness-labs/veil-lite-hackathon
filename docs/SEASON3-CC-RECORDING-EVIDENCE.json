@@ -1,0 +1,80 @@
+{
+  "recordedAt": "2026-09-27T07:28:25.531Z",
+  "site": "https://veil-lite-hackathon.vercel.app/",
+  "scenes": [
+    {
+      "id": "intro",
+      "startMs": 3093,
+      "endMs": 16058
+    },
+    {
+      "id": "price",
+      "startMs": 16058,
+      "endMs": 25695
+    },
+    {
+      "id": "offer",
+      "startMs": 25695,
+      "endMs": 43658
+    },
+    {
+      "id": "accept",
+      "startMs": 43658,
+      "endMs": 58010
+    },
+    {
+      "id": "withdraw",
+      "startMs": 58010,
+      "endMs": 68683
+    },
+    {
+      "id": "stress",
+      "startMs": 68685,
+      "endMs": 78060
+    },
+    {
+      "id": "call",
+      "startMs": 78060,
+      "endMs": 87355
+    },
+    {
+      "id": "cure",
+      "startMs": 87355,
+      "endMs": 104140
+    },
+    {
+      "id": "repay",
+      "startMs": 104140,
+      "endMs": 120179
+    },
+    {
+      "id": "outsider",
+      "startMs": 122926,
+      "endMs": 128038
+    },
+    {
+      "id": "regulator",
+      "startMs": 128038,
+      "endMs": 138710
+    },
+    {
+      "id": "outro",
+      "startMs": 138710,
+      "endMs": 152061
+    }
+  ],
+  "ccBefore": "CC borrower: free 2000.00 locked 1000.00 | lender: free 2010.00 locked 0.00",
+  "withdrawAttempt": "CC borrower: free 2000.00 locked 1000.00 | lender: free 2010.00 locked 0.00\nborrower Veil allocations: [ 'veil-1790494244144 committed=true executors=8e0db906-veil-lender' ]\nborrower early withdraw: refused (cannot-withdraw-committed-allocation (error category 9): Cannot withdraw a committed allocation before its settlement deadline.)",
+  "ccAfterRepay": "CC borrower: free 3000.00 locked 0.00 | lender: free 2010.00 locked 0.00",
+  "outsiderRaw": "[]",
+  "regulatorStatus": "REPAID",
+  "totalMs": 153564,
+  "ccAfterReset": "CC borrower: free 3000.00 locked 0.00 | lender: free 2010.00 locked 0.00",
+  "output": {
+    "file": "docs/veil-season3-cc-demo.mp4",
+    "sha256": "f61bab5ef40baba621e71686a8d921638fbe3cba17c40c2a16b4bf8d842f53d5",
+    "format": "1600x900 H.264/AAC 25 fps",
+    "durationS": 151.657
+  },
+  "note": "ccBefore was read before the pre-recording operator reset, so it still shows an earlier visitor's 1,000 CC lock."
+}

@@ -1,0 +1,48 @@
+1
+00:00:03,393 --> 00:00:15,653
+Veil is private secured lending on Canton, running live on the HackCanton DevNet node. Anyone can try it: pick a party and enter. A guided demo walks you through a whole loan. We'll follow it on the Canton Coin track.
+
+2
+00:00:16,358 --> 00:00:23,358
+First, the valuer publishes a signed price for Canton Coin. Lender and borrower agreed on this price stream in advance.
+
+3
+00:00:25,995 --> 00:00:34,055
+The lender funds an offer. One hundred dollars of principal is reserved on the ledger, against one thousand real DevNet Canton Coin as collateral.
+
+4
+00:00:43,958 --> 00:00:57,608
+The borrower accepts. In a single transaction, Canton checks the loan-to-value on a fresh price, locks the coin in a CIP-112 committed allocation, and pays out the principal. Only the lender can settle or release that lock.
+
+5
+00:00:58,310 --> 00:01:08,280
+If the borrower tries to pull the coin back early, with a direct ledger call, Canton Coin itself refuses. The lock is enforced by the token standard, not by our code.
+
+6
+00:01:08,985 --> 00:01:14,245
+Now the valuer publishes a lower price, and the loan breaches its ninety percent threshold.
+
+7
+00:01:18,360 --> 00:01:23,170
+The lender issues a margin call, with a sixty second deadline kept by ledger time.
+
+8
+00:01:27,655 --> 00:01:33,875
+The borrower cures it with cash. Paying down thirty brings the loan back under the threshold, and the call clears.
+
+9
+00:01:44,440 --> 00:01:48,240
+Repaying the rest cancels the allocation, and the coin unlocks.
+
+10
+00:02:03,226 --> 00:02:07,636
+Privacy is structural. An outsider's ledger query returns nothing at all.
+
+11
+00:02:08,338 --> 00:02:18,308
+The regulator sees the settlement, read-only. The valuer only ever sees prices, never the loan. The disclosure matrix shows who signs and who observes every contract.
+
+12
+00:02:19,010 --> 00:02:31,660
+Veil also handles tokenized T-Bill loans with top-ups, collateral substitution and surplus return on liquidation, plus a loan book and a keeper that liquidates on time. Try it yourself, no sign-up needed.
+

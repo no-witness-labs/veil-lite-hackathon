@@ -4,7 +4,7 @@
 **Live app:** https://veil-lite-hackathon.vercel.app (DevNet, open access: pick a party and click **Enter**)
 **Repository:** https://github.com/no-witness-labs/veil-lite-hackathon
 **Deck:** [`docs/SUBMISSION-DECK.pdf`](SUBMISSION-DECK.pdf)
-**Video:** _to be added_
+**Video:** [`docs/veil-season3-cc-demo.mp4`](veil-season3-cc-demo.mp4) (2:32, Canton Coin loan on DevNet; see [`SEASON3-RECORDINGS.md`](SEASON3-RECORDINGS.md))
 
 ## One-line description
 
