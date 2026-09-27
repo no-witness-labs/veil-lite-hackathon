@@ -302,9 +302,12 @@ export default function App() {
   const isOutsider = role === 'outsider'
   const isValuer = role === 'valuer'
   const hasDeal = status !== 'none'
-  const showCreateForm = !isOutsider && role === 'lender' && status === 'none'
+  // Once the latest loan has closed, the lender can fund the next one; the
+  // closed record stays in the Loan book (and opens here when picked there).
+  const lenderCanStartNext = role === 'lender' && (status === 'repaid' || status === 'liquidated') && !selectedDealId
+  const showCreateForm = !isOutsider && role === 'lender' && (status === 'none' || lenderCanStartNext)
   const showWaiting = !isOutsider && !isValuer && (role === 'borrower' || role === 'regulator') && status === 'none'
-  const showPosition = !isOutsider && !isValuer && hasDeal && !!deal
+  const showPosition = !isOutsider && !isValuer && hasDeal && !!deal && !lenderCanStartNext
   const coinDeal = isCoinDeal(deal)
   const dealAsset = assetOf(deal) ?? COLLATERAL_ASSET
   const collateralCandidates = holdings

@@ -83,3 +83,23 @@ test('a repaid Canton Coin loan completes the coin track', () => {
   // The same closed record does not count for the T-Bill track.
   assert.equal(currentStep(tourSteps('tbill'), advance({ done: new Set() }, view('regulator', closed), 'tbill').done).id, 'price')
 })
+
+test('another visitor\'s finished loan does not tick a new visitor\'s steps', () => {
+  const closed = { contractId: 'old', template: 'LoanClosed', offset: 9, args: { reason: 'Repaid', collateralAsset: 'Tokenized T-Bill', collateralQuantity: '150' } }
+  const fresh = advance({ done: new Set() }, view('lender', closed, [mark('Tokenized T-Bill', 1)]), 'tbill')
+  assert.equal(currentStep(tourSteps('tbill'), fresh.done).id, 'offer')
+  // A new offer on top of the old record moves the visitor on as usual.
+  const offered = advance(fresh, view('borrower', { ...loan('LoanOffer'), offset: 10 }), 'tbill')
+  assert.equal(currentStep(tourSteps('tbill'), offered.done).id, 'accept')
+})
+
+test('a stressed price left by an earlier visitor does not complete the price step', () => {
+  const stressed = advance({ done: new Set() }, view('lender', undefined, [mark('Tokenized T-Bill', 0.62)]), 'tbill')
+  assert.equal(currentStep(tourSteps('tbill'), stressed.done).id, 'price')
+  assert.ok(tourHints(tourSteps('tbill')[0], view('valuer', undefined, [mark('Tokenized T-Bill', 0.62)]), 'tbill').some((h) => /stressed/.test(h)))
+  const healthy = advance(stressed, view('valuer', undefined, [mark('Tokenized T-Bill', 1)]), 'tbill')
+  assert.equal(currentStep(tourSteps('tbill'), healthy.done).id, 'offer')
+  // Once a loan exists, a later stress price is the point of step 4, not a rewind.
+  const active = advance(healthy, view('borrower', loan('Loan'), [mark('Tokenized T-Bill', 0.62)]), 'tbill')
+  assert.equal(currentStep(tourSteps('tbill'), active.done).id, 'call')
+})
