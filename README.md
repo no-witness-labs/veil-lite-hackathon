@@ -4,7 +4,7 @@
 
 **Live demo:** <https://veil-lite-hackathon.vercel.app/> runs the current Season 3 version on the HackCanton DevNet node. No account or passcode is needed: choose a party and click **Enter**. Each party is a separate five-minute session that sees only its own contracts, so sign out and back in to switch. Only the demo operator (reset) needs a passcode.
 
-**Try it:**
+**Try it:** the in-app **Guided demo** panel walks through every step below, tells you which party to be, and switches parties for you with one click. Or follow the steps by hand:
 
 0. **Valuer** → `Healthy · 1.00` → `Publish mark`. A price is usable for five minutes, so start here whenever the offer or acceptance button reports a stale valuation.
 1. **Lender** → `Create offer`. The defaults are 100 principal, 5 interest, 150 T-Bill units, a 90% liquidation threshold and a 60-second margin-call window; every term is editable, up to the wallet balances (lender 10,000 cash; borrower 10,500 cash, 20,000 T-Bill and 16,000 MMF units).
