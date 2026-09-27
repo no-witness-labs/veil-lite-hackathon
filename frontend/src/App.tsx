@@ -63,6 +63,8 @@ import { PositionsTable } from './components/PositionsTable'
 import { ActivityLog } from './components/ActivityLog'
 import { LedgerInspector } from './components/LedgerInspector'
 import { ViewpointRail } from './components/ViewpointRail'
+import { GuideTour } from './components/GuideTour'
+import { advance, tourHints, tourSteps, type TourProgress, type TourTrack } from './tour'
 import { ConnectionGate, OutsiderEmpty, Waiting } from './components/EmptyStates'
 import { SignIn } from './components/SignIn'
 import { LoanBook } from './components/LoanBook'
@@ -104,6 +106,13 @@ export default function App() {
   const [activity, setActivity] = useState<ActivityEntry[]>([])
   const [draft, setDraft] = useState<Draft>({ ...DEFAULT_DRAFT })
   const [coinAvailable, setCoinAvailable] = useState(false)
+  // Guided demo progress lives in memory: signing out and back in keeps it,
+  // and a reload re-derives it from the ledger.
+  const [tourTrack, setTourTrack] = useState<TourTrack>('tbill')
+  const [tourProgress, setTourProgress] = useState<TourProgress>(() => ({ done: new Set() }))
+  const tourDone = tourProgress.done
+  const [tourCollapsed, setTourCollapsed] = useState(false)
+  const [tourNow, setTourNow] = useState(() => Date.now())
   // A deal picked in the loan book; the Position tab falls back to the latest.
   const [selectedDealId, setSelectedDealId] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -352,6 +361,42 @@ export default function App() {
     }
   }
 
+  const tourView = { role, deal, marks: valuationCandidates(contracts), now: tourNow }
+  const tourStepList = tourSteps(tourTrack)
+  const tourCurrent = tourStepList.find((step) => !tourDone.has(step.id))
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setTourNow(Date.now()), 5000)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  // Fold what this party can see into the guide's progress. Only while signed
+  // in with loaded config, so an empty pre-load view never rewinds it.
+  useEffect(() => {
+    // offset > 0 means a ledger read for this party has completed; right after
+    // a party switch the view is empty and must not look like a reset.
+    if (!session || configOk !== true || loading || offset === 0) return
+    setTourProgress((prev) => {
+      const next = advance(prev, tourView, tourTrack)
+      const same = next.done.size === prev.done.size && [...next.done].every((id) => prev.done.has(id))
+        && JSON.stringify(next.loan) === JSON.stringify(prev.loan)
+      return same ? prev : next
+    })
+    // tourView is rebuilt every render from these inputs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contracts, role, tourTrack, tourNow, session, configOk, loading, offset])
+
+  /** One click to become the party the guide needs next. The operator only
+   * changes its view; in the open demo this is a fresh session for that party. */
+  const switchParty = session?.role === 'operator'
+    ? (next: Role) => selectRole(next)
+    : demoLogin.enabled && demoLogin.open
+      ? (next: Role) => {
+          signOut()
+          void completeSignIn(() => signInWithPasscode(next, '', false))
+        }
+      : null
+
   const selectRole = (nextRole: Role) => {
     if (session?.role !== 'operator' || nextRole === role || busy) return
     // Clear the previous party's snapshot before the async query starts. The
@@ -388,6 +433,24 @@ export default function App() {
   }
 
   const isOperator = session.role === 'operator'
+  // One guide, placed in the rail on wide screens and above the content on
+  // narrow ones (CSS picks which copy is displayed).
+  const guide = (
+    <GuideTour
+      role={role}
+      steps={tourStepList}
+      done={tourDone}
+      track={tourTrack}
+      coinAvailable={coinAvailable}
+      hints={tourHints(tourCurrent, tourView, tourTrack)}
+      collapsed={tourCollapsed}
+      busy={busy || authBusy}
+      onTrack={(next) => { setTourTrack(next); setTourProgress({ done: new Set() }) }}
+      onSwitch={switchParty}
+      onRestart={() => setTourProgress({ done: new Set() })}
+      onToggle={() => setTourCollapsed((c) => !c)}
+    />
+  )
   // Holdings and the session log are hidden from the valuer and the outsider:
   // neither is a stakeholder on a wallet, and the log is a demo-operator aid.
   const privateSections = !isOutsider && !isValuer
@@ -445,6 +508,7 @@ export default function App() {
             }}
           >
             <div style={{ display: 'grid', gap: 'var(--space-6)', minWidth: 0 }}>
+              <div className="v-guide-inline">{guide}</div>
               {error && (
                 <Banner tone="danger" title="Ledger error." onDismiss={() => setError(null)}>
                   {error}
@@ -598,7 +662,7 @@ export default function App() {
               {activeSection === 'ledger' && <LedgerInspector role={role} raw={raw} offset={offset} />}
             </div>
 
-            <ViewpointRail role={role} />
+            <ViewpointRail role={role} guide={<div className="v-guide-rail">{guide}</div>} />
           </div>
         )}
       </main>

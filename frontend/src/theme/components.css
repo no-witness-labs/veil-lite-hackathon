@@ -606,7 +606,12 @@
 .v-dim { color: var(--ink-500); }
 
 /* ============================================================ Responsive === */
+/* The guided demo sits in the rail on wide screens and above the content once
+   the rail drops below it, so a phone visitor sees the next step first. */
+.v-guide-inline { display: none; }
 @media (max-width: 1180px) {
+  .v-guide-inline { display: block; }
+  .v-guide-rail { display: none; }
   .v-shell { grid-template-columns: minmax(0, 1fr); }
   .v-shell > aside {
     position: static;

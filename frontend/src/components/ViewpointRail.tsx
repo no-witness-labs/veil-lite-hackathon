@@ -10,7 +10,7 @@ const note: React.CSSProperties = {
 
 /** Persistent explainer for the active viewpoint. Sticky so the "what can this
  * party see and do" framing stays anchored while the blotter scrolls. */
-export function ViewpointRail({ role }: { role: Role }) {
+export function ViewpointRail({ role, guide }: { role: Role; guide?: React.ReactNode }) {
   const expl = EXPLAINER[role]
 
   return (
@@ -23,6 +23,7 @@ export function ViewpointRail({ role }: { role: Role }) {
         alignContent: 'start',
       }}
     >
+      {guide}
       <Panel flush>
         <header
           className="v-row"
