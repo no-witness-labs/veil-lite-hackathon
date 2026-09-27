@@ -74,3 +74,12 @@ test('the valuer view completes the stress step from the remembered loan terms',
   const stressed = advance(active, view('valuer', undefined, [mark('Tokenized T-Bill', 0.62)]), 'tbill')
   assert.equal(currentStep(tourSteps('tbill'), stressed.done).id, 'call')
 })
+
+test('a repaid Canton Coin loan completes the coin track', () => {
+  const called = advance({ done: new Set(['price', 'offer', 'accept', 'stress', 'call', 'cure']) }, view('borrower', loan('CoinLoan')), 'coin')
+  const closed = { contractId: 'c2', template: 'LoanClosed', offset: 2, args: { reason: 'Repaid', collateralAsset: 'Canton Coin', collateralQuantity: '1000' } }
+  const repaid = advance(called, view('regulator', closed), 'coin')
+  assert.equal(currentStep(tourSteps('coin'), repaid.done).id, 'privacy')
+  // The same closed record does not count for the T-Bill track.
+  assert.equal(currentStep(tourSteps('tbill'), advance({ done: new Set() }, view('regulator', closed), 'tbill').done).id, 'price')
+})

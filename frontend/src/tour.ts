@@ -104,6 +104,8 @@ const isFresh = (mark: Valuation, now: number) => {
 
 export function trackOfDeal(deal?: Contract): TourTrack | undefined {
   if (!deal) return undefined
+  // A closed Canton Coin loan is a LoanClosed record whose asset says so.
+  if (deal.template === 'LoanClosed') return deal.args.collateralAsset === TRACK_ASSET.coin ? 'coin' : 'tbill'
   return isCoinDeal(deal) ? 'coin' : 'tbill'
 }
 
