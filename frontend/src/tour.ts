@@ -17,6 +17,10 @@ export interface TourStep {
 }
 
 const TRACK_ASSET: Record<TourTrack, string> = { tbill: 'Tokenized T-Bill', coin: 'Canton Coin' }
+/** Lowest price at which the default offer (100 against 150 T-Bill or 1,000 CC,
+ * 90% threshold) can still be originated; a stressed price left behind by an
+ * earlier visitor would otherwise block the next one's Create offer. */
+const LENDABLE_PRICE: Record<TourTrack, number> = { tbill: 100 / (150 * 0.9), coin: 100 / (1000 * 0.9) }
 
 export function tourSteps(track: TourTrack): TourStep[] {
   const coin = track === 'coin'
@@ -126,7 +130,9 @@ function observedLoanStep(view: TourView, track: TourTrack, done: Set<StepId>, k
   }
   if (trackOfDeal(deal) !== track) return undefined
   const status = statusOf(deal)
-  if (status === 'repaid') return 'repay'
+  // A closed loan only proves progress for a visitor who saw it while it was
+  // live; another visitor's finished loan must not tick this visitor's steps.
+  if (status === 'repaid') return done.has('accept') ? 'repay' : undefined
   if (status === 'offered') return 'offer'
   if (status !== 'active') return undefined
   if (marginCallOf(deal)) return 'call'
@@ -156,13 +162,19 @@ export function advance(progress: TourProgress, view: TourView, track: TourTrack
   const next = new Set(done)
   // The loan is gone for a party that would see it: the demo was reset or
   // the loan closed another way, so the loan steps start over.
-  if (LOAN_OBSERVERS.has(view.role) && (!view.deal || (trackOfDeal(view.deal) === track && statusOf(view.deal) === 'liquidated'))) {
+  if (LOAN_OBSERVERS.has(view.role) && (!view.deal || (trackOfDeal(view.deal) === track && statusOf(view.deal) === 'liquidated' && done.has('accept')))) {
     for (const id of LOAN_STEPS) next.delete(id)
     // The price step is re-earned below only if this view shows a fresh mark.
     next.delete('price')
   }
   const asset = TRACK_ASSET[track]
-  if (view.marks.some((m) => m.collateralAsset === asset && isFresh(m, view.now))) next.add('price')
+  const trackMarks = view.marks.filter((m) => m.collateralAsset === asset)
+  if (trackMarks.length > 0 && !next.has('offer')) {
+    // Before a loan exists, the price step needs a fresh price the default
+    // offer can be made at; a stressed or stale one sends the visitor back.
+    if (trackMarks.some((m) => isFresh(m, view.now) && m.unitPrice > LENDABLE_PRICE[track])) next.add('price')
+    else next.delete('price')
+  }
   const reached = observedLoanStep(view, track, next, loan)
   if (reached) {
     next.add('price')
@@ -184,6 +196,12 @@ export function tourHints(step: TourStep | undefined, view: TourView, track: Tou
   const dealTrack = trackOfDeal(deal)
   if (deal && dealTrack && dealTrack !== track && statusOf(deal) !== 'repaid' && statusOf(deal) !== 'liquidated') {
     hints.push(`The open loan uses ${TRACK_ASSET[dealTrack]}. Switch the tour to that track, or finish that loan first.`)
+  }
+  if (step?.id === 'price') {
+    const marks = view.marks.filter((m) => m.collateralAsset === TRACK_ASSET[track] && isFresh(m, view.now))
+    if (marks.length > 0 && marks.every((m) => m.unitPrice <= LENDABLE_PRICE[track])) {
+      hints.push('The current price is stressed (an earlier visitor dropped it). Publish a healthy price first.')
+    }
   }
   if (step && step.id !== 'price' && step.id !== 'privacy' && step.id !== 'stress' && view.role !== 'outsider') {
     const asset = TRACK_ASSET[track]
