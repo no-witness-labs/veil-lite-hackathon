@@ -382,7 +382,7 @@ export default function App() {
     setTourProgress((prev) => {
       const next = advance(prev, tourView, tourTrack)
       const same = next.done.size === prev.done.size && [...next.done].every((id) => prev.done.has(id))
-        && JSON.stringify(next.loan) === JSON.stringify(prev.loan)
+        && JSON.stringify(next.loan) === JSON.stringify(prev.loan) && next.after === prev.after
       return same ? prev : next
     })
     // tourView is rebuilt every render from these inputs.
@@ -395,7 +395,12 @@ export default function App() {
     ? (next: Role) => selectRole(next)
     : demoLogin.enabled && demoLogin.open
       ? (next: Role) => {
-          signOut()
+          // Swap sessions in place: signing out first would flash the sign-in
+          // page until the new session arrives.
+          if (busy || authBusy) return
+          // Like a fresh sign-in, the next party starts on its own position.
+          syncUrl('section', null)
+          syncUrl('role', null)
           void completeSignIn(() => signInWithPasscode(next, '', false))
         }
       : null
@@ -450,7 +455,7 @@ export default function App() {
       busy={busy || authBusy}
       onTrack={(next) => { setTourTrack(next); setTourProgress({ done: new Set() }) }}
       onSwitch={switchParty}
-      onRestart={() => setTourProgress({ done: new Set() })}
+      onRestart={() => setTourProgress({ done: new Set(), after: offset })}
       onToggle={() => setTourCollapsed((c) => !c)}
     />
   )

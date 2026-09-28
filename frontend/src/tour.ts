@@ -90,6 +90,9 @@ export interface KnownLoan {
 export interface TourProgress {
   done: Set<StepId>
   loan?: KnownLoan
+  /** Ledger offset at the last restart: contracts created at or before it
+   * belong to an earlier run of the guide and prove nothing for this one. */
+  after?: number
 }
 
 export interface TourView {
@@ -155,7 +158,13 @@ function knownLoan(deal: Contract): KnownLoan | undefined {
 }
 
 /** Fold one view into the progress so far. Pure; returns a new progress. */
-export function advance(progress: TourProgress, view: TourView, track: TourTrack): TourProgress {
+export function advance(progress: TourProgress, fullView: TourView, track: TourTrack): TourProgress {
+  const after = progress.after ?? -1
+  const view: TourView = {
+    ...fullView,
+    deal: fullView.deal && fullView.deal.offset > after ? fullView.deal : undefined,
+    marks: fullView.marks.filter((m) => m.offset > after),
+  }
   const done = progress.done
   let loan = progress.loan
   if (view.deal && trackOfDeal(view.deal) === track && statusOf(view.deal) === 'active') loan = knownLoan(view.deal) ?? loan
@@ -182,7 +191,7 @@ export function advance(progress: TourProgress, view: TourView, track: TourTrack
   }
   if (view.role === 'outsider' && next.has('repay')) next.add('privacy')
   if (!next.has('accept')) loan = undefined
-  return { done: next, loan }
+  return { done: next, loan, after: progress.after }
 }
 
 export function currentStep(steps: TourStep[], done: Set<StepId>): TourStep | undefined {
