@@ -103,3 +103,13 @@ test('a stressed price left by an earlier visitor does not complete the price st
   const active = advance(healthy, view('borrower', loan('Loan'), [mark('Tokenized T-Bill', 0.62)]), 'tbill')
   assert.equal(currentStep(tourSteps('tbill'), active.done).id, 'call')
 })
+
+test('a restart ignores the loan and prices already on the ledger', () => {
+  const before = advance({ done: new Set() }, view('lender', loan('Loan'), [mark('Tokenized T-Bill', 1)]), 'tbill')
+  assert.equal(currentStep(tourSteps('tbill'), before.done).id, 'stress')
+  const restarted = advance({ done: new Set(), after: 1 }, view('lender', loan('Loan'), [mark('Tokenized T-Bill', 1)]), 'tbill')
+  assert.deepEqual(ids(restarted), [])
+  const newPrice = advance(restarted, view('valuer', undefined, [{ ...mark('Tokenized T-Bill', 1), offset: 2 }]), 'tbill')
+  assert.deepEqual(ids(newPrice), ['price'])
+  assert.equal(newPrice.after, 1)
+})
