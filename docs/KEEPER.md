@@ -40,27 +40,89 @@ fetches the settlement-factory context and submits `LiquidateCoin` or
 `LiquidateCoinOverdue`. If an earlier attempt already created a matching receipt
 allocation, the keeper reuses it instead of creating another.
 
-### Safety on retries
+### Command journal
 
-- State is re-read from the ledger at the start of every tick.
-- Command IDs are derived from the action and the loan's contract ID, so a
-  command that landed but whose response was lost is deduplicated by the
-  participant.
-- `CONTRACT_NOT_FOUND`, `CONTRACT_NOT_ACTIVE`, `DUPLICATE_COMMAND`,
-  `LOCKED_CONTRACTS` and `ALREADY_EXISTS` are logged as `superseded` (someone
-  else moved the loan first) and retried from fresh state next tick. Any other
-  failure is logged as `error`; with `--once` the exit code is then 1.
+With `--execute`, every submission goes through a write-ahead journal in
+`--state-dir` (default `.local/keeper/`, env `VEIL_KEEPER_STATE_DIR`):
+
+- `journal.json`: one entry per operation key `<kind>:<loan contract id>`
+  (kinds `issueMarginCall`, `liquidate`, `liquidateOverdue`, and `receipt` for
+  the Canton Coin `PrepareCoinReceipt` step). Rewritten atomically (temp file,
+  fsync, rename) under `journal.lock`, so a running keeper and the operator
+  commands below can share it.
+- `audit.log`: append-only JSON lines for every proposal, approval decision,
+  submission, retry and outcome.
+
+Before a command is sent the keeper records, durably, `status: pending` with
+the command ID, a fresh `submissionId`, the ledger-end offset read just before,
+`actAs` and the expected effect (which contract is archived, which template is
+created). An operation key with any entry blocks a new submission except in the
+retry cases below, so at most one command per operation is in flight, across
+processes too.
+
+Each submission ends in one of three outcomes:
+
+| Outcome | When | Next |
+| --- | --- | --- |
+| `completed` | the ledger returned the transaction | done; never resubmitted |
+| `rejected`, `transient` | the connection never opened, a gateway answered 429/503 without a ledger error, or the ledger answered synchronously with Canton category 1/2 (gRPC `UNAVAILABLE`, `ABORTED`, `RESOURCE_EXHAUSTED`) | retried automatically if still decided, after 30 s doubling to 15 min, at most 5 attempts, with the same command ID |
+| `rejected`, `definitive` | everything else, including `CONTRACT_NOT_FOUND`, `DUPLICATE_COMMAND` and Daml assertion failures | not retried until `--retry` |
+| `unknown` | the request may have reached the ledger without a definite answer: connection reset, timeout (`--submit-timeout-seconds`, default 60), a 5xx that is not a transient ledger error, gRPC `DEADLINE_EXCEEDED`, `definiteAnswer: false` | not resubmitted; reconciled |
+
+Every execute tick first reconciles `unknown` entries (and `pending` ones older
+than the submit timeout, left by a crash): it scans
+`POST /v2/commands/completions` from the saved offset for the ledger user and
+`actAs` parties, in pages of 200, at most 10 pages or 4 MB, and matches the
+command and submission IDs. A found completion is recorded as `completed` (after
+`/v2/updates/update-by-id` confirms the expected archive and create, `verified`)
+or `rejected`. If the scan finds nothing or runs out of budget the entry stays
+`unknown`, the operation is not resubmitted, and the tick reports it
+(`indeterminate` events, `unknown` in the summary; `--once` exits 1).
+
+`CONTRACT_NOT_FOUND`, `CONTRACT_NOT_ACTIVE`, `DUPLICATE_COMMAND`,
+`LOCKED_CONTRACTS` and `ALREADY_EXISTS` are still logged as `superseded`. The
+loan contract has moved on, so its operation key is not decided again.
+
+### Maker-checker for liquidations
+
+`--require-approval N` (env `VEIL_KEEPER_REQUIRE_APPROVAL`) makes the keeper
+record a `proposed` entry for each decided `liquidate` / `liquidateOverdue`
+instead of submitting it. The proposer is `--keeper-id` (env `VEIL_KEEPER_ID`,
+default `keeper`). The keeper submits a proposal once it has N approvals, and
+only if the liquidation is still decided from the live ACS on that tick. The mark
+is re-read then, since the approved one has usually gone stale. If the loan is
+active but no longer liquidatable, execution is refused (`executionRefused`). If
+the loan contract is gone, the proposal becomes `stale`.
+
+```bash
+node scripts/keeper.mjs --approve <id> --by alice [--remarks "checked mark"]
+node scripts/keeper.mjs --reject  <id> --by bob --remarks "borrower topping up"
+node scripts/keeper.mjs --retry   <operationKey or id> [--by carol]
+```
+
+Operator commands read and write only the journal. They need no ledger access
+or credentials. Each approver decides at most once, and the proposer cannot
+decide at all. A rejection needs remarks and closes the proposal (`declined`).
+`--retry` reopens a `rejected`, `unknown` or `declined` operation. The next
+tick submits it again if it is still decided, or proposes it again when
+approvals are required. Retrying an `unknown` operation reuses the command ID,
+so within the participant's deduplication period a second effect is refused.
 
 ## Dry-run vs execute
 
 Dry-run is the default: the keeper reads the ledger and prints one JSON line per
 decision (`"event":"decision"`) plus a `"event":"tick"` summary, and submits
-nothing. It does not call the registry in dry-run. Add `--execute` to submit;
-results appear as `submitted`, `superseded` or `error` lines.
+nothing. It does not call the registry or touch the journal in dry-run. Add
+`--execute` to submit. Results appear as `submitted`, `superseded`, `error`,
+`unknown`, `blocked` or `proposal` lines.
 
 ```text
 --execute           submit decided actions
---once              one tick, then exit (0 ok, 1 errors, 2 bad config)
+--once              one tick, then exit (0 ok, 1 errors or unknown outcomes, 2 bad config)
+--state-dir DIR     journal and audit log (default .local/keeper)
+--keeper-id NAME    proposer identity for maker-checker (default keeper)
+--require-approval N  approvals needed before a liquidation is submitted (default 0 = off)
+--submit-timeout-seconds N  after this the outcome is unknown (default 60)
 --interval N        seconds between ticks when looping (default 30)
 --skew-seconds N    clock-skew margin (default 5)
 --warn-hours N      CoinLoan settlement-deadline warning window (default 6)
@@ -130,5 +192,8 @@ user, which can act for every Veil party; the keeper restricts itself to
 `actAs = [lender]`, but that restriction is in this script, not in Canton. Locally
 it uses the `veil-lender` user, whose rights Canton does enforce.
 
-Status: covered by unit tests with a mocked `fetch` (`node --test test/keeper.test.mjs`);
-not yet exercised against a live ledger or the DevNet registry.
+Status: covered by unit tests with a mocked `fetch` and a scripted fake ledger
+(`node --test test/keeper.test.mjs`). It has not yet run against a live ledger or
+the DevNet registry. The completions and update-by-id request and response shapes
+follow the Canton 3.5 JSON Ledger API OpenAPI (`release-line-3.5`) and have not
+been checked live.
