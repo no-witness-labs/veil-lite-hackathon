@@ -5,7 +5,7 @@ functions in `api/`:
 
 - `/api/demo-login` exchanges the demo passcode for a five-minute role token;
 - `/api/session` verifies a role token;
-- `/v2/*` checks the role's parties and forwards to the HackCanton DevNet node
+- `/v2/*` (ledger end, active contracts, submission, completions) checks the role's parties and forwards to the HackCanton DevNet node
   with the team's ledger-user token (see [DEVNET.md](DEVNET.md) for the trust model);
 - `/ledger-config.json` returns the public party map from environment variables.
 
@@ -33,6 +33,17 @@ and URLs are printed by `python3 scripts/bootstrap-devnet.py`.
 | `VEIL_DEMO_OPEN` | no | `true` lets anyone enter as lender, borrower, valuer, regulator or outsider without a passcode |
 | `VEIL_DEMO_PASSCODE` | **yes** | passcode for those parties when the demo is not open, at least 12 characters |
 | `VEIL_OPERATOR_PASSCODE` | **yes** | different operator passcode, at least 12 characters; omit to hide the operator |
+
+`VEIL_REGISTRY_URL` must be an `https` URL on an allow-listed host (currently only
+the HackCanton validator above, defined in `api/_registry.js`) with no credentials
+or query; anything else leaves the registry disabled, because the node token is sent
+to it. Server-to-server calls refuse redirects and time out: ledger 25 s, registry
+and token endpoint 10 s. Registry responses are capped at 1 MiB. A ledger timeout
+returns `504 LEDGER_TIMEOUT`; the UI then checks completions instead of resubmitting.
+
+Each function logs one JSON line per request (request id, method, route pattern,
+status, duration, role); search Vercel logs by the `requestId` a user reports from
+an error message or the `X-Request-Id` response header.
 
 Generate a dedicated RSA key pair for the hosted app rather than reusing the local
 sandbox key, for example:

@@ -11,6 +11,17 @@
 // any sandbox has run; the app shows a clear "run start-sandbox" message instead.
 import { assertSession, captureSession, clearSession, requireOperator, requireSession, type AuthSnapshot } from './auth'
 import type { ActiveState, Contract, DealArgs, Draft, Holding, Role, TemplateName, TxResult } from './types'
+import {
+  classifyFailure,
+  describeCompletionError,
+  describeFailure,
+  newCommandId,
+  OUTCOME_CHECKING,
+  parseErrorBody,
+  resolveOutcome,
+  type CompletionPage,
+  type ErrorBody,
+} from './commandOutcome'
 
 interface LedgerConfig {
   jsonApiUrl: string
@@ -50,8 +61,8 @@ export async function loadConfig(): Promise<boolean> {
       const text = await res.text()
       let detail = ''
       try {
-        const body = JSON.parse(text) as { cause?: unknown }
-        if (typeof body.cause === 'string' && body.cause) detail = ` ${body.cause}`
+        const body = JSON.parse(text) as { message?: unknown }
+        if (typeof body.message === 'string' && body.message) detail = ` ${body.message}`
       } catch {
         // Keep the status-only message when the endpoint did not return JSON.
       }
@@ -129,20 +140,56 @@ const SEED_PRICE: Record<string, string> = { [COIN_ASSET]: '0.15' }
 /** Canonical demo seed (kept in sync with scripts/bootstrap.sh). */
 const SEED = { lenderCash: 10000, borrowerCash: 10500, borrowerCollateral: 15000, borrowerReserve: 5000, borrowerSubstitute: 16000 }
 
-let commandSeq = 0
+function randomPart(): string {
+  const bytes = new Uint8Array(12)
+  crypto.getRandomValues(bytes)
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
+}
+
 function nextCommandId(prefix: string): string {
-  commandSeq += 1
-  return `veil-${prefix}-${Date.now()}-${commandSeq}`
+  return newCommandId(prefix, randomPart)
 }
 
 class LedgerHttpError extends Error {
   readonly status: number
+  readonly body: ErrorBody | null
 
-  constructor(path: string, status: number, detail: string) {
-    super(`Ledger API ${path} failed (HTTP ${status}): ${detail}`)
+  constructor(path: string, status: number, text: string) {
+    const body = parseErrorBody(text)
+    super(`Ledger API ${path} failed (HTTP ${status}): ${describeFailure(status, body)}`)
     this.name = 'LedgerHttpError'
     this.status = status
+    this.body = body
   }
+}
+
+/** A submission whose outcome could not be established. */
+class CommandOutcomeUnknownError extends Error {
+  constructor(commandId: string) {
+    super(`The outcome of command ${commandId} is still unknown after checking the ledger. Refresh before trying again so the action is not submitted twice.`)
+    this.name = 'CommandOutcomeUnknownError'
+  }
+}
+
+/** A submission the ledger definitely refused (reported via completions). */
+class CommandRejectedError extends Error {
+  constructor(detail: string) {
+    super(`The ledger rejected the command: ${detail}`)
+    this.name = 'CommandRejectedError'
+  }
+}
+
+type CommandStatusListener = (status: string | null) => void
+const statusListeners = new Set<CommandStatusListener>()
+
+/** Progress notices while a submission's outcome is being resolved. */
+export function onCommandStatus(listener: CommandStatusListener): () => void {
+  statusListeners.add(listener)
+  return () => { statusListeners.delete(listener) }
+}
+
+function notifyCommandStatus(status: string | null): void {
+  for (const listener of statusListeners) listener(status)
 }
 
 async function authorizedFetch(input: string, init: RequestInit = {}, snapshot = captureSession()): Promise<Response> {
@@ -247,21 +294,45 @@ async function submit(actAs: string, command: unknown, prefix: string, snapshot 
   return submitAs([actAs], command, prefix, snapshot)
 }
 
-async function submitAs(actAs: string[], command: unknown, prefix: string, snapshot = captureSession(), disclosedContracts?: DisclosedContract[]): Promise<TxResult> {
+async function submitAs(actAs: string[], command: unknown, prefix: string, snapshot = captureSession(), disclosedContracts?: DisclosedContract[]): Promise<SubmitResult> {
   const { userId } = requireSession(snapshot)
-  const res = await api<any>('/v2/commands/submit-and-wait-for-transaction', {
-    commands: {
-      commands: [command],
-      commandId: nextCommandId(prefix),
-      actAs,
-      userId,
-      // The registry adds debug fields; the Ledger API needs only these four.
-      ...(disclosedContracts && disclosedContracts.length > 0
-        ? { disclosedContracts: disclosedContracts.map(({ templateId, contractId, createdEventBlob, synchronizerId }) => ({ templateId, contractId, createdEventBlob, synchronizerId })) }
-        : {}),
-    },
-  }, snapshot)
-  const tx = res.transaction ?? {}
+  return submitCommand(userId, actAs, command, prefix, snapshot, disclosedContracts)
+}
+
+/** `recovered`: committed per the completion stream; events were not returned. */
+type SubmitResult = TxResult & { recovered?: boolean }
+
+const OUTCOME_POLL_ATTEMPTS = 20
+const OUTCOME_POLL_DELAY_MS = 2000
+
+/** Submit once and report completed, rejected, or (after checking the
+ * completion stream) unknown. A lost response is never resubmitted. */
+async function submitCommand(userId: string, actAs: string[], command: unknown, prefix: string, snapshot: AuthSnapshot, disclosedContracts?: DisclosedContract[]): Promise<SubmitResult> {
+  const commandId = nextCommandId(prefix)
+  // Completions after this offset include this command's, whatever happens.
+  const beginExclusive = await ledgerEnd(snapshot)
+  let res: any
+  try {
+    res = await api<any>('/v2/commands/submit-and-wait-for-transaction', {
+      commands: {
+        commands: [command],
+        commandId,
+        actAs,
+        userId,
+        // The registry adds debug fields; the Ledger API needs only these four.
+        ...(disclosedContracts && disclosedContracts.length > 0
+          ? { disclosedContracts: disclosedContracts.map(({ templateId, contractId, createdEventBlob, synchronizerId }) => ({ templateId, contractId, createdEventBlob, synchronizerId })) }
+          : {}),
+      },
+    }, snapshot)
+  } catch (error) {
+    if (!outcomeUnknown(error)) throw error
+    return resolveUnknown(commandId, userId, actAs, beginExclusive, snapshot)
+  }
+  return txResult(res.transaction ?? {})
+}
+
+function txResult(tx: any): TxResult {
   const created: TxResult['created'] = []
   const archived: TxResult['archived'] = []
   for (const ev of tx.events ?? []) {
@@ -271,6 +342,37 @@ async function submitAs(actAs: string[], command: unknown, prefix: string, snaps
       archived.push({ template: templateName(ev.ArchivedEvent.templateId), contractId: ev.ArchivedEvent.contractId })
   }
   return { updateId: tx.updateId ?? '', offset: tx.offset ?? 0, synchronizerId: tx.synchronizerId ?? '', created, archived }
+}
+
+/** Network failures (fetch throws a TypeError) and proxy/gateway timeouts may
+ * hide a committed command. Session changes and definite rejections do not. */
+function outcomeUnknown(error: unknown): boolean {
+  if (error instanceof LedgerHttpError) return classifyFailure(error.status, error.body) === 'unknown'
+  return error instanceof TypeError
+}
+
+async function resolveUnknown(commandId: string, userId: string, actAs: string[], beginExclusive: number, snapshot: AuthSnapshot): Promise<SubmitResult> {
+  notifyCommandStatus(OUTCOME_CHECKING)
+  try {
+    const resolved = await resolveOutcome(
+      commandId,
+      beginExclusive,
+      (begin) => api<CompletionPage>('/v2/commands/completions', { userId, parties: actAs, beginExclusive: begin }, snapshot),
+      {
+        attempts: OUTCOME_POLL_ATTEMPTS,
+        delayMs: OUTCOME_POLL_DELAY_MS,
+        sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+        retryable: outcomeUnknown,
+      },
+    )
+    assertSession(snapshot)
+    if (resolved.outcome === 'rejected') throw new CommandRejectedError(describeCompletionError(resolved.error))
+    if (resolved.outcome === 'unknown') throw new CommandOutcomeUnknownError(commandId)
+    // Committed, but the transaction's events were lost with the response.
+    return { updateId: resolved.updateId, offset: resolved.offset, synchronizerId: '', created: [], archived: [], recovered: true }
+  } finally {
+    notifyCommandStatus(null)
+  }
 }
 
 function create(templateId: string, createArguments: Record<string, unknown>) {
@@ -765,6 +867,7 @@ async function liquidateCoinLoan(loan: Contract, valuationCid: string | null, sn
     snapshot,
     factory.choiceContext.disclosedContracts,
   )
+  if (prepared.recovered) throw new Error('The receiving allocation committed, but its details were lost with the response. Refresh before liquidating again.')
   const receipt = prepared.created.find((c) => /Allocation/.test(c.template))
   if (!receipt) throw new Error('The receiving allocation was not created.')
   const legs = [{ transferLegId: 'collateral', sender: coinAccount(a.borrower), receiver: coinAccount(a.lender), amount: a.collateralQuantity, instrumentId: COIN_INSTRUMENT, meta: META }]
@@ -826,24 +929,7 @@ export async function seedDemo(snapshot = captureSession()): Promise<void> {
 
 async function submitReset(actAs: string[], command: unknown, prefix: string, snapshot = captureSession()): Promise<TxResult> {
   const { userId } = requireOperator(snapshot)
-  const res = await api<any>('/v2/commands/submit-and-wait-for-transaction', {
-    commands: {
-      commands: [command],
-      commandId: nextCommandId(`reset-${prefix}`),
-      actAs,
-      userId,
-    },
-  }, snapshot)
-  const tx = res.transaction ?? {}
-  const created: TxResult['created'] = []
-  const archived: TxResult['archived'] = []
-  for (const ev of tx.events ?? []) {
-    if (ev.CreatedEvent)
-      created.push({ template: templateName(ev.CreatedEvent.templateId), contractId: ev.CreatedEvent.contractId })
-    if (ev.ArchivedEvent)
-      archived.push({ template: templateName(ev.ArchivedEvent.templateId), contractId: ev.ArchivedEvent.contractId })
-  }
-  return { updateId: tx.updateId ?? '', offset: tx.offset ?? 0, synchronizerId: tx.synchronizerId ?? '', created, archived }
+  return submitCommand(userId, actAs, command, `reset-${prefix}`, snapshot)
 }
 
 /** Clear the ledger and re-seed canonical holdings so the demo can be re-run.

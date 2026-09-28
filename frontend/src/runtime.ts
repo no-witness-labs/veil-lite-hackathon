@@ -15,6 +15,9 @@ export const COLLATERAL_ASSETS = ledger.COLLATERAL_ASSETS
 export const COIN_ASSET = ledger.COIN_ASSET
 export const VALUED_ASSETS = ledger.VALUED_ASSETS
 
+/** Progress notice while a lost submission's outcome is read back from the ledger. */
+export const onCommandStatus = (listener: (status: string | null) => void): (() => void) => ledger.onCommandStatus(listener)
+
 export const coinAdmin = (snapshot?: AuthSnapshot): Promise<string | null> => ledger.coinAdmin(snapshot)
 
 export const listActive = (role: Role, snapshot?: AuthSnapshot): Promise<ActiveState> =>

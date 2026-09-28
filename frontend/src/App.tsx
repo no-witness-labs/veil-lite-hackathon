@@ -21,6 +21,7 @@ import {
   liquidateOverdueLoan,
   listActive,
   loadConfig,
+  onCommandStatus,
   parseHoldings,
   publishValuation,
   repayLoan,
@@ -118,6 +119,7 @@ export default function App() {
   const [busy, setBusy] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [commandStatus, setCommandStatus] = useState<string | null>(null)
   const [authError, setAuthError] = useState<string | null>(null)
   const [token, setToken] = useState('')
   const [authBusy, setAuthBusy] = useState(false)
@@ -225,6 +227,8 @@ export default function App() {
   useEffect(() => {
     void demoLoginInfo().then(setDemoLogin)
   }, [])
+
+  useEffect(() => onCommandStatus(setCommandStatus), [])
 
   useEffect(() => {
     void loadConfig().then((ok) => {
@@ -512,6 +516,11 @@ export default function App() {
           >
             <div style={{ display: 'grid', gap: 'var(--space-6)', minWidth: 0 }}>
               <div className="v-guide-inline">{guide}</div>
+              {commandStatus && (
+                <Banner tone="warn" title={commandStatus}>
+                  The response to the last command was lost. It is not being resubmitted; its result will show here.
+                </Banner>
+              )}
               {error && (
                 <Banner tone="danger" title="Ledger error." onDismiss={() => setError(null)}>
                   {error}

@@ -1,6 +1,7 @@
 const crypto = require('node:crypto')
 const fs = require('node:fs')
 const path = require('node:path')
+const { MESSAGES, noteRole, sendError } = require('./_http')
 
 // The browser presents one of these short-lived role credentials.  The role is
 // deliberately derived from the signed subject; a role tab or request field is
@@ -318,12 +319,31 @@ function validateDisclosedContracts(value) {
   }
 }
 
+// Completions let the UI resolve a submission whose response was lost. The
+// caller names only its own user and party; the server pins both and the
+// stream parameters.
+function validateCompletions(body, auth, env = process.env) {
+  const config = knownParties(env)
+  if (!exactKeys(body, ['userId', 'parties', 'beginExclusive'])) throw new AuthError(400, 'REQUEST_INVALID')
+  if (typeof body.userId !== 'string' || body.userId !== auth.userId) throw new AuthError(403, 'USER_FORBIDDEN')
+  if (!Number.isSafeInteger(body.beginExclusive) || body.beginExclusive < 0) throw new AuthError(400, 'REQUEST_INVALID')
+  const parties = uniqueStrings(body.parties, 'parties')
+  if (auth.role === 'regulator' || auth.role === 'outsider') throw new AuthError(403, 'ROLE_FORBIDDEN')
+  if (auth.role === 'operator') {
+    checkPartySet(parties, operatorWritableParties(config), 'parties')
+  } else if (parties.length !== 1 || parties[0] !== roleParty(auth, config)) {
+    throw new AuthError(403, 'PARTY_FORBIDDEN')
+  }
+  return { config, parties }
+}
+
 function routePolicy(pathname, method) {
   const normalized = pathname.split('?')[0]
   const policies = {
     '/v2/state/ledger-end': ['GET', 'HEAD'],
     '/v2/state/active-contracts': ['POST'],
     '/v2/commands/submit-and-wait-for-transaction': ['POST'],
+    '/v2/commands/completions': ['POST'],
   }
   const methods = policies[normalized]
   if (!methods) throw new AuthError(404, 'ROUTE_NOT_FOUND')
@@ -345,21 +365,23 @@ function authorizeLedgerRequest(req, path, body, env = req?.veilEnv || process.e
   const auth = authenticate(req, env)
   if (policy.path === '/v2/state/active-contracts') validateActiveContracts(body, auth, env)
   if (policy.path === '/v2/commands/submit-and-wait-for-transaction') validateCommands(body, auth, env)
+  if (policy.path === '/v2/commands/completions') validateCompletions(body, auth, env)
   return { policy, auth }
 }
 
 function respondError(res, error) {
   const status = error instanceof AuthError ? error.status : 500
   const code = error instanceof AuthError ? error.code : 'AUTH_ERROR'
-  res.statusCode = status
-  res.setHeader('Content-Type', 'application/json')
-  res.setHeader('Cache-Control', 'no-store')
-  res.end(JSON.stringify({ code }))
+  // Custom AuthError messages name only the offending field, never its value.
+  const message = error instanceof AuthError && error.message !== code ? error.message : MESSAGES[code]
+  sendError(res, status, code, message)
 }
 
 function requireAuth(req, res, env = req?.veilEnv || process.env) {
   try {
-    return authenticate(req, env)
+    const auth = authenticate(req, env)
+    noteRole(res, auth.role)
+    return auth
   } catch (error) {
     respondError(res, error)
     return null

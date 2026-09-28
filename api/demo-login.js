@@ -1,6 +1,7 @@
 const crypto = require('node:crypto')
 const { authConfig, AuthError, DEFAULT_ISSUER, respondError, ROLE_SUBJECTS, ROLES } = require('./_auth')
 const { parseJsonBody, requestBody } = require('./_ledger')
+const { beginRequest, noteRole, sendError, sendJson } = require('./_http')
 
 // Hosted judges have no way to obtain a locally minted role token, so the
 // server issues one in exchange for a shared demo passcode. The token is the
@@ -55,14 +56,8 @@ function mintRoleToken(role, privateKeyPem, env, now = Math.floor(Date.now() / 1
   return `${signingInput}.${signature.toString('base64url')}`
 }
 
-function sendJson(res, status, value) {
-  res.statusCode = status
-  res.setHeader('Content-Type', 'application/json')
-  res.setHeader('Cache-Control', 'no-store')
-  res.end(JSON.stringify(value))
-}
-
 module.exports = async function handler(req, res) {
+  beginRequest(req, res, '/api/demo-login')
   const env = req?.veilEnv || process.env
   const method = String(req.method || 'GET').toUpperCase()
   const config = loginConfig(env)
@@ -73,7 +68,7 @@ module.exports = async function handler(req, res) {
   }
   if (method !== 'POST') {
     res.setHeader('Allow', 'GET, POST')
-    sendJson(res, 405, { code: 'METHOD_NOT_ALLOWED' })
+    sendError(res, 405, 'METHOD_NOT_ALLOWED')
     return
   }
 
@@ -90,6 +85,7 @@ module.exports = async function handler(req, res) {
       await new Promise((resolve) => setTimeout(resolve, FAILURE_DELAY_MS))
       throw new AuthError(401, 'PASSCODE_INVALID')
     }
+    noteRole(res, role)
     sendJson(res, 200, { token: mintRoleToken(role, config.privateKeyPem, env) })
   } catch (error) {
     respondError(res, error instanceof AuthError ? error : new AuthError(500, 'AUTH_ERROR'))
