@@ -1,4 +1,5 @@
 const { AuthError } = require('./_auth')
+const { upstreamFetch } = require('./_http')
 
 // Shared-node mode. The hosted HackCanton participant gives the team one
 // ledger user that holds CanActAs/CanReadAs for every demo party, so the
@@ -6,6 +7,7 @@ const { AuthError } = require('./_auth')
 // submits on the caller's behalf. Role separation is then enforced by the
 // server's own role checks only; Canton cannot tell the roles apart.
 const REFRESH_MARGIN_SECONDS = 60
+const TOKEN_TIMEOUT_MS = 10_000
 
 let cached = null
 let inflight = null
@@ -39,7 +41,7 @@ async function upstreamToken(config, now = Math.floor(Date.now() / 1000)) {
 async function fetchToken(config) {
   let response
   try {
-    response = await fetch(config.tokenUrl, {
+    response = await upstreamFetch(config.tokenUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
@@ -47,7 +49,7 @@ async function fetchToken(config) {
         client_id: config.clientId,
         refresh_token: config.refreshToken,
       }),
-    })
+    }, TOKEN_TIMEOUT_MS)
   } catch {
     throw new AuthError(503, 'UPSTREAM_UNAVAILABLE')
   }

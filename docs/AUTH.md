@@ -70,11 +70,32 @@ a supported renewal procedure.
 
 ## Server boundary
 
-The server exposes only the three ledger operations used by the UI: ledger end,
-active contracts, and command submission. Queries must name authorized parties;
-commands must use the authenticated user ID and permitted `actAs`/`readAs` parties.
-The server blocks unknown routes, ledger administration, and ordinary users'
-direct create commands. Regulator and outsider cannot submit commands.
+The server exposes only the four ledger operations used by the UI: ledger end,
+active contracts, command submission, and command completions. Queries must name
+authorized parties; commands must use the authenticated user ID and permitted
+`actAs`/`readAs` parties. The server blocks unknown routes, ledger administration,
+and ordinary users' direct create commands. Regulator and outsider cannot submit
+commands.
+
+Completions (`POST /v2/commands/completions`) exist so the UI can settle a
+submission whose response was lost. The body is `{userId, parties, beginExclusive}`:
+`userId` must be the session's user, and `parties` exactly the role's own party
+(the operator: its writable parties). The server pins `limit` and the stream idle
+timeout, substitutes the team ledger user on the shared node, and returns only
+`{completions: [{commandId, offset, succeeded, updateId | error}], lastOffset}`.
+The UI captures the ledger end before each submission. On a network error or
+timeout it does not resubmit: it shows "Outcome unknown, checking the ledger…",
+polls completions from that offset for its command id, and then reports the real
+result, or says the outcome is still unknown and asks for a refresh first.
+
+Every API response carries `X-Request-Id` (a well-formed incoming id of up to 64
+`[A-Za-z0-9-]` characters is kept). Errors are `{code, message, requestId}`. Ledger
+errors are reduced to the Canton code, `errorId` (for example
+`cannot-withdraw-committed-allocation`), `category`, and the Daml message such as
+the assertion text; participant names, trace ids, submitted command details and
+exercise traces are dropped. Each request writes one JSON log line with method,
+route pattern, status, duration, request id and role, never tokens, passcodes,
+bodies, query strings or contract ids.
 
 Missing authentication configuration fails closed.
 

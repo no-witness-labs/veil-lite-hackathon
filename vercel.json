@@ -17,6 +17,10 @@
       "destination": "/api/v2/commands/submit-and-wait-for-transaction"
     },
     {
+      "source": "/v2/commands/completions",
+      "destination": "/api/v2/commands/completions"
+    },
+    {
       "source": "/v2/(.*)",
       "destination": "/api/v2/$1"
     },

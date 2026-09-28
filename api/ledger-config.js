@@ -1,24 +1,21 @@
 const { ledgerConfig } = require('./_ledger')
+const { beginRequest, sendError, sendJson } = require('./_http')
 
 module.exports = async function handler(req, res) {
+  beginRequest(req, res, '/ledger-config.json')
   const method = String(req.method || 'GET').toUpperCase()
   if (method !== 'GET' && method !== 'HEAD') {
-    res.statusCode = 405
     res.setHeader('Allow', 'GET, HEAD')
-    res.setHeader('Cache-Control', 'no-store')
-    res.end()
+    sendError(res, 405, 'METHOD_NOT_ALLOWED')
     return
   }
 
+  let config
   try {
-    res.statusCode = 200
-    res.setHeader('Content-Type', 'application/json')
-    res.setHeader('Cache-Control', 'no-store')
-    res.end(JSON.stringify(ledgerConfig()))
-  } catch (error) {
-    res.statusCode = 500
-    res.setHeader('Content-Type', 'application/json')
-    res.setHeader('Cache-Control', 'no-store')
-    res.end(JSON.stringify({ code: 'CONFIG_ERROR' }))
+    config = ledgerConfig()
+  } catch {
+    sendError(res, 500, 'CONFIG_ERROR')
+    return
   }
+  sendJson(res, 200, config)
 }
