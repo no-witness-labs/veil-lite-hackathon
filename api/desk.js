@@ -18,7 +18,9 @@ const { beginRequest, isTimeout, noteRole, readCapped, ResponseTooLargeError, sa
 // CollateralValuation names it. Every stream is a desk stream (the operator's
 // browser gets a desk like any other, and reset no longer seeds streams), so
 // the janitor rule is uniform: a stream whose current mark is older than
-// IDLE_MS has been left alone and its contracts are closed. A desk whose
+// IDLE_MS has been left alone and its contracts are closed. The janitor runs
+// after the create response (Vercel waitUntil), except when the desk cap is
+// hit, where it runs inline before the count is re-checked. A desk whose
 // stream was janitored is repaired on its next create (same deskId, a new
 // stream for that asset).
 
@@ -309,13 +311,18 @@ async function openStreams(ledger, config, assets) {
     'PublishInitial',
     { unitPrice: SEED_PRICE[asset] ?? '1' },
   ))
+  // One transaction for every missing asset: a desk costs one ledger round trip.
   const tx = await ledger.submit([parties.lender, parties.borrower, parties.valuer], commands, 'open')
-  const created = new Set((tx.events ?? [])
+  const created = (tx.events ?? [])
     .map((event) => event?.CreatedEvent)
     .filter((event) => event && templateName(event.templateId) === 'CollateralValuation')
-    .map((event) => event.contractId))
-  // Read the new marks back rather than trusting the response's event shape.
-  const marks = demoMarks(await ledger.active(parties.valuer), config).filter((mark) => created.has(mark.contractId))
+    .map((event) => ({ contractId: event.contractId, template: 'CollateralValuation', args: event.createArgument ?? {} }))
+  let marks = demoMarks(created, config)
+  if (marks.length < assets.length) {
+    // The response carried no create arguments: read the new marks back.
+    const ids = new Set(created.map((mark) => mark.contractId))
+    marks = demoMarks(await ledger.active(parties.valuer), config).filter((mark) => ids.has(mark.contractId))
+  }
   const streams = {}
   for (const mark of marks) streams[mark.args.collateralAsset] = mark.args.streamId
   if (assets.some((asset) => !streams[asset])) throw new LedgerCallError(502, 'DESK_ERROR', 'The desk streams were created but could not be read back.')
@@ -400,20 +407,48 @@ async function createDesk(env, config, access, ledger, currentToken, ctx) {
   if (current) {
     for (const [asset, stream] of Object.entries(current.streams)) if (liveStreams.has(stream)) keep[asset] = stream
     if (VALUED_ASSETS.every((asset) => keep[asset])) {
-      return { token: currentToken, deskId: current.deskId, streams: keep, expiresAt: current.exp, reused: true }
+      return { desk: { token: currentToken, deskId: current.deskId, streams: keep, expiresAt: current.exp, reused: true }, background: null }
     }
   }
   const keepIds = Object.values(keep)
-  if (await janitor(ledger, config, marks, keepIds, Date.now(), ctx) > 0) {
-    marks = demoMarks(await ledger.active(config.parties.valuer), config)
+  const otherDesks = (list) => deskCount(new Set(list.map((mark) => mark.args.streamId).filter((stream) => !keepIds.includes(stream))).size)
+  // The cap is checked on the current count. Only when it is hit does the
+  // janitor run inline (then the count is re-read); otherwise it runs after
+  // the response, off the visitor's sign-in path.
+  let janitorDone = false
+  if (otherDesks(marks) >= MAX_DESKS) {
+    janitorDone = true
+    if (await janitor(ledger, config, marks, keepIds, Date.now(), ctx) > 0) {
+      marks = demoMarks(await ledger.active(config.parties.valuer), config)
+    }
+    if (otherDesks(marks) >= MAX_DESKS) throw new AuthError(429, 'DESK_LIMIT')
   }
-  const others = new Set(marks.map((mark) => mark.args.streamId).filter((stream) => !keepIds.includes(stream)))
-  if (deskCount(others.size) >= MAX_DESKS) throw new AuthError(429, 'DESK_LIMIT')
   const missing = VALUED_ASSETS.filter((asset) => !keep[asset])
   const streams = { ...keep, ...(await openStreams(ledger, config, missing)) }
   const deskId = Object.keys(keep).length > 0 && current ? current.deskId : crypto.randomUUID()
   const { token, claims } = signDeskToken({ deskId, streams, ledger: config.issuer }, privateKeyPem)
-  return { token, deskId, streams, expiresAt: claims.exp, reused: false }
+  const desk = { token, deskId, streams, expiresAt: claims.exp, reused: false }
+  // The marks read above predate the new streams, so only older streams (never
+  // this desk's kept ones) can be idle.
+  const background = janitorDone ? null : () => janitor(ledger, config, marks, keepIds, Date.now(), ctx)
+  return { desk, background }
+}
+
+/** Run work after the response: Vercel's waitUntil keeps the function alive
+ * for it (the request context @vercel/functions reads, without the package);
+ * elsewhere (the Vite dev proxy) it simply runs detached. The task logs its
+ * own failures; nothing here may throw into the finished request. */
+function afterResponse(task, ctx) {
+  const run = () => Promise.resolve().then(task).catch((error) => {
+    console.log(JSON.stringify({ level: 'warn', msg: 'desk background task failed', requestId: ctx.id, code: error?.code || 'ERROR' }))
+  })
+  const waitUntil = globalThis[Symbol.for('@vercel/request-context')]?.get?.()?.waitUntil
+  if (typeof waitUntil === 'function') {
+    waitUntil(run())
+    return 'waitUntil'
+  }
+  void run()
+  return 'detached'
 }
 
 /* ----------------------------------------------------------------- handler -- */
@@ -450,8 +485,9 @@ async function handler(req, res) {
       return
     }
     const access = await ledgerAccess(env)
-    const desk = await createDesk(env, config, access, ledgerClient(env, access, ctx), body.deskToken, ctx)
+    const { desk, background } = await createDesk(env, config, access, ledgerClient(env, access, ctx), body.deskToken, ctx)
     sendJson(res, 200, desk)
+    if (background) afterResponse(background, ctx)
   } catch (error) {
     if (error instanceof LedgerCallError) {
       sendError(res, error.status, error.code, error.message === error.code ? undefined : error.message, error.extra)

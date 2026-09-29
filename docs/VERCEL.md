@@ -78,12 +78,17 @@ the app, not on the ledger: the wallets (cash, T-Bill, MMF, Canton Coin) are sha
   Canton Coin loans with `WriteOffCoin`, cancels substitution requests, archives
   its loans, dismisses its closed records and archives its marks. Holdings are
   never burned or minted; an archived T-Bill loan's collateral is not returned.
-- Janitor: before opening streams, `create` closes up to 6 streams whose current
-  mark is older than 30 minutes (never the caller's). Every stream is a desk stream
-  (reset no longer seeds streams; the operator's browser has a desk too), so the
-  rule is uniform. A desk whose stream was janitored is repaired on its next sign-in.
-- Cap: with 25 or more other desks open after the janitor, `create` answers
-  `429 DESK_LIMIT`.
+- `create` opens all missing streams in one transaction (one command per asset)
+  and reads the new marks from that transaction.
+- Janitor: after answering, `create` closes up to 6 streams whose current mark is
+  older than 30 minutes (never the caller's), kept alive by Vercel's `waitUntil`
+  (read from the request context, no extra dependency; detached under Vite). Their
+  closes are one batch transaction plus one `WriteOffCoin` per Canton Coin loan.
+  Every stream is a desk stream (reset no longer seeds streams; the operator's
+  browser has a desk too), so the rule is uniform. A desk whose stream was
+  janitored is repaired on its next sign-in.
+- Cap: with 25 or more other desks open, `create` runs the janitor inline once,
+  re-counts, and answers `429 DESK_LIMIT` if the count is still at the cap.
 - **Reset demo** still clears everything; every browser opens a new desk on its
   next sign-in or refresh.
 

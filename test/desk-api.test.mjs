@@ -50,7 +50,17 @@ beforeEach(() => {
   Object.assign(process.env, originalEnv, baseEnv, sharedEnv)
 })
 
+const REQUEST_CONTEXT = Symbol.for('@vercel/request-context')
+
+/** Stand in for Vercel's request context; returns the promises passed to waitUntil. */
+function vercelContext() {
+  const pending = []
+  globalThis[REQUEST_CONTEXT] = { get: () => ({ waitUntil: (promise) => { pending.push(promise) } }) }
+  return pending
+}
+
 afterEach(() => {
+  delete globalThis[REQUEST_CONTEXT]
   console.log = originalLog
   resetUpstreamCache()
   for (const key of Object.keys(process.env)) delete process.env[key]
@@ -97,7 +107,7 @@ const STAKEHOLDERS = {
 
 /** An in-memory ACS that applies the commands the desk endpoint sends. */
 function fakeLedger() {
-  const state = { contracts: [], offset: 10, next: 1, submissions: [], registryCalls: [], tokenRequests: 0 }
+  const state = { contracts: [], offset: 10, next: 1, submissions: [], registryCalls: [], tokenRequests: 0, acsReads: 0, eventArguments: true }
   const add = (template, args) => {
     const contract = { contractId: `${template}-${state.next++}`, template, offset: ++state.offset, args }
     state.contracts.push(contract)
@@ -153,6 +163,7 @@ function fakeLedger() {
     const path = url.slice(LEDGER.length)
     if (path === '/v2/state/ledger-end') return json({ offset: state.offset })
     if (path === '/v2/state/active-contracts') {
+      state.acsReads += 1
       const body = JSON.parse(init.body)
       const party = Object.keys(body.filter.filtersByParty)[0]
       return json(state.contracts
@@ -166,7 +177,7 @@ function fakeLedger() {
       try {
         const created = body.commands.commands.map(apply).filter(Boolean)
         state.offset += 1
-        return json({ transaction: { updateId: `u-${state.offset}`, offset: state.offset, events: created.map((c) => ({ CreatedEvent: { contractId: c.contractId, templateId: `pkg123:Veil:${c.template}` } })) } })
+        return json({ transaction: { updateId: `u-${state.offset}`, offset: state.offset, events: created.map((c) => ({ CreatedEvent: { contractId: c.contractId, templateId: `pkg123:Veil:${c.template}`, ...(state.eventArguments ? { createArgument: c.args } : {}) } })) } })
       } catch (error) {
         state.contracts = before
         if (error.status === 404) return json({ code: 'CONTRACT_NOT_FOUND', cause: 'gone', errorCategory: 11 }, 404)
@@ -226,6 +237,9 @@ test('create opens one stream per valued asset in one transaction and returns a 
   const desk = res.json()
   assert.deepEqual(Object.keys(desk.streams).sort(), [...ASSETS].sort())
   assert.equal(desk.reused, false)
+  // One read of the valuer's prices, one submission with a command per asset;
+  // the new marks come from that transaction, not from a second read.
+  assert.equal(ledger.state.acsReads, 1)
   assert.equal(ledger.state.submissions.length, 1)
   const submission = ledger.state.submissions[0]
   assert.equal(submission.commands.length, 3)
@@ -244,6 +258,17 @@ test('create opens one stream per valued asset in one transaction and returns a 
   assert.equal(desk.expiresAt, claims.exp)
   // Never usable as a role session.
   assert.throws(() => authenticate({ headers: { authorization: `Bearer ${desk.token}` } }), (e) => e instanceof AuthError && e.status === 401)
+})
+
+test('create reads the new marks back only when the transaction carries no create arguments', async () => {
+  const ledger = fakeLedger()
+  ledger.state.eventArguments = false
+  globalThis.fetch = ledger.fetchImpl
+  const res = await call({ action: 'create' })
+  assert.equal(res.statusCode, 200, res.body)
+  assert.equal(Object.keys(res.json().streams).length, 3)
+  assert.equal(ledger.state.submissions.length, 1)
+  assert.equal(ledger.state.acsReads, 2)
 })
 
 test('desk tokens: signature, expiry, ledger binding and type are all checked', () => {
@@ -358,8 +383,16 @@ test('janitor: streams idle over 30 minutes are closed first, never the caller\'
   const idle = deskOf(ledger, minutesAgo(40))
   const idleLoan = ledger.deal('Loan', idle['Tokenized T-Bill'])
   const busy = deskOf(ledger, minutesAgo(2))
+  const pending = vercelContext()
   const res = await call({ action: 'create' })
   assert.equal(res.statusCode, 200, res.body)
+  // The desk is answered first; the janitor is handed to waitUntil, not awaited.
+  assert.equal(pending.length, 1)
+  assert.equal(ledger.state.submissions.length, 1, 'only the desk transaction ran before the response')
+  assert.ok(ledger.state.contracts.some((c) => c.contractId === idleLoan.contractId))
+  await Promise.all(pending)
+  // Its closes are one batch transaction for all idle streams.
+  assert.equal(ledger.state.submissions.length, 2)
   const ids = new Set(ledger.state.contracts.map((c) => c.contractId))
   assert.ok(!ids.has(idleLoan.contractId))
   assert.ok(!ledger.state.contracts.some((c) => Object.values(idle).includes(c.args.streamId)))
@@ -379,10 +412,27 @@ test('cap: create is refused with 429 DESK_LIMIT when too many active desks rema
   assert.match(res.json().message, /too many visitor desks/)
   assert.equal(ledger.state.submissions.length, 0)
 
-  // Once one desk goes idle the janitor makes room.
+  // Once one desk goes idle the janitor makes room: at the cap it runs inline,
+  // before the response, and nothing is left for after it.
   const first = ledger.state.contracts.filter((c) => c.template === 'CollateralValuation').slice(0, 3)
   for (const c of first) c.args.observedAt = minutesAgo(31)
+  const pending = vercelContext()
   assert.equal((await call({ action: 'create' })).statusCode, 200)
+  assert.equal(pending.length, 0)
+  assert.ok(!ledger.state.contracts.some((c) => first.some((f) => f.contractId === c.contractId)))
+})
+
+test('without a Vercel request context the janitor runs detached and logs its outcome', async () => {
+  const ledger = fakeLedger()
+  globalThis.fetch = ledger.fetchImpl
+  const idle = deskOf(ledger, minutesAgo(40))
+  const res = await call({ action: 'create' })
+  assert.equal(res.statusCode, 200, res.body)
+  for (let i = 0; i < 50 && ledger.state.contracts.some((c) => Object.values(idle).includes(c.args.streamId)); i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 5))
+  }
+  assert.ok(!ledger.state.contracts.some((c) => Object.values(idle).includes(c.args.streamId)))
+  assert.ok(logLines.some((line) => /"msg":"desk janitor"/.test(line)))
 })
 
 test('close retries once when a contract moved meanwhile', async () => {
