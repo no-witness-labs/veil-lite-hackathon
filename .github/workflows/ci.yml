@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   frontend:
-    name: Frontend build
+    name: Frontend build and tests
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -37,6 +37,9 @@ jobs:
       - name: Build frontend
         working-directory: frontend
         run: npm run build
+
+      - name: Server, keeper and UI-logic tests
+        run: node --test test/*.test.mjs
 
   daml:
     name: Daml build and tests

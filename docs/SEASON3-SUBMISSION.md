@@ -28,6 +28,7 @@ acceptance, repayment and lender-priced liquidation. Built during Season 3:
 - **External review addressed:** audit findings #53–#60 triaged in `docs/AUDIT-TRIAGE.md`; the valid ones fixed in contract release 0.9.0 (surplus returned on liquidation, offer reject/expiry, term bounds, joint record deletion, independent regulator) (#63)
 - **Operations:** an off-ledger lender keeper (`scripts/keeper.mjs`) and a Loan book tab with CSV/JSON export (#63)
 - **Guided demo** that walks a first visit through the T-Bill or Canton Coin loan, and fixes so consecutive visitors can share the demo (#64–#66)
+- **Production hardening:** a keeper command journal that resolves lost responses from the ledger, maker-checker approval for liquidations, and a hardened proxy (request IDs, sanitised errors, timeouts, lost-submission checks in the UI) (#70, #71)
 
 ## Try it (≈2 minutes)
 
@@ -53,8 +54,8 @@ price, publish a fresh one as Valuer first. The demo ledger is shared by all vis
 
 ## Evidence
 
-58 Daml scripts, 13 server tests, 27 keeper tests, 18 UI-logic tests, 49 live auth checks
-and 12 browser checks pass. On hackcanton-01 with real DevNet CC: Canton Coin repay,
+58 Daml scripts and 90 server, keeper and UI-logic tests pass, as did 49 live auth checks
+and 12 browser checks. On hackcanton-01 with real DevNet CC: Canton Coin repay,
 liquidation (by hand and by the keeper) and reset; T-Bill liquidation returning surplus
 collateral; and both guided-demo tracks completed by following the guide alone, including
 two consecutive visitors without a reset (PRs #51, #63–#66).
