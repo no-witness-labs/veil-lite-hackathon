@@ -16,6 +16,7 @@ const registryApi = require('../api/_registry.js') as {
   proxyRegistryRequest: (req: IncomingMessage & { veilEnv?: Record<string, string> }, res: ServerResponse, path: string, env?: Record<string, string>) => Promise<void>
 }
 const demoLoginHandler = require('../api/demo-login.js') as (req: IncomingMessage & { veilEnv?: Record<string, string> }, res: ServerResponse) => Promise<void> | void
+const deskHandler = require('../api/desk.js') as (req: IncomingMessage & { veilEnv?: Record<string, string> }, res: ServerResponse) => Promise<void> | void
 const { proxyLedgerRequest } = ledgerApi
 
 export default defineConfig(({ mode }) => {
@@ -55,6 +56,11 @@ function ledgerApiProxy(target: string, env: Record<string, string>): Plugin {
     if (pathname === '/api/demo-login') {
       authReq.veilEnv = env
       await demoLoginHandler(authReq, res)
+      return
+    }
+    if (pathname === '/api/desk') {
+      authReq.veilEnv = { ...env, VEIL_LEDGER_TARGET: target }
+      await deskHandler(authReq, res)
       return
     }
     if (!pathname.startsWith('/v2')) {

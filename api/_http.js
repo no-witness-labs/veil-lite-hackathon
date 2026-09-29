@@ -32,6 +32,11 @@ const MESSAGES = Object.freeze({
   LEDGER_TIMEOUT: 'The ledger did not answer in time; the outcome is unknown.',
   LEDGER_ERROR: 'The ledger returned an error.',
   CONFIG_ERROR: 'Ledger configuration is incomplete on this server.',
+  DESK_UNAVAILABLE: 'Visitor desks are not configured on this server.',
+  DESK_INVALID: 'That desk token was rejected. A new desk is needed.',
+  DESK_EXPIRED: 'That desk expired. A new desk is needed.',
+  DESK_LIMIT: 'The shared demo is busy: too many visitor desks are open. Try again in a few minutes.',
+  DESK_ERROR: 'The desk could not be prepared on the ledger.',
 })
 
 function header(req, name) {

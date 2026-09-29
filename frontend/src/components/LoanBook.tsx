@@ -49,7 +49,8 @@ function LtvCell({ row }: { row: BookRow }) {
 
 /** Every issuer-matching deal the active party can see — offers, open loans
  * and settlement records — ranked by risk, with a CSV / JSON export of exactly
- * that ledger view. Selecting a row opens it in the Position tab. */
+ * that ledger view. Rows on this browser's desk come first and open in the
+ * Position tab; other visitors' deals are listed but not opened. */
 export function LoanBook({
   role,
   partyId,
@@ -57,6 +58,7 @@ export function LoanBook({
   issuer,
   offset,
   selectedId,
+  deskStreams,
   onSelect,
 }: {
   role: Role
@@ -65,10 +67,12 @@ export function LoanBook({
   issuer: string | undefined
   offset: number
   selectedId: string | null
+  deskStreams: ReadonlySet<string>
   onSelect: (contractId: string) => void
 }) {
   const [now, setNow] = useState(() => Date.now())
-  const rows = buildBookRows(contracts, issuer, now)
+  const rows = buildBookRows(contracts, issuer, now, deskStreams)
+  const mineCount = rows.filter((row) => row.mine).length
   const summary = summarizeBook(rows)
   // Countdowns and mark freshness move with the clock; tick only while a
   // loan is open, since closed records and offers have nothing to count.
@@ -107,7 +111,7 @@ export function LoanBook({
       footer={
         <>
           <span className="v-id">
-            {rows.length} deal contract{rows.length === 1 ? '' : 's'} visible to {ROLE_LABELS[role].toLowerCase()}
+            {rows.length} deal contract{rows.length === 1 ? '' : 's'} visible to {ROLE_LABELS[role].toLowerCase()} · {mineCount} on your desk
           </span>
           <span className="v-id">LTV on outstanding principal at the stream’s fresh mark (≤ 5 min)</span>
         </>
@@ -138,7 +142,7 @@ export function LoanBook({
         >
           <table className="v-table" data-testid="loan-book" style={{ minWidth: 1080 }}>
             <caption className="v-label" style={{ textAlign: 'left', padding: 'var(--space-3) var(--space-5)' }}>
-              Sorted by risk: breach first, then the soonest margin-call deadline
+              Your desk first, then by risk: breach first, then the soonest margin-call deadline
             </caption>
             <thead>
               <tr>
@@ -160,22 +164,27 @@ export function LoanBook({
                 return (
                   <tr
                     key={row.contractId}
-                    onClick={() => onSelect(row.contractId)}
-                    style={{ cursor: 'pointer', boxShadow: selected ? 'inset 3px 0 0 var(--accent)' : undefined }}
+                    onClick={row.mine ? () => onSelect(row.contractId) : undefined}
+                    style={{ cursor: row.mine ? 'pointer' : undefined, boxShadow: selected ? 'inset 3px 0 0 var(--accent)' : undefined }}
                   >
                     <th scope="row" style={{ fontWeight: 400, textAlign: 'left', padding: 'var(--space-4) var(--space-5)', borderBottom: '1px solid var(--line)' }}>
-                      <button
-                        type="button"
-                        className="v-id"
-                        title={`${row.contractId} — open in Position`}
-                        aria-label={`Open deal ${shortId(row.contractId, 8, 4)} in the Position tab`}
-                        aria-current={selected ? 'true' : undefined}
-                        onClick={(e) => { e.stopPropagation(); onSelect(row.contractId) }}
-                        style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--accent)', textDecoration: 'underline' }}
-                      >
-                        {shortId(row.contractId, 8, 4)}
-                      </button>
+                      {row.mine ? (
+                        <button
+                          type="button"
+                          className="v-id"
+                          title={`${row.contractId} — open in Position`}
+                          aria-label={`Open deal ${shortId(row.contractId, 8, 4)} in the Position tab`}
+                          aria-current={selected ? 'true' : undefined}
+                          onClick={(e) => { e.stopPropagation(); onSelect(row.contractId) }}
+                          style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--accent)', textDecoration: 'underline' }}
+                        >
+                          {shortId(row.contractId, 8, 4)}
+                        </button>
+                      ) : (
+                        <span className="v-id" title={`${row.contractId} — another visitor's desk`}>{shortId(row.contractId, 8, 4)}</span>
+                      )}
                       <div className="v-muted" style={{ fontSize: 'var(--text-xs)' }}>{row.template}</div>
+                      {row.mine ? <Tag tone="accent">Your desk</Tag> : <div className="v-muted" style={{ fontSize: 'var(--text-xs)' }}>other visitor</div>}
                     </th>
                     <td>
                       <Tag tone={STATUS_TONE[row.status]} dot={row.status === 'margin-call' || row.breached}>

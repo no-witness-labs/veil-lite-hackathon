@@ -87,7 +87,12 @@ try {
     await check(`${role} has a fixed role, no reset, and no stored credential`, async () => {
       assert.equal(await page.getByRole('button', { name: 'Reset demo', exact: true }).count(), 0)
       assert.equal(await page.getByRole('button', { name: 'Borrower', exact: true }).count(), 0)
-      assert.deepEqual(await page.evaluate(() => ({ local: { ...localStorage }, session: { ...sessionStorage } })), { local: {}, session: {} })
+      // Only the visitor desk (stream ids and a desk-only token) is stored;
+      // never the role credential.
+      const stored = await page.evaluate(() => ({ local: { ...localStorage }, session: { ...sessionStorage } }))
+      assert.deepEqual(stored.session, {})
+      assert.ok(Object.keys(stored.local).every((key) => key.startsWith('veil.desk.')))
+      assert.ok(Object.values(stored.local).every((value) => !value.includes(tokens[role])))
     })
     if (role === 'lender') await page.screenshot({ path: new URL('lender.png', output).pathname, fullPage: true })
     await logout()

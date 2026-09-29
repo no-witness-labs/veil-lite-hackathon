@@ -11,6 +11,7 @@
 // any sandbox has run; the app shows a clear "run start-sandbox" message instead.
 import { assertSession, captureSession, clearSession, requireOperator, requireSession, type AuthSnapshot } from './auth'
 import type { ActiveState, Contract, DealArgs, Draft, Holding, Role, TemplateName, TxResult } from './types'
+import { deskExpired, parseDesk, type Desk } from './desk'
 import {
   classifyFailure,
   describeCompletionError,
@@ -134,10 +135,9 @@ export const COLLATERAL_ASSETS = [COLLATERAL_ASSET, SUBSTITUTE_ASSET] as const
 export const COIN_ASSET = 'Canton Coin'
 /** Every asset the valuer prices, each on its own agreed stream. */
 export const VALUED_ASSETS = [COLLATERAL_ASSET, SUBSTITUTE_ASSET, COIN_ASSET] as const
-/** Seed mark per asset; Canton Coin is priced near its market level. */
-const SEED_PRICE: Record<string, string> = { [COIN_ASSET]: '0.15' }
-
-/** Canonical demo seed (kept in sync with scripts/bootstrap.sh). */
+/** Canonical demo seed (kept in sync with scripts/bootstrap.sh). Price
+ * streams are not seeded here: each browser's desk opens its own, at the seed
+ * prices in api/desk.js (1, and 0.15 for Canton Coin). */
 const SEED = { lenderCash: 10000, borrowerCash: 10500, borrowerCollateral: 15000, borrowerReserve: 5000, borrowerSubstitute: 16000 }
 
 function randomPart(): string {
@@ -290,6 +290,116 @@ export async function listActive(party: string, snapshot = captureSession()): Pr
   return { contracts, raw: entries, offset }
 }
 
+/* ------------------------------------------------------------------ desk -- */
+
+// The desk token is kept in localStorage so a browser keeps its desk across
+// role switches and reloads. It is not a ledger credential: the server accepts
+// it only to close this desk's own contracts.
+let desk: Desk | null = null
+let deskInflight: { generation: number; promise: Promise<Desk> } | null = null
+
+export const getDesk = (): Desk | null => desk
+
+const deskKey = () => `veil.desk.v1.${cfg.issuer}`
+
+function storedDesk(): Desk | null {
+  try {
+    const raw = window.localStorage.getItem(deskKey())
+    return raw ? parseDesk(JSON.parse(raw)) : null
+  } catch {
+    return null
+  }
+}
+
+function storeDesk(next: Desk | null): void {
+  desk = next
+  try {
+    if (next) window.localStorage.setItem(deskKey(), JSON.stringify(next))
+    else window.localStorage.removeItem(deskKey())
+  } catch {
+    // Private mode or blocked storage: the desk lives for this page only.
+  }
+}
+
+async function deskRequest(body: Record<string, unknown>, snapshot: AuthSnapshot): Promise<unknown> {
+  const res = await authorizedFetch('/api/desk', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }, snapshot)
+  const text = await res.text()
+  assertSession(snapshot)
+  if (!res.ok) {
+    const body = parseErrorBody(text)
+    if (res.status === 401 && body?.code?.startsWith('AUTH_')) {
+      clearSession()
+      throw new DeskServiceError(401, text)
+    }
+    // A rejected desk token is not a rejected session.
+    throw new DeskServiceError(res.status === 401 ? 400 : res.status, text)
+  }
+  return JSON.parse(text)
+}
+
+class DeskServiceError extends Error {
+  readonly status: number
+  readonly code: string | undefined
+
+  constructor(status: number, text: string) {
+    const body = parseErrorBody(text)
+    super(describeFailure(status, body))
+    this.name = 'DeskServiceError'
+    this.status = status
+    this.code = body?.code
+  }
+}
+
+/** This browser's desk: the stored one while the server still finds its
+ * streams (repairing any the janitor closed), otherwise a new one. */
+export async function ensureDesk(snapshot = captureSession()): Promise<Desk> {
+  // Callers within one session share a request; a new session never waits on
+  // the previous session's, which would fail with "session changed".
+  if (deskInflight?.generation === snapshot.generation) return deskInflight.promise
+  const promise = (async () => {
+    const stored = desk ?? storedDesk()
+    const current = stored && !deskExpired(stored, Date.now()) ? stored : null
+    const next = parseDesk(await deskRequest(current ? { action: 'create', deskToken: current.token } : { action: 'create' }, snapshot))
+    if (!next) throw new Error('The desk service returned an invalid desk.')
+    storeDesk(next)
+    return next
+  })()
+  const entry = { generation: snapshot.generation, promise }
+  deskInflight = entry
+  try {
+    return await promise
+  } finally {
+    if (deskInflight === entry) deskInflight = null
+  }
+}
+
+/** Close this desk's contracts on the ledger, then open a fresh desk. */
+export async function startOverDesk(snapshot = captureSession()): Promise<Desk> {
+  const current = desk ?? storedDesk()
+  if (current && !deskExpired(current, Date.now(), 0)) {
+    try {
+      await deskRequest({ action: 'close', deskToken: current.token }, snapshot)
+    } catch (error) {
+      // A desk the server no longer accepts has nothing left to close here;
+      // the janitor collects its streams once they go idle.
+      if (!(error instanceof DeskServiceError && (error.code === 'DESK_INVALID' || error.code === 'DESK_EXPIRED'))) throw error
+    }
+  }
+  storeDesk(null)
+  return ensureDesk(snapshot)
+}
+
+/** This desk's stream for an asset. */
+function deskStream(asset: string): string {
+  const stream = desk?.streams[asset]
+  if (!stream) throw new Error(`Your desk has no ${asset} price stream yet. Refresh, or press Start over.`)
+  return stream
+}
+
 async function submit(actAs: string, command: unknown, prefix: string, snapshot = captureSession()): Promise<TxResult> {
   return submitAs([actAs], command, prefix, snapshot)
 }
@@ -379,15 +489,6 @@ function create(templateId: string, createArguments: Record<string, unknown>) {
   return { CreateCommand: { templateId, createArguments } }
 }
 
-function createAndExercise(
-  templateId: string,
-  createArguments: Record<string, unknown>,
-  choice: string,
-  choiceArgument: Record<string, unknown> = {},
-) {
-  return { CreateAndExerciseCommand: { templateId, createArguments, choice, choiceArgument } }
-}
-
 function exercise(templateId: string, contractId: string, choice: string, choiceArgument: Record<string, unknown> = {}) {
   return { ExerciseCommand: { templateId, contractId, choice, choiceArgument } }
 }
@@ -409,21 +510,51 @@ export function parseHoldings(contracts: Contract[]): Holding[] {
   return out
 }
 
+// Every desk spends from the same shared demo wallets, so two visitors can
+// pick the same holding at once. The ledger then definitely rejects one of the
+// transactions (nothing was applied), which is safe to retry on a fresh read.
+const CONTENTION_CODES = new Set([
+  'LOCAL_VERDICT_LOCKED_CONTRACTS',
+  'LOCAL_VERDICT_INACTIVE_CONTRACTS',
+  'CONTRACT_NOT_FOUND',
+  'CONTRACT_NOT_ACTIVE',
+  'INCONSISTENT_CONTRACTS',
+])
+const CONTENTION_ATTEMPTS = 4
+
+async function retryContention<T>(fn: () => Promise<T>, snapshot: AuthSnapshot): Promise<T> {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await fn()
+    } catch (error) {
+      const code = error instanceof LedgerHttpError ? error.body?.code ?? '' : ''
+      if (!CONTENTION_CODES.has(code) || attempt >= CONTENTION_ATTEMPTS) throw error
+      await new Promise((resolve) => setTimeout(resolve, 200 + Math.random() * 600))
+      assertSession(snapshot)
+    }
+  }
+}
+
+/** Ids of the holdings a split created, so its output is told apart from
+ * another visitor's identical split. Empty when the events were lost. */
+const createdIds = (result: SubmitResult) => new Set(result.created.map((c) => c.contractId))
+
 async function findCash(party: string, minAmount: number, snapshot = captureSession()): Promise<string> {
   const { contracts } = await listActive(party, snapshot)
   const h = parseHoldings(contracts)
     .filter((x) => x.kind === 'cash' && x.amount >= minAmount)
     .sort((a, b) => a.amount - b.amount)[0]
-  if (!h) throw new Error(`No cash holding ≥ ${minAmount} available — ask the demo operator to reset holdings.`)
+  if (!h) throw new Error(`No single cash holding of at least ${minAmount} is free in the shared demo wallet: every visitor's desk draws on the same demo parties. Try a smaller amount, press Start over to release your own desk, or ask the demo operator to reset holdings.`)
   if (h.amount > minAmount) {
-    await submit(
-      party,
+    const split = await submitAs(
+      [party],
       exercise(template('CashHolding'), h.contractId, 'Split', { splitAmount: String(minAmount) }),
       'split-cash',
       snapshot,
     )
+    const mine = createdIds(split)
     const exact = parseHoldings((await listActive(party, snapshot)).contracts).find(
-      (candidate) => candidate.kind === 'cash' && candidate.amount === minAmount,
+      (candidate) => candidate.kind === 'cash' && candidate.amount === minAmount && (mine.size === 0 || mine.has(candidate.contractId)),
     )
     if (!exact) throw new Error(`Cash split committed, but no ${minAmount} unit holding was returned.`)
     return exact.contractId
@@ -442,20 +573,21 @@ async function findCollateral(party: string, asset: string, quantity?: number, s
     : collateral.find((x) => x.amount === quantity) ?? collateral.find((x) => x.amount > quantity)
   if (!h) {
     const requested = quantity === undefined ? '' : ` of exactly ${quantity} units`
-    throw new Error(`No ${asset} collateral holding${requested} available — ask the demo operator to reset holdings.`)
+    throw new Error(`No ${asset} collateral holding${requested} is free in the shared demo wallet: every visitor's desk draws on the same demo parties. Press Start over to release your own desk, or ask the demo operator to reset holdings.`)
   }
   if (quantity !== undefined && h.amount !== quantity) {
-    const split = await submit(
-      party,
+    const split = await submitAs(
+      [party],
       exercise(template('CollateralHolding'), h.contractId, 'SplitCollateral', { splitQuantity: String(quantity) }),
       'split-collateral',
       snapshot,
     )
     // Splitting is a separate transaction. Re-read the party's view and use
-    // the exact output, which keeps subsequent choices deterministic.
-    void split
+    // this split's own output, which keeps subsequent choices deterministic.
+    const mine = createdIds(split)
     const refreshed = parseHoldings((await listActive(party, snapshot)).contracts).find(
-      (candidate) => candidate.kind === 'collateral' && candidate.asset === asset && candidate.amount === quantity,
+      (candidate) => candidate.kind === 'collateral' && candidate.asset === asset && candidate.amount === quantity
+        && (mine.size === 0 || mine.has(candidate.contractId)),
     )
     if (!refreshed) throw new Error(`Collateral split committed, but no ${quantity} unit holding was returned.`)
     return refreshed.contractId
@@ -463,13 +595,15 @@ async function findCollateral(party: string, asset: string, quantity?: number, s
   return h.contractId
 }
 
-/** Return the one active mark for the configured deal. A stream publishes by
- * replacement, so accepting multiple matching marks would hide a broken
- * stream or stale parallel branch from the user. */
+/** Return the one active mark on this desk's stream for the asset. A stream
+ * publishes by replacement, so accepting multiple matching marks would hide a
+ * broken stream or stale parallel branch from the user. */
 async function findCurrentValuation(party: string, asset: string, snapshot = captureSession()): Promise<Contract> {
+  const streamId = deskStream(asset)
   const { contracts } = await listActive(party, snapshot)
   const marks = contracts.filter((contract) =>
     contract.template === 'CollateralValuation'
+      && contract.args.streamId === streamId
       && contract.args.valuationAgent === cfg.parties.valuer
       && contract.args.lender === cfg.parties.lender
       && contract.args.borrower === cfg.parties.borrower
@@ -478,7 +612,7 @@ async function findCurrentValuation(party: string, asset: string, snapshot = cap
       && typeof contract.args.streamId === 'string'
   )
   if (marks.length !== 1) {
-    throw new Error(`Expected exactly one active ${asset} valuation mark for the configured stream; found ${marks.length}. Publish or reset the demo first.`)
+    throw new Error(`Expected exactly one active ${asset} valuation mark on your desk's stream; found ${marks.length}. Refresh, or press Start over.`)
   }
   return marks[0]
 }
@@ -505,28 +639,30 @@ function toDecimal(value: number): number {
 
 /** Lender funds + creates the offer from a cash holding (MakeOffer). */
 export async function createOffer(draft: Draft, snapshot = captureSession()): Promise<TxResult> {
-  if (draft.collateralAsset === COIN_ASSET) return createCoinOffer(draft, snapshot)
-  const valuation = await findCurrentValuation(cfg.parties.lender, COLLATERAL_ASSET, snapshot)
-  const cashCid = await findCash(cfg.parties.lender, draft.principal, snapshot)
-  return submit(
-    cfg.parties.lender,
-    exercise(template('CashHolding'), cashCid, 'MakeOffer', {
-      borrower: cfg.parties.borrower,
-      regulator: cfg.parties.regulator,
-      valuationAgent: cfg.parties.valuer,
-      valuationCid: valuation.contractId,
-      principal: String(draft.principal),
-      interest: String(draft.interest),
-      collateralAsset: COLLATERAL_ASSET,
-      collateralQuantity: String(draft.collateral),
-      maturity: ledgerMaturity(draft.maturity),
-      liquidationThresholdLtv: String(draft.thresholdLtv),
-      marginCallWindowSeconds: String(draft.marginCallWindowSeconds),
-      expiresAt: offerExpiry(draft.maturity),
-    }),
-    'offer',
-    snapshot,
-  )
+  if (draft.collateralAsset === COIN_ASSET) return retryContention(() => createCoinOffer(draft, snapshot), snapshot)
+  return retryContention(async () => {
+    const valuation = await findCurrentValuation(cfg.parties.lender, COLLATERAL_ASSET, snapshot)
+    const cashCid = await findCash(cfg.parties.lender, draft.principal, snapshot)
+    return submit(
+      cfg.parties.lender,
+      exercise(template('CashHolding'), cashCid, 'MakeOffer', {
+        borrower: cfg.parties.borrower,
+        regulator: cfg.parties.regulator,
+        valuationAgent: cfg.parties.valuer,
+        valuationCid: valuation.contractId,
+        principal: String(draft.principal),
+        interest: String(draft.interest),
+        collateralAsset: COLLATERAL_ASSET,
+        collateralQuantity: String(draft.collateral),
+        maturity: ledgerMaturity(draft.maturity),
+        liquidationThresholdLtv: String(draft.thresholdLtv),
+        marginCallWindowSeconds: String(draft.marginCallWindowSeconds),
+        expiresAt: offerExpiry(draft.maturity),
+      }),
+      'offer',
+      snapshot,
+    )
+  }, snapshot)
 }
 
 /** Borrower accepts, locking their collateral holding into the loan. */
@@ -545,6 +681,9 @@ export async function acceptOffer(offerCid: string, snapshot = captureSession())
   if (typeof streamId !== 'string') {
     throw new Error('Offer has no agreed valuation stream; refresh the lender offer before accepting.')
   }
+  if (!Object.values(desk?.streams ?? {}).includes(streamId)) {
+    throw new Error('This offer belongs to another visitor\'s desk; only offers on your own desk can be accepted here.')
+  }
   const marks = contracts.filter((contract) =>
     contract.template === 'CollateralValuation'
       && contract.args.streamId === streamId
@@ -557,14 +696,16 @@ export async function acceptOffer(offerCid: string, snapshot = captureSession())
   if (marks.length !== 1) {
     throw new Error(`Expected exactly one current valuation for the offer's agreed stream; found ${marks.length}. Refresh or publish the agreed stream mark before accepting.`)
   }
-  if (offer.template === 'CoinLoanOffer') return acceptCoinOffer(offer, marks[0].contractId, snapshot)
-  const collateralCid = await findCollateral(cfg.parties.borrower, offer.args.collateralAsset ?? COLLATERAL_ASSET, requestedQuantity, snapshot)
-  return submit(
-    cfg.parties.borrower,
-    exercise(template('LoanOffer'), offerCid, 'Accept', { collateralCid, valuationCid: marks[0].contractId }),
-    'accept',
-    snapshot,
-  )
+  if (offer.template === 'CoinLoanOffer') return retryContention(() => acceptCoinOffer(offer, marks[0].contractId, snapshot), snapshot)
+  return retryContention(async () => {
+    const collateralCid = await findCollateral(cfg.parties.borrower, offer.args.collateralAsset ?? COLLATERAL_ASSET, requestedQuantity, snapshot)
+    return submit(
+      cfg.parties.borrower,
+      exercise(template('LoanOffer'), offerCid, 'Accept', { collateralCid, valuationCid: marks[0].contractId }),
+      'accept',
+      snapshot,
+    )
+  }, snapshot)
 }
 
 const isCoin = (deal: Contract) => deal.template === 'CoinLoanOffer' || deal.template === 'CoinLoan'
@@ -583,29 +724,35 @@ export const rejectOffer = (offer: Contract, snapshot = captureSession()) =>
 /** Borrower repays from a cash holding covering the outstanding balance. */
 export async function repayLoan(loan: Contract, amount: number, snapshot = captureSession()): Promise<TxResult> {
   const repayment = toDecimal(amount)
-  if (isCoin(loan)) return repayCoinLoan(loan, repayment, snapshot)
-  const repaymentCid = await findCash(cfg.parties.borrower, repayment, snapshot)
-  return submit(cfg.parties.borrower, exercise(template('Loan'), loan.contractId, 'Repay', { repaymentCid }), 'repay', snapshot)
+  return retryContention(async () => {
+    if (isCoin(loan)) return repayCoinLoan(loan, repayment, snapshot)
+    const repaymentCid = await findCash(cfg.parties.borrower, repayment, snapshot)
+    return submit(cfg.parties.borrower, exercise(template('Loan'), loan.contractId, 'Repay', { repaymentCid }), 'repay', snapshot)
+  }, snapshot)
 }
 
 /** Borrower pays part of the balance with an exact cash holding. During a
  * margin call the ledger requires a fresh mark proving the payment cures it. */
 export async function partialRepay(loan: Contract, amount: number, valuationCid: string | null, snapshot = captureSession()): Promise<TxResult> {
   if (!Number.isFinite(amount) || amount <= 0) throw new Error('Payment amount must be greater than zero.')
-  const paymentCid = await findCash(cfg.parties.borrower, toDecimal(amount), snapshot)
   const [templateName, choice] = isCoin(loan) ? ['CoinLoan', 'PartialRepayCoin'] as const : ['Loan', 'PartialRepay'] as const
-  return submit(cfg.parties.borrower, exercise(template(templateName), loan.contractId, choice, { paymentCid, valuationCid }), 'partial-repay', snapshot)
+  return retryContention(async () => {
+    const paymentCid = await findCash(cfg.parties.borrower, toDecimal(amount), snapshot)
+    return submit(cfg.parties.borrower, exercise(template(templateName), loan.contractId, choice, { paymentCid, valuationCid }), 'partial-repay', snapshot)
+  }, snapshot)
 }
 
-/** Replace the current mark on the configured stream. This is manually
+/** Replace the current mark on this desk's stream. This is manually
  * attested demo data, not an oracle claim; the UI never creates a parallel
- * valuation contract or chooses an arbitrary latest stream. */
+ * valuation contract or chooses another visitor's stream. */
 export async function publishValuation(unitPrice: number, asset: string, snapshot = captureSession()): Promise<TxResult> {
   if (!Number.isFinite(unitPrice) || unitPrice <= 0) throw new Error('Valuation price must be greater than zero.')
+  const streamId = deskStream(asset)
   const { contracts } = await listActive(cfg.parties.valuer, snapshot)
   const marks = contracts.filter((contract) =>
     contract.template === 'CollateralValuation'
       && contract.contractId
+      && contract.args.streamId === streamId
       && contract.args.valuationAgent === cfg.parties.valuer
       && contract.args.lender === cfg.parties.lender
       && contract.args.borrower === cfg.parties.borrower
@@ -614,7 +761,7 @@ export async function publishValuation(unitPrice: number, asset: string, snapsho
       && typeof contract.args.streamId === 'string'
   )
   if (marks.length !== 1) {
-    throw new Error(`Expected exactly one active ${asset} mark on its configured valuation stream; found ${marks.length}. Reset the demo to restore the stream lineage.`)
+    throw new Error(`Expected exactly one active ${asset} mark on your desk's stream; found ${marks.length}. Refresh, or press Start over.`)
   }
   return submit(
     cfg.parties.valuer,
@@ -631,17 +778,19 @@ export const issueMarginCall = (loan: Contract, valuationCid: string, snapshot =
 
 export async function topUpCollateral(loanCid: string, asset: string, topUpQuantity: number, valuationCid: string, snapshot = captureSession()): Promise<TxResult> {
   if (!Number.isFinite(topUpQuantity) || topUpQuantity <= 0) throw new Error('Top-up quantity must be greater than zero.')
-  const collateralCid = await findCollateral(cfg.parties.borrower, asset, topUpQuantity, snapshot)
-  return submit(
-    cfg.parties.borrower,
-    exercise(template('Loan'), loanCid, 'TopUpCollateral', {
-      collateralCid,
-      topUpQuantity: String(topUpQuantity),
-      valuationCid,
-    }),
-    'top-up',
-    snapshot,
-  )
+  return retryContention(async () => {
+    const collateralCid = await findCollateral(cfg.parties.borrower, asset, topUpQuantity, snapshot)
+    return submit(
+      cfg.parties.borrower,
+      exercise(template('Loan'), loanCid, 'TopUpCollateral', {
+        collateralCid,
+        topUpQuantity: String(topUpQuantity),
+        valuationCid,
+      }),
+      'top-up',
+      snapshot,
+    )
+  }, snapshot)
 }
 
 export const resolveMarginCall = (loan: Contract, valuationCid: string, snapshot = captureSession()): Promise<TxResult> =>
@@ -656,20 +805,22 @@ export const resolveMarginCall = (loan: Contract, valuationCid: string, snapshot
 export async function proposeSubstitution(loan: Contract, asset: string, quantity: number, snapshot = captureSession()): Promise<TxResult> {
   if (!Number.isFinite(quantity) || quantity <= 0) throw new Error('Replacement quantity must be greater than zero.')
   const mark = await findCurrentValuation(cfg.parties.borrower, asset, snapshot)
-  const holdingCid = await findCollateral(cfg.parties.borrower, asset, quantity, snapshot)
-  return submit(
-    cfg.parties.borrower,
-    exercise(template('CollateralHolding'), holdingCid, 'ProposeSubstitution', {
-      lender: loan.args.lender,
-      regulator: loan.args.regulator,
-      valuationAgent: loan.args.valuationAgent,
-      releaseAsset: loan.args.collateralAsset,
-      releaseQuantity: loan.args.collateralQuantity,
-      newValuationStreamId: mark.args.streamId,
-    }),
-    'propose-substitution',
-    snapshot,
-  )
+  return retryContention(async () => {
+    const holdingCid = await findCollateral(cfg.parties.borrower, asset, quantity, snapshot)
+    return submit(
+      cfg.parties.borrower,
+      exercise(template('CollateralHolding'), holdingCid, 'ProposeSubstitution', {
+        lender: loan.args.lender,
+        regulator: loan.args.regulator,
+        valuationAgent: loan.args.valuationAgent,
+        releaseAsset: loan.args.collateralAsset,
+        releaseQuantity: loan.args.collateralQuantity,
+        newValuationStreamId: mark.args.streamId,
+      }),
+      'propose-substitution',
+      snapshot,
+    )
+  }, snapshot)
 }
 
 /** Lender approves: Canton re-checks coverage on a fresh mark of the new asset
@@ -818,7 +969,9 @@ async function acceptCoinOffer(offer: Contract, valuationCid: string, snapshot: 
   if (!a.coinAdmin || !a.lender || !a.settlementRef || !a.collateralQuantity || !a.maturity) throw new Error('Canton Coin offer is incomplete; refresh before accepting.')
   const coins = parseHoldings((await listActive(cfg.parties.borrower, snapshot)).contracts).filter((h) => h.kind === 'coin')
   const available = coins.reduce((sum, h) => sum + h.amount, 0)
-  if (available < Number(a.collateralQuantity)) throw new Error(`The borrower holds ${available.toFixed(2)} CC; ${a.collateralQuantity} CC must be locked.`)
+  if (available < Number(a.collateralQuantity)) {
+    throw new Error(`The shared demo borrower has only ${available.toFixed(2)} Canton Coin unlocked and this offer locks ${a.collateralQuantity} CC. Every visitor's desk uses the same borrower, and other desks' open loans hold the rest. Try the T-Bill track, or press Start over to release your own desk's coin.`)
+  }
   const settlement = coinSettlement(a.lender, a.settlementRef)
   const spec = coinSpec(a.coinAdmin, cfg.parties.borrower, true, 'SenderSide', a.lender, a.collateralQuantity, a.maturity)
   const inputHoldingCids = coins.map((h) => h.contractId)
@@ -898,28 +1051,10 @@ async function writeOffCoinLoan(loan: Contract, snapshot: AuthSnapshot): Promise
 
 /** Seed demo wallets large enough for user-chosen terms: lender 10,000 cash;
  * borrower 10,500 cash, 15,000 + 5,000 T-Bill units and 16,000 MMF units. The
- * default offer (100 / 5 / 150) splits exact holdings out of these. */
+ * default offer (100 / 5 / 150) splits exact holdings out of these. Price
+ * streams come from desks (api/desk.js), the operator's own included. */
 export async function seedDemo(snapshot = captureSession()): Promise<void> {
   requireOperator(snapshot)
-  for (const asset of VALUED_ASSETS) {
-    await submitAs(
-      [cfg.parties.lender, cfg.parties.borrower, cfg.parties.valuer],
-      createAndExercise(
-        template('ValuationStream'),
-        {
-          valuationAgent: cfg.parties.valuer,
-          lender: cfg.parties.lender,
-          borrower: cfg.parties.borrower,
-          regulator: cfg.parties.regulator,
-          collateralAsset: asset,
-        },
-        'PublishInitial',
-        { unitPrice: SEED_PRICE[asset] ?? '1' },
-      ),
-      'seed-valuation',
-      snapshot,
-    )
-  }
   await submitAs([cfg.issuer, cfg.parties.lender], create(template('CashHolding'), { issuer: cfg.issuer, owner: cfg.parties.lender, amount: String(SEED.lenderCash) }), 'seed', snapshot)
   await submitAs([cfg.issuer, cfg.parties.borrower], create(template('CashHolding'), { issuer: cfg.issuer, owner: cfg.parties.borrower, amount: String(SEED.borrowerCash) }), 'seed', snapshot)
   await submitAs([cfg.issuer, cfg.parties.borrower], create(template('CollateralHolding'), { issuer: cfg.issuer, owner: cfg.parties.borrower, asset: COLLATERAL_ASSET, quantity: String(SEED.borrowerCollateral) }), 'seed', snapshot)
@@ -933,7 +1068,8 @@ async function submitReset(actAs: string[], command: unknown, prefix: string, sn
 }
 
 /** Clear the ledger and re-seed canonical holdings so the demo can be re-run.
- * Reset is an explicit cooperative demo cleanup. It archives active loans with
+ * Every desk goes with it; each browser opens a new one on its next sign-in
+ * or refresh. Reset is an explicit cooperative demo cleanup. It archives active loans with
  * issuer, lender, and borrower rather than bypassing the margin-call deadline/Liquidate
  * choice, then burns known holdings and valuation records before seeding. */
 export async function resetDemo(snapshot = captureSession()): Promise<void> {
@@ -966,7 +1102,7 @@ export async function resetDemo(snapshot = captureSession()): Promise<void> {
   }
   // Price and stream records have multiple signatories. Reset is an explicit
   // cooperative demo cleanup, so archive both templates with all authorized
-  // parties before recreating one stream and its initial mark.
+  // parties. New streams come from the desks opened after the reset.
   const { contracts: valuations } = await listActive(cfg.parties.valuer, snapshot)
   const cleanupActors = [cfg.parties.lender, cfg.parties.borrower, cfg.parties.valuer]
   for (const c of valuations) {

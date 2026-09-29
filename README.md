@@ -199,10 +199,15 @@ single ledger user for all parties, so Veil's server alone enforces the role
 boundary; see **[docs/DEVNET.md](./docs/DEVNET.md)** and
 **[docs/VERCEL.md](./docs/VERCEL.md)**.
 
+Concurrent visitors do not disturb each other: each browser gets its own **desk**,
+one set of price streams, so its offers, loans and prices are its own, and
+**Start over** resets only that desk. Desks separate visitors in the app, not on the
+ledger: everyone signs in as the same demo parties and shares their wallets.
+
 A dry-run-by-default [lender keeper](docs/KEEPER.md) can issue margin calls and liquidations on the lender's behalf.
 
 3-minute click path (if the price is older than five minutes, first publish `Healthy · 1.00` as **Valuer**): **Lender** create offer → **Borrower** sees it → **Outsider** sees nothing →
-**Borrower** accepts → **Valuer** publishes 0.62 → **Lender** issues margin call → **Borrower** tops up (30 units suggested) → repays and receives all locked collateral. "Reset demo" clears the demo ledger for another run.
+**Borrower** accepts → **Valuer** publishes 0.62 → **Lender** issues margin call → **Borrower** tops up (30 units suggested) → repays and receives all locked collateral. "Start over" closes your desk for another run; the operator's "Reset demo" clears the whole demo ledger.
 
 ### What the UI proves it is really on Canton
 
