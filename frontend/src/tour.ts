@@ -2,7 +2,10 @@
 // the current party rather than from clicks. A party only sees part of the
 // story (the valuer never sees the loan, the outsider sees nothing), so the
 // progress reached so far is carried in memory and only moves forward, except
-// when the loan disappears (someone reset the demo).
+// when the loan disappears (the desk started over or the demo was reset).
+//
+// The view passed in is already scoped to this browser's desk (desk.ts): its
+// own streams, marks and deals only, so other visitors never move the guide.
 import type { Contract, Role, Valuation } from './types'
 import { isCoinDeal, marginCallOf, statusOf } from './state.ts'
 
@@ -19,7 +22,7 @@ export interface TourStep {
 const TRACK_ASSET: Record<TourTrack, string> = { tbill: 'Tokenized T-Bill', coin: 'Canton Coin' }
 /** Lowest price at which the default offer (100 against 150 T-Bill or 1,000 CC,
  * 90% threshold) can still be originated; a stressed price left behind by an
- * earlier visitor would otherwise block the next one's Create offer. */
+ * earlier run on this desk would otherwise block the next Create offer. */
 const LENDABLE_PRICE: Record<TourTrack, number> = { tbill: 100 / (150 * 0.9), coin: 100 / (1000 * 0.9) }
 
 export function tourSteps(track: TourTrack): TourStep[] {
@@ -134,7 +137,7 @@ function observedLoanStep(view: TourView, track: TourTrack, done: Set<StepId>, k
   if (trackOfDeal(deal) !== track) return undefined
   const status = statusOf(deal)
   // A closed loan only proves progress for a visitor who saw it while it was
-  // live; another visitor's finished loan must not tick this visitor's steps.
+  // live; a finished loan from an earlier run must not tick the new run's steps.
   if (status === 'repaid') return done.has('accept') ? 'repay' : undefined
   if (status === 'offered') return 'offer'
   if (status !== 'active') return undefined
@@ -209,7 +212,7 @@ export function tourHints(step: TourStep | undefined, view: TourView, track: Tou
   if (step?.id === 'price') {
     const marks = view.marks.filter((m) => m.collateralAsset === TRACK_ASSET[track] && isFresh(m, view.now))
     if (marks.length > 0 && marks.every((m) => m.unitPrice <= LENDABLE_PRICE[track])) {
-      hints.push('The current price is stressed (an earlier visitor dropped it). Publish a healthy price first.')
+      hints.push('The current price is stressed (left from an earlier run). Publish a healthy price first.')
     }
   }
   if (step && step.id !== 'price' && step.id !== 'privacy' && step.id !== 'stress' && view.role !== 'outsider') {

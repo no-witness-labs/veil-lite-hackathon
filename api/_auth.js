@@ -21,6 +21,7 @@ const MAX_BODY_BYTES = 1_048_576
 const DEFAULT_AUDIENCE = 'veil-local'
 const DEFAULT_ISSUER = 'veil-local'
 const DEFAULT_PUBLIC_KEY_FILE = path.resolve(__dirname, '../.local/auth/public.pem')
+const DEFAULT_PRIVATE_KEY_FILE = path.resolve(__dirname, '../.local/auth/private.pem')
 
 class AuthError extends Error {
   constructor(status, code, message = code) {
@@ -45,6 +46,21 @@ function publicKeyFromEnv(env = process.env) {
     return fs.readFileSync(file, 'utf8')
   } catch {
     throw new AuthError(503, 'AUTH_UNAVAILABLE')
+  }
+}
+
+/** The key that signs role and desk tokens: VEIL_AUTH_PRIVATE_KEY on a hosted
+ * deployment, else the local sandbox key that local-auth.mjs generates. Null
+ * when neither exists. Only server code (desk tokens) reads this fallback;
+ * passcode sign-in still requires the explicit environment variable. */
+function privateKeyFromEnv(env = process.env) {
+  const inline = envValue('VEIL_AUTH_PRIVATE_KEY', env)
+  if (inline) return inline.replace(/\\n/g, '\n')
+  const file = envValue('VEIL_AUTH_PRIVATE_KEY_FILE', env) || DEFAULT_PRIVATE_KEY_FILE
+  try {
+    return fs.readFileSync(file, 'utf8')
+  } catch {
+    return null
   }
 }
 
@@ -400,6 +416,7 @@ module.exports = {
   authorizeLedgerRequest,
   knownParties,
   packageRef,
+  privateKeyFromEnv,
   requireAuth,
   respondError,
   routePolicy,

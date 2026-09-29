@@ -13,7 +13,9 @@ import {
   rejectSubstitution,
   COLLATERAL_ASSET,
   createOffer,
+  ensureDesk,
   getConfigIssue,
+  getDesk,
   getIssuer,
   getParties,
   issueMarginCall,
@@ -27,6 +29,7 @@ import {
   repayLoan,
   resolveMarginCall,
   resetDemo,
+  startOverDesk,
   topUpCollateral,
   withdrawOffer,
   rejectOffer,
@@ -70,6 +73,8 @@ import { ConnectionGate, OutsiderEmpty, Waiting } from './components/EmptyStates
 import { SignIn } from './components/SignIn'
 import { LoanBook } from './components/LoanBook'
 import { selectDeal } from './loanBook'
+import { DeskBar } from './components/DeskBar'
+import { deskNeedsRepair, deskStreamIds, scopeToDesk, type Desk } from './desk'
 
 /** Sections are linkable (`?section=disclosure`), so a walkthrough can jump
  * straight to the disclosure matrix or the raw ledger response. */
@@ -126,6 +131,12 @@ export default function App() {
   const [configOk, setConfigOk] = useState<boolean | null>(null)
   const [configIssue, setConfigIssue] = useState<string | null>(null)
   const [demoLogin, setDemoLogin] = useState<DemoLoginInfo>({ enabled: false, open: false, operator: false })
+  // This browser's desk: its own price streams. Kept across sign-outs and
+  // party switches; only the visitor's Start over or a lost desk replaces it.
+  const [desk, setDesk] = useState<Desk | null>(getDesk)
+  const [deskPreparing, setDeskPreparing] = useState(false)
+  const [deskError, setDeskError] = useState<string | null>(null)
+  const repairedFor = useRef<string | null>(null)
   const { theme, toggle: toggleTheme } = useTheme()
   const refreshGeneration = useRef(0)
   const authGeneration = useRef(0)
@@ -191,6 +202,29 @@ export default function App() {
     }
   }, [signOut])
 
+  /** Load, repair or open this browser's desk for the current session. */
+  const prepareDesk = useCallback(async (expectedAuthGeneration = authGeneration.current, snapshot?: AuthSnapshot, reread = false) => {
+    setDeskPreparing(true)
+    try {
+      const previous = getDesk()?.token
+      const next = await ensureDesk(snapshot ?? captureSession())
+      if (expectedAuthGeneration !== authGeneration.current) return
+      setDesk(next)
+      setDeskError(null)
+      // The ledger view may predate the desk's new or repaired streams.
+      if (reread || next.token !== previous) void refresh(activeRole.current, expectedAuthGeneration)
+    } catch (e) {
+      if (expectedAuthGeneration !== authGeneration.current) return
+      if (errorStatus(e) === 401) {
+        signOut('Your role session expired or was rejected. Sign in again.')
+        return
+      }
+      setDeskError(errorMessage(e))
+    } finally {
+      if (expectedAuthGeneration === authGeneration.current) setDeskPreparing(false)
+    }
+  }, [signOut, refresh])
+
   const submitSignIn = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const candidate = token
@@ -241,6 +275,21 @@ export default function App() {
     if (session && configOk === true) void refresh(role)
   }, [role, configOk, session, refresh])
 
+  // Every sign-in (each party switch in the open demo is one) confirms the
+  // desk with the server, which repairs or replaces it if its streams are gone.
+  useEffect(() => {
+    if (session && configOk === true) void prepareDesk()
+  }, [session, configOk, prepareDesk])
+
+  // A party that sees prices shows none for a desk stream: the operator reset
+  // or the idle janitor closed it. Repair once per desk token.
+  useEffect(() => {
+    if (!session || configOk !== true || !desk || loading || deskPreparing || offset === 0 || role === 'outsider') return
+    if (repairedFor.current === desk.token || !deskNeedsRepair(contracts, desk)) return
+    repairedFor.current = desk.token
+    void prepareDesk(authGeneration.current, undefined, true)
+  }, [session, configOk, desk, loading, deskPreparing, offset, role, contracts, prepareDesk])
+
   // Canton Coin collateral is offered only where the token registry is reachable.
   useEffect(() => {
     if (!session || configOk !== true) return
@@ -288,14 +337,18 @@ export default function App() {
     }
   }
 
-  const deal = selectDeal(contracts, getIssuer(), selectedDealId)
-  const latestDeal = currentDeal(contracts, getIssuer())
+  // Everything the visitor acts on comes from its own desk; holdings are
+  // shared wallets and pass through. The loan book and raw ledger show all.
+  const deskIds = deskStreamIds(desk)
+  const deskView = scopeToDesk(contracts, deskIds)
+  const deal = selectDeal(deskView, getIssuer(), selectedDealId)
+  const latestDeal = currentDeal(deskView, getIssuer())
   const status = statusOf(deal)
   const holdings = parseHoldings(contracts)
-  const valuation = valuationFor(contracts, deal)
-  const dealValuations = valuationCandidates(contracts, deal)
+  const valuation = valuationFor(deskView, deal)
+  const dealValuations = valuationCandidates(deskView, deal)
   const parties = getParties()
-  const availableValuations = valuationCandidates(contracts).filter((mark) =>
+  const availableValuations = valuationCandidates(deskView).filter((mark) =>
     mark.valuationAgent === parties.valuer
       && mark.lender === parties.lender
       && mark.borrower === parties.borrower
@@ -323,13 +376,13 @@ export default function App() {
   const balance = balanceOf(Number(deal?.args.principal), Number(deal?.args.interest), repaidOf(deal))
   const markedLtv = deal && valuation ? balance.outstandingPrincipal / (Number(deal.args.collateralQuantity) * valuation.unitPrice) * 100 : 0
   const showShockBanner = !isOutsider && !isValuer && status === 'active' && Number.isFinite(liquidationThreshold) && Boolean(valuation && markedLtv >= liquidationThreshold)
-  const substitution = substitutionRequestFor(contracts, deal)
+  const substitution = substitutionRequestFor(deskView, deal)
   const replacementHolding = holdings
     .filter((holding) => holding.kind === 'collateral' && holding.asset !== dealAsset
       && (COLLATERAL_ASSETS as readonly string[]).includes(holding.asset ?? ''))
     .sort((a, b) => b.amount - a.amount)[0]
   const replacementMarks = substitution
-    ? valuationCandidates(contracts).filter((mark) => mark.streamId === substitution.args.newValuationStreamId)
+    ? valuationCandidates(deskView).filter((mark) => mark.streamId === substitution.args.newValuationStreamId)
     : []
   // The largest single reserve holding: a top-up of any size up to this is
   // carved out of it privately before the loan sees it.
@@ -355,6 +408,8 @@ export default function App() {
       if (expectedAuthGeneration !== authGeneration.current || expectedRole !== activeRole.current) return
       setActivity([])
       setDraft({ ...DEFAULT_DRAFT })
+      // Reset archived every desk, this one included: open a new one.
+      await prepareDesk(expectedAuthGeneration, snapshot)
       await refresh(expectedRole, expectedAuthGeneration, snapshot)
     } catch (e) {
       if (expectedAuthGeneration !== authGeneration.current || expectedRole !== activeRole.current) return
@@ -368,7 +423,44 @@ export default function App() {
     }
   }
 
-  const tourView = { role, deal, marks: valuationCandidates(contracts), now: tourNow }
+  /** Close this desk's contracts and open a fresh desk; the guide restarts. */
+  const onStartOver = async () => {
+    if (!session || configOk !== true || busy) return
+    const expectedAuthGeneration = authGeneration.current
+    const expectedRole = activeRole.current
+    let snapshot: AuthSnapshot
+    try {
+      snapshot = captureSession()
+    } catch (e) {
+      if (errorStatus(e) === 401) signOut('Your role session expired or was rejected. Sign in again.')
+      else setError(errorMessage(e))
+      return
+    }
+    setBusy(true)
+    setError(null)
+    try {
+      const next = await startOverDesk(snapshot)
+      if (expectedAuthGeneration !== authGeneration.current) return
+      setDesk(next)
+      setDeskError(null)
+      setSelectedDealId(null)
+      setActivity([])
+      setDraft({ ...DEFAULT_DRAFT })
+      setTourProgress({ done: new Set() })
+      await refresh(expectedRole, expectedAuthGeneration, snapshot)
+    } catch (e) {
+      if (expectedAuthGeneration !== authGeneration.current || expectedRole !== activeRole.current) return
+      if (errorStatus(e) === 401) {
+        signOut('Your role session expired or was rejected. Sign in again.')
+        return
+      }
+      setError(errorMessage(e))
+    } finally {
+      if (expectedAuthGeneration === authGeneration.current && expectedRole === activeRole.current) setBusy(false)
+    }
+  }
+
+  const tourView = { role, deal, marks: valuationCandidates(deskView), now: tourNow }
   const tourStepList = tourSteps(tourTrack)
   const tourCurrent = tourStepList.find((step) => !tourDone.has(step.id))
 
@@ -521,6 +613,14 @@ export default function App() {
           >
             <div style={{ display: 'grid', gap: 'var(--space-6)', minWidth: 0 }}>
               <div className="v-guide-inline">{guide}</div>
+              <DeskBar
+                desk={desk}
+                preparing={deskPreparing}
+                error={deskError}
+                busy={busy || authBusy}
+                onStartOver={() => void onStartOver()}
+                onRetry={() => void prepareDesk()}
+              />
               {commandStatus && (
                 <Banner tone="warn" title={commandStatus}>
                   The response to the last command was lost. It is not being resubmitted; its result will show here.
@@ -549,7 +649,7 @@ export default function App() {
                   {isOutsider && <OutsiderEmpty />}
                   {isValuer && (
                     <ValuationPanel
-                      contracts={contracts}
+                      contracts={deskView}
                       assets={VALUED_ASSETS}
                       onPublish={(price, asset) => act(`Publish ${asset} valuation ${price.toFixed(2)}`, PARTY_NAMES.valuer, (snapshot) => publishValuation(price, asset, snapshot))}
                       busy={busy}
@@ -668,6 +768,7 @@ export default function App() {
                   issuer={getIssuer()}
                   offset={offset}
                   selectedId={deal?.contractId ?? null}
+                  deskStreams={deskIds}
                   onSelect={(contractId) => {
                     setSelectedDealId(contractId)
                     selectSection('position')

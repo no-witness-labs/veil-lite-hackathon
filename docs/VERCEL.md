@@ -59,6 +59,39 @@ needs `VEIL_OPERATOR_PASSCODE`. Failed attempts are delayed but not rate limited
 across function instances, so use long random passcodes. Never use `VITE_`
 variables for secrets.
 
+## Visitor desks
+
+Every visitor of the open demo signs in as the same shared parties, so each browser
+gets a **desk** from `POST /api/desk` (routed like the other `api/*.js` functions; no
+rewrite). A desk is one `ValuationStream` per valued asset (T-Bill, MMF, Canton
+Coin), opened with the node token as lender, borrower and valuer. Every offer, loan,
+closed record and mark names its stream, so the browser shows and acts on only its
+desk's contracts; the loan book still lists everything the party can see, with the
+visitor's own rows marked **Your desk** and sorted first. Desks separate visitors in
+the app, not on the ledger: the wallets (cash, T-Bill, MMF, Canton Coin) are shared.
+
+- `create` needs a Veil session (any role). It returns a desk token signed with
+  `VEIL_AUTH_PRIVATE_KEY` (24 h, `typ`/`aud` `veil-desk`, never accepted as a role
+  token) that the browser keeps in `localStorage`. With a still-valid token the
+  server reuses the desk, reopening only streams that are gone.
+- `close` (the **Start over** button) withdraws the desk's offers, releases its
+  Canton Coin loans with `WriteOffCoin`, cancels substitution requests, archives
+  its loans, dismisses its closed records and archives its marks. Holdings are
+  never burned or minted; an archived T-Bill loan's collateral is not returned.
+- `create` opens all missing streams in one transaction (one command per asset)
+  and reads the new marks from that transaction.
+- Janitor: after answering, `create` closes up to 6 streams whose current mark is
+  older than 30 minutes (never the caller's), kept alive by Vercel's `waitUntil`
+  (read from the request context, no extra dependency; detached under Vite). Their
+  closes are one batch transaction plus one `WriteOffCoin` per Canton Coin loan.
+  Every stream is a desk stream (reset no longer seeds streams; the operator's
+  browser has a desk too), so the rule is uniform. A desk whose stream was
+  janitored is repaired on its next sign-in.
+- Cap: with 25 or more other desks open, `create` runs the janitor inline once,
+  re-counts, and answers `429 DESK_LIMIT` if the count is still at the cap.
+- **Reset demo** still clears everything; every browser opens a new desk on its
+  next sign-in or refresh.
+
 ## Smoke checks after deploy
 
 ```bash

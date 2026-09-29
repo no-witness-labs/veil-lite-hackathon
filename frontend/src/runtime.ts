@@ -1,6 +1,7 @@
 import * as ledger from './ledger'
 import { requireOperator, type AuthSnapshot } from './auth'
 import type { ActiveState, Contract, Draft, Holding, Role, TxResult } from './types'
+import type { Desk } from './desk'
 
 export async function loadConfig(): Promise<boolean> {
   return ledger.loadConfig()
@@ -19,6 +20,11 @@ export const VALUED_ASSETS = ledger.VALUED_ASSETS
 export const onCommandStatus = (listener: (status: string | null) => void): (() => void) => ledger.onCommandStatus(listener)
 
 export const coinAdmin = (snapshot?: AuthSnapshot): Promise<string | null> => ledger.coinAdmin(snapshot)
+
+/** This browser's desk: its own price streams, so its deals are its own. */
+export const getDesk = (): Desk | null => ledger.getDesk()
+export const ensureDesk = (snapshot?: AuthSnapshot): Promise<Desk> => ledger.ensureDesk(snapshot)
+export const startOverDesk = (snapshot?: AuthSnapshot): Promise<Desk> => ledger.startOverDesk(snapshot)
 
 export const listActive = (role: Role, snapshot?: AuthSnapshot): Promise<ActiveState> =>
   ledger.listActive(ledger.getParties()[role], snapshot)

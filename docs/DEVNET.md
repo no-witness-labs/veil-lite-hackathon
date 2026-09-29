@@ -101,10 +101,17 @@ See [VERCEL.md](VERCEL.md) for the environment variables and smoke checks.
 
 ## Resetting
 
+Visitors normally never need a reset: each browser works on its own desk (its own
+price streams; see [VERCEL.md](VERCEL.md#visitor-desks)), **Start over** closes just
+that desk, and desks idle for 30 minutes are closed by the next visitor's sign-in.
+The shared wallets still drain over time (a closed desk's active T-Bill loan keeps
+its collateral and principal where they are), so reset periodically.
+
 Sign in as **Demo operator** (operator passcode) and use **Reset demo**. Reset is a
 series of ledger transactions submitted from the browser: keep the tab open until
 the Reset button is enabled again, or the demo is left half-reset (rerun reset to
-recover). `bootstrap-devnet.py` can also re-seed missing holdings.
+recover). Reset archives every desk; each browser opens a new one on its next
+sign-in. `bootstrap-devnet.py` can also re-seed missing holdings.
 
 ## Troubleshooting
 

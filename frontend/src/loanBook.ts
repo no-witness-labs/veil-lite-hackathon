@@ -15,6 +15,7 @@ import {
   repaidOf,
   valuationCandidates,
 } from './state.ts'
+import { onDesk } from './desk.ts'
 
 export type BookStatus = 'offered' | 'active' | 'margin-call' | 'repaid' | 'liquidated' | 'written-off' | 'closed'
 
@@ -58,6 +59,8 @@ export interface BookRow {
   allocationCid: string
   lender: string
   borrower: string
+  /** On this browser's desk (its own valuation streams). */
+  mine: boolean
 }
 
 export interface BookSummary {
@@ -95,8 +98,10 @@ export function bookStatusOf(deal: Contract): BookStatus {
 
 export const isOpenLoan = (row: BookRow) => row.status === 'active' || row.status === 'margin-call'
 
-/** One row per issuer-matching deal contract visible to the querying party. */
-export function buildBookRows(contracts: Contract[], issuer: string | undefined, now: number): BookRow[] {
+/** One row per issuer-matching deal contract visible to the querying party.
+ * Every visitor's deals are listed; rows on `deskStreams` are marked and
+ * sorted first. */
+export function buildBookRows(contracts: Contract[], issuer: string | undefined, now: number, deskStreams: ReadonlySet<string> = new Set()): BookRow[] {
   return contracts
     .filter((c) => DEAL_TEMPLATES.has(c.template) && (issuer === undefined || c.args.issuer === issuer))
     .map((deal) => {
@@ -158,9 +163,10 @@ export function buildBookRows(contracts: Contract[], issuer: string | undefined,
         allocationCid: isCoinDeal(deal) ? String(deal.args.allocationCid ?? '') : '',
         lender: deal.args.lender ?? '',
         borrower: deal.args.borrower ?? '',
+        mine: onDesk(deal, deskStreams),
       }
     })
-    .sort(compareRisk)
+    .sort((a, b) => Number(b.mine) - Number(a.mine) || compareRisk(a, b))
 }
 
 /** Risk tiers: open loans in breach, then open margin calls, other open
@@ -244,7 +250,7 @@ export const EXPORT_COLUMNS: (keyof BookRow)[] = [
   'contractId', 'template', 'status', 'reason', 'asset', 'collateralQuantity',
   'principal', 'interest', 'repaid', 'outstandingPrincipal', 'outstandingDue',
   'ltv', 'ltvState', 'markPrice', 'markObservedAt', 'threshold', 'breached',
-  'marginCallDeadline', 'maturity', 'allocationCid', 'lender', 'borrower', 'offset',
+  'marginCallDeadline', 'maturity', 'allocationCid', 'lender', 'borrower', 'mine', 'offset',
 ]
 
 export function exportNote(meta: BookExportMeta): string {
