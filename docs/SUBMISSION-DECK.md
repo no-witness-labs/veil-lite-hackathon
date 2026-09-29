@@ -171,7 +171,7 @@ section.dark code { background: #22344a; }
 <h3>Guided demo</h3>
 <p class="small">Walks a first visit through the T-Bill or Canton Coin loan. Progress is read from each party's ledger view; one click switches party.</p>
 <div class="rule"><h3>Loan book</h3><p class="small">Every visible loan ranked by risk, with a CSV/JSON export of that party's view for the regulator.</p></div>
-<div class="rule"><h3>Keeper</h3><p class="small">Off-ledger lender automation: margin calls and liquidations on time, including Canton Coin settlement. Dry-run by default.</p></div>
+<div class="rule"><h3>Keeper</h3><p class="small">Timely margin calls and liquidations, including Canton Coin. Journals every command, recovers lost responses from the ledger, optional maker-checker.</p></div>
 </div>
 </div>
 
@@ -204,9 +204,9 @@ section.dark code { background: #22344a; }
 <table>
 <tr><th>Layer</th><th>What it is</th></tr>
 <tr><td>Contracts</td><td>Daml package <code>veil-lite</code> 0.9.0 on hackcanton-01; Token Standard V2 interfaces (exact vetted packages)</td></tr>
-<tr><td>Server</td><td>Vercel functions: per-party sessions, per-party read/act checks, read-only token-registry proxy</td></tr>
+<tr><td>Server</td><td>Vercel functions: per-party sessions, per-party read/act checks, read-only token-registry proxy; request IDs, sanitised ledger errors, timeouts, and lost-submission checks against the ledger</td></tr>
 <tr><td>App &amp; ops</td><td>React UI (role views, guided demo, loan book, disclosure matrix, raw ledger) · Node keeper</td></tr>
-<tr><td>Evidence</td><td>58 Daml scripts · 13 server · 27 keeper · 18 UI-logic tests · 49 live auth · 12 browser checks · DevNet runs with real CC</td></tr>
+<tr><td>Evidence</td><td>58 Daml scripts · 90 server, keeper and UI-logic tests · DevNet runs with real CC, including a maker-checker liquidation and a recovered lost submission</td></tr>
 </table>
 
 <p class="source">Trust boundary, stated plainly: on the shared node one ledger user hosts all demo parties, so our server enforces role separation there; valuations are manually attested; T-Bill/MMF and USDC are simulated.</p>
@@ -231,5 +231,5 @@ section.dark code { background: #22344a; }
 ## From demo to pilot
 
 <div class="decision"><div class="index">01</div><h3>Validate the user</h3><p>Walk 3 lending / treasury operators through one real deal. No customer evidence yet.</p></div>
-<div class="decision"><div class="index">02</div><h3>Real signing</h3><p>Each counterparty on its own participant or wallet (CIP-103 dApp API) instead of a shared ledger user.</p></div>
+<div class="decision"><div class="index">02</div><h3>Real signing</h3><p>Each counterparty on its own participant or wallet (CIP-103 dApp API), or a Veil wallet whose key stays in the browser (external party; needs the node operator to allow allocation), instead of a shared ledger user.</p></div>
 <div class="decision"><div class="index">03</div><h3>Real assets and prices</h3><p>Stablecoin principal and tokenised T-Bills via the token standard; an independent price source instead of a manual valuer.</p></div>
