@@ -203,13 +203,13 @@ section.dark code { background: #22344a; }
 
 <table>
 <tr><th>Layer</th><th>What it is</th></tr>
-<tr><td>Contracts</td><td>Daml package <code>veil-lite</code> 0.9.0 on hackcanton-01; Token Standard V2 interfaces (exact vetted packages)</td></tr>
+<tr><td>Contracts</td><td>Daml package <code>veil-lite</code> 0.9.0 on hackcanton-01; Token Standard V2 interfaces (exact vetted packages); optional <code>veil-price-committee</code> for a 2-of-3 decentralized valuer (BitSafe DecMan, LocalNet)</td></tr>
 <tr><td>Server</td><td>Vercel functions: per-party sessions, per-party read/act checks, read-only token-registry proxy; request IDs, sanitised ledger errors, timeouts, and lost-submission checks against the ledger</td></tr>
 <tr><td>App &amp; ops</td><td>React UI (role views, guided demo, loan book, disclosure matrix, raw ledger) · Node keeper</td></tr>
-<tr><td>Evidence</td><td>58 Daml scripts · 90 server, keeper and UI-logic tests · DevNet runs with real CC, including a maker-checker liquidation and a recovered lost submission</td></tr>
+<tr><td>Evidence</td><td>62 Daml scripts · 107 server, keeper and UI-logic tests · DevNet runs with real CC, including a maker-checker liquidation and a recovered lost submission</td></tr>
 </table>
 
-<p class="source">Trust boundary, stated plainly: on the shared node one ledger user hosts all demo parties, so our server enforces role separation there; valuations are manually attested; T-Bill/MMF and USDC are simulated.</p>
+<p class="source">Trust boundary, stated plainly: on the shared node one ledger user hosts all demo parties, so our server enforces role separation there; on DevNet valuations are manually attested (the decentralized price committee runs on LocalNet); T-Bill/MMF and USDC are simulated.</p>
 
 ---
 
@@ -232,4 +232,4 @@ section.dark code { background: #22344a; }
 
 <div class="decision"><div class="index">01</div><h3>Validate the user</h3><p>Walk 3 lending / treasury operators through one real deal. No customer evidence yet.</p></div>
 <div class="decision"><div class="index">02</div><h3>Real signing</h3><p>Each counterparty on its own participant or wallet (CIP-103 dApp API), or a Veil wallet whose key stays in the browser (external party; needs the node operator to allow allocation), instead of a shared ledger user.</p></div>
-<div class="decision"><div class="index">03</div><h3>Real assets and prices</h3><p>Stablecoin principal and tokenised T-Bills via the token standard; an independent price source instead of a manual valuer.</p></div>
+<div class="decision"><div class="index">03</div><h3>Real assets and prices</h3><p>Stablecoin principal and tokenised T-Bills via the token standard; the decentralized price committee (built, on LocalNet) run by independent price providers on a live network.</p></div>

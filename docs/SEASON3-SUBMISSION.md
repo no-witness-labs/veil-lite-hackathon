@@ -29,6 +29,8 @@ acceptance, repayment and lender-priced liquidation. Built during Season 3:
 - **Operations:** an off-ledger lender keeper (`scripts/keeper.mjs`) and a Loan book tab with CSV/JSON export (#63)
 - **Guided demo** that walks a first visit through the T-Bill or Canton Coin loan, and fixes so consecutive visitors can share the demo (#64–#66)
 - **Production hardening:** a keeper command journal that resolves lost responses from the ledger, maker-checker approval for liquidations, and a hardened proxy (request IDs, sanitised errors, timeouts, lost-submission checks in the UI) (#70, #71)
+- **Private desks on the shared demo:** each visitor gets their own price streams, loans and guided-demo progress, with **Start over**; idle desks are cleaned up automatically (#74)
+- **Decentralized price committee (BitSafe DecMan):** a 2-of-3 decentralized party can act as the valuation agent, publishing prices only when two nodes agree; reproducible LocalNet demo in `committee/` (#75)
 
 ## Try it (≈2 minutes)
 
@@ -48,13 +50,14 @@ price, publish a fresh one as Valuer first. The demo ledger is shared by all vis
 
 - On the shared node one ledger user hosts every demo party, so our server enforces
   role separation there (locally Canton enforces it as well).
-- Valuations are manually attested; T-Bill/MMF units and USDC principal are simulated.
+- On DevNet, valuations are manually attested by one valuer party; the decentralized price committee runs on LocalNet only (it needs several participants we control). T-Bill/MMF units and USDC principal are simulated.
+- Visitor desks separate visitors in the app, not on the ledger: all visitors share the same demo parties.
   Canton Coin collateral is real DevNet CC.
 - No customer validation or external audit yet.
 
 ## Evidence
 
-58 Daml scripts and 90 server, keeper and UI-logic tests pass, as did 49 live auth checks
+62 Daml scripts (58 core, 4 price committee) and 107 server, keeper and UI-logic tests pass, as did 49 live auth checks
 and 12 browser checks. On hackcanton-01 with real DevNet CC: Canton Coin repay,
 liquidation (by hand and by the keeper) and reset; T-Bill liquidation returning surplus
 collateral; and both guided-demo tracks completed by following the guide alone, including
