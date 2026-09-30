@@ -1,7 +1,10 @@
 # veil contains deployable templates only; veil-test contains Daml Script tests.
 # committee is the optional price committee for BitSafe's Decentralization Manager.
+# wallet is the optional onboarding for self-custody (external-party) borrowers.
 packages:
   - .
   - ./test
   - ./committee
   - ./committee/test
+  - ./wallet
+  - ./wallet/test

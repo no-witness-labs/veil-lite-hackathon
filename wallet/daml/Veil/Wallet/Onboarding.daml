@@ -1,0 +1,87 @@
+-- | Onboarding for a self-custody borrower. A wallet party is an external
+-- party: its key stays with the user, and every transaction it takes part in
+-- must be signed by that key alone (Canton does not mix local and external
+-- signers in one submission). Veil's loan steps already need only the
+-- borrower, so only the steps that Veil does jointly with the borrower become
+-- an offer by the other side and an accept by the wallet. Veil's own
+-- contracts are unchanged.
+module Veil.Wallet.Onboarding where
+
+import Veil
+
+-- | The issuer offers simulated cash to a wallet; the wallet accepts it.
+template CashGrant
+  with
+    issuer : Party
+    owner : Party
+    amount : Decimal
+  where
+    signatory issuer
+    observer owner
+    ensure amount > 0.0
+
+    choice CashGrant_Accept : ContractId CashHolding
+      controller owner
+      do create CashHolding with issuer; owner; amount
+
+    choice CashGrant_Decline : ()
+      controller owner
+      do pure ()
+
+    choice CashGrant_Revoke : ()
+      controller issuer
+      do pure ()
+
+-- | The issuer offers simulated collateral units to a wallet.
+template CollateralGrant
+  with
+    issuer : Party
+    owner : Party
+    asset : Text
+    quantity : Decimal
+  where
+    signatory issuer
+    observer owner
+    ensure asset /= "" && quantity > 0.0
+
+    choice CollateralGrant_Accept : ContractId CollateralHolding
+      controller owner
+      do create CollateralHolding with issuer; owner; asset; quantity
+
+    choice CollateralGrant_Decline : ()
+      controller owner
+      do pure ()
+
+    choice CollateralGrant_Revoke : ()
+      controller issuer
+      do pure ()
+
+-- | Lender and valuation agent invite the wallet to a price stream. Accepting
+-- creates the stream and its first mark with all three signatures.
+template StreamInvite
+  with
+    valuationAgent : Party
+    lender : Party
+    borrower : Party
+    regulator : Party
+    collateralAsset : Text
+    initialPrice : Decimal
+  where
+    signatory valuationAgent, lender
+    observer borrower, regulator
+    ensure collateralAsset /= "" && initialPrice > 0.0
+
+    choice StreamInvite_Accept : ContractId CollateralValuation
+      controller borrower
+      do
+        streamCid <- create ValuationStream with
+          valuationAgent; lender; borrower; regulator; collateralAsset
+        exercise streamCid PublishInitial with unitPrice = initialPrice
+
+    choice StreamInvite_Decline : ()
+      controller borrower
+      do pure ()
+
+    choice StreamInvite_Withdraw : ()
+      controller lender
+      do pure ()

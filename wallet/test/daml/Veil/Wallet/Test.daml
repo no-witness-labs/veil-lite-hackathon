@@ -1,0 +1,77 @@
+module Veil.Wallet.Test where
+
+import Daml.Script
+import DA.Assert ((===))
+import DA.Date
+import DA.Time (time)
+import Veil
+import Veil.Wallet.Onboarding
+
+tbill : Text
+tbill = "Tokenized T-Bill / MMF"
+
+-- The wallet is an external party: on a real participant every transaction it
+-- joins must be signed by its key alone. So in these tests `wallet` only ever
+-- submits by itself, never together with another party.
+testWalletBorrowerLifecycle : Script ()
+testWalletBorrowerLifecycle = do
+  setTime (time (date 2026 Sep 30) 12 0 0)
+  [issuer, lender, valuer, regulator, wallet] <- mapA allocateParty ["issuer", "lender", "valuer", "regulator", "wallet"]
+
+  -- Onboarding: the issuer grants simulated collateral and cash; the wallet accepts alone.
+  collateralGrant <- submit issuer do createCmd CollateralGrant with issuer; owner = wallet; asset = tbill; quantity = 150.0
+  cashGrant <- submit issuer do createCmd CashGrant with issuer; owner = wallet; amount = 105.0
+  collateral <- submit wallet do exerciseCmd collateralGrant CollateralGrant_Accept
+  cash <- submit wallet do exerciseCmd cashGrant CashGrant_Accept
+
+  -- Lender and valuer invite the wallet to a price stream; the wallet accepts alone.
+  invite <- submit (actAs lender <> actAs valuer) do
+    createCmd StreamInvite with
+      valuationAgent = valuer; lender; borrower = wallet; regulator; collateralAsset = tbill; initialPrice = 1.0
+  mark <- submit wallet do exerciseCmd invite StreamInvite_Accept
+
+  -- The lender funds an offer; the wallet accepts it alone.
+  lenderCash <- submit (actAs issuer <> actAs lender) do createCmd CashHolding with issuer; owner = lender; amount = 100.0
+  offer <- submit lender do
+    exerciseCmd lenderCash MakeOffer with
+      borrower = wallet; regulator; valuationAgent = valuer; valuationCid = mark
+      principal = 100.0; interest = 5.0; collateralAsset = tbill; collateralQuantity = 150.0
+      maturity = time (date 2026 Dec 31) 0 0 0; liquidationThresholdLtv = 90.0
+      marginCallWindowSeconds = 60; expiresAt = None
+  loan <- submit wallet do exerciseCmd offer Accept with collateralCid = collateral; valuationCid = mark
+
+  -- A price drop and a margin call; the wallet cures it by paying down 30 alone.
+  stressed <- submit valuer do exerciseCmd mark Publish with unitPrice = 0.62
+  called <- submit lender do exerciseCmd loan IssueMarginCall with valuationCid = stressed
+  [(principalCid, _)] <- query @CashHolding wallet >>= pure . filter (\(_, c) -> c.amount == 100.0)
+  (payment, rest) <- submit wallet do exerciseCmd principalCid Split with splitAmount = 30.0
+  cured <- submit wallet do exerciseCmd called PartialRepay with paymentCid = payment; valuationCid = Some stressed
+  Some cured' <- queryContractId wallet cured
+  cured'.marginCall === None
+
+  -- 75 is still owed. The wallet pays 70 from the rest of the principal and
+  -- repays the last 5 from its own cash, each alone; the collateral comes back.
+  afterSeventy <- submit wallet do exerciseCmd cured PartialRepay with paymentCid = rest; valuationCid = Some stressed
+  [(ownCash, _)] <- query @CashHolding wallet >>= pure . filter (\(_, c) -> c.amount == 105.0)
+  (five, _) <- submit wallet do exerciseCmd ownCash Split with splitAmount = 5.0
+  closed <- submit wallet do exerciseCmd afterSeventy Repay with repaymentCid = five
+  Some record <- queryContractId wallet closed
+  record.collateralReleased === True
+  returned <- query @CollateralHolding wallet
+  map (\(_, h) -> h.quantity) returned === [150.0]
+
+-- A grant or invite only becomes a holding or stream when the wallet accepts,
+-- and the issuer or lender cannot accept on its behalf.
+testOnlyTheWalletCanAccept : Script ()
+testOnlyTheWalletCanAccept = do
+  [issuer, lender, valuer, regulator, wallet] <- mapA allocateParty ["issuer", "lender", "valuer", "regulator", "wallet"]
+  grant <- submit issuer do createCmd CollateralGrant with issuer; owner = wallet; asset = tbill; quantity = 150.0
+  submitMustFail issuer do exerciseCmd grant CollateralGrant_Accept
+  invite <- submit (actAs lender <> actAs valuer) do
+    createCmd StreamInvite with
+      valuationAgent = valuer; lender; borrower = wallet; regulator; collateralAsset = tbill; initialPrice = 1.0
+  submitMustFail (actAs lender <> actAs valuer) do exerciseCmd invite StreamInvite_Accept
+  submit wallet do exerciseCmd invite StreamInvite_Decline
+  submit wallet do exerciseCmd grant CollateralGrant_Decline
+  holdings <- query @CollateralHolding wallet
+  length holdings === 0
