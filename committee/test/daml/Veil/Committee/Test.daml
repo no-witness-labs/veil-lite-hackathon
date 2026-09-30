@@ -1,0 +1,185 @@
+module Veil.Committee.Test where
+
+import Daml.Script
+import DA.Assert ((===))
+import DA.Date
+import qualified DA.Set as Set
+import DA.Time (hours, time)
+import Governance.Action
+import Governance.Confirmation
+import Governance.Rules
+import Veil
+import Veil.Committee.Price
+
+tbill : Text
+tbill = "Tokenized T-Bill / MMF"
+
+data Committee = Committee with
+  gov : Party
+  m1 : Party
+  m2 : Party
+  m3 : Party
+  rules : ContractId GovernanceRules
+
+-- A 2-of-3 committee acting as the valuation agent. On a network each member
+-- hosts `gov` on its own participant; here they read as it.
+setupCommittee : Script Committee
+setupCommittee = do
+  gov <- allocateParty "price-committee"
+  [m1, m2, m3] <- mapA allocateParty ["member-1", "member-2", "member-3"]
+  rules <- submit gov do
+    createCmd GovernanceRules with
+      governanceParty = gov
+      members = Set.fromList [m1, m2, m3]
+      threshold = 2
+      actionConfirmationTimeout = hours 1
+      additionalProposers = None
+  pure Committee with ..
+
+confirm : Committee -> Party -> ContractId GovernableAction -> Script (ContractId GovernanceConfirmation)
+confirm c member proposal = do
+  r <- submit (actAs member <> readAs c.gov) do
+    exerciseCmd c.rules GovernanceRules_ConfirmAction with confirmer = member; actionProposalCid = proposal
+  pure r.confirmationCid
+
+execute : Committee -> Party -> ContractId GovernableAction -> [ContractId GovernanceConfirmation] -> Script ()
+execute c member proposal confirmations = do
+  _ <- submit (actAs member <> readAs c.gov) do
+    exerciseCmd c.rules GovernanceRules_ExecuteConfirmedAction with
+      executor = member; actionProposalCid = proposal; confirmations
+  pure ()
+
+currentMark : Party -> Script (ContractId CollateralValuation, CollateralValuation)
+currentMark p = do
+  [m] <- query @CollateralValuation p
+  pure m
+
+-- Lender and borrower consent to a committee-run stream; two of three members
+-- open it; a loan is priced off it; two members drop the price; the lender
+-- can then issue a margin call.
+testCommitteeRunsTheLoanPrice : Script ()
+testCommitteeRunsTheLoanPrice = do
+  -- Offers must mature within ten years of ledger time.
+  setTime (time (date 2026 Sep 30) 12 0 0)
+  c <- setupCommittee
+  [issuer, lender, borrower, regulator] <- mapA allocateParty ["issuer", "lender", "borrower", "regulator"]
+  consent <- submit (actAs lender <> actAs borrower) do
+    createCmd StreamConsent with
+      valuationAgent = c.gov; lender; borrower; regulator; collateralAsset = tbill; initialPrice = 1.0
+
+  open <- submit c.m1 do
+    createCmd OpenStreamProposal with
+      governanceParty = c.gov; proposer = c.m1; consentCid = consent; collateralAsset = tbill; initialPrice = 1.0
+  let openAction = toInterfaceContractId @GovernableAction open
+  one <- confirm c c.m1 openAction
+  -- One member alone cannot act for the committee.
+  submitMustFail (actAs c.m1 <> readAs c.gov) do
+    exerciseCmd c.rules GovernanceRules_ExecuteConfirmedAction with
+      executor = c.m1; actionProposalCid = openAction; confirmations = [one]
+  two <- confirm c c.m2 openAction
+  execute c c.m3 openAction [one, two]
+  (markCid, mark) <- currentMark lender
+  mark.unitPrice === 1.0
+  mark.valuationAgent === c.gov
+
+  -- A loan priced off the committee's stream.
+  cash <- submit (actAs issuer <> actAs lender) do createCmd CashHolding with issuer; owner = lender; amount = 100.0
+  collateral <- submit (actAs issuer <> actAs borrower) do
+    createCmd CollateralHolding with issuer; owner = borrower; asset = tbill; quantity = 150.0
+  offer <- submit lender do
+    exerciseCmd cash MakeOffer with
+      borrower; regulator; valuationAgent = c.gov; valuationCid = markCid
+      principal = 100.0; interest = 5.0; collateralAsset = tbill; collateralQuantity = 150.0
+      maturity = time (date 2030 Feb 1) 12 0 0; liquidationThresholdLtv = 90.0
+      marginCallWindowSeconds = 60; expiresAt = None
+  loan <- submit borrower do exerciseCmd offer Accept with collateralCid = collateral; valuationCid = markCid
+
+  -- The committee drops the price: 100 / (150 * 0.62) = 107.5% LTV.
+  drop <- submit c.m2 do
+    createCmd PublishMarkProposal with
+      governanceParty = c.gov; proposer = c.m2; markCid; collateralAsset = tbill
+      previousPrice = 1.0; newPrice = 0.62
+  let dropAction = toInterfaceContractId @GovernableAction drop
+  a <- confirm c c.m1 dropAction
+  b <- confirm c c.m3 dropAction
+  execute c c.m1 dropAction [a, b]
+  (stressedCid, stressed) <- currentMark lender
+  stressed.unitPrice === 0.62
+  _ <- submit lender do exerciseCmd loan IssueMarginCall with valuationCid = stressedCid
+  pure ()
+
+-- Members confirm an exact move; a stale proposal cannot execute after
+-- another publish, and a non-member cannot confirm.
+testStaleOrForeignProposalsFail : Script ()
+testStaleOrForeignProposalsFail = do
+  c <- setupCommittee
+  [lender, borrower, regulator, outsider] <- mapA allocateParty ["lender", "borrower", "regulator", "outsider"]
+  consent <- submit (actAs lender <> actAs borrower) do
+    createCmd StreamConsent with
+      valuationAgent = c.gov; lender; borrower; regulator; collateralAsset = tbill; initialPrice = 1.0
+  open <- submit c.m1 do
+    createCmd OpenStreamProposal with
+      governanceParty = c.gov; proposer = c.m1; consentCid = consent; collateralAsset = tbill; initialPrice = 1.0
+  let openAction = toInterfaceContractId @GovernableAction open
+  x <- confirm c c.m1 openAction
+  y <- confirm c c.m2 openAction
+  execute c c.m1 openAction [x, y]
+  (markCid, _) <- currentMark lender
+
+  first <- submit c.m1 do
+    createCmd PublishMarkProposal with
+      governanceParty = c.gov; proposer = c.m1; markCid; collateralAsset = tbill; previousPrice = 1.0; newPrice = 0.9
+  second <- submit c.m2 do
+    createCmd PublishMarkProposal with
+      governanceParty = c.gov; proposer = c.m2; markCid; collateralAsset = tbill; previousPrice = 1.0; newPrice = 1.1
+  let firstAction = toInterfaceContractId @GovernableAction first
+      secondAction = toInterfaceContractId @GovernableAction second
+
+  -- An outsider is not a member and cannot confirm.
+  submitMustFail (actAs outsider <> readAs c.gov) do
+    exerciseCmd c.rules GovernanceRules_ConfirmAction with confirmer = outsider; actionProposalCid = firstAction
+
+  f1 <- confirm c c.m1 firstAction
+  f2 <- confirm c c.m3 firstAction
+  s1 <- confirm c c.m2 secondAction
+  s2 <- confirm c c.m3 secondAction
+  execute c c.m2 firstAction [f1, f2]
+  -- The second proposal named the mark that the first one replaced.
+  submitMustFail (actAs c.m1 <> readAs c.gov) do
+    exerciseCmd c.rules GovernanceRules_ExecuteConfirmedAction with
+      executor = c.m1; actionProposalCid = secondAction; confirmations = [s1, s2]
+  (currentCid, mark) <- currentMark lender
+  mark.unitPrice === 0.9
+
+  -- Members confirm the stated move; a proposal that misstates the current
+  -- price cannot execute even when the confirmations are valid.
+  wrong <- submit c.m3 do
+    createCmd PublishMarkProposal with
+      governanceParty = c.gov; proposer = c.m3; markCid = currentCid; collateralAsset = tbill
+      previousPrice = 1.0; newPrice = 0.5
+  let wrongAction = toInterfaceContractId @GovernableAction wrong
+  w1 <- confirm c c.m1 wrongAction
+  w2 <- confirm c c.m2 wrongAction
+  submitMustFail (actAs c.m3 <> readAs c.gov) do
+    exerciseCmd c.rules GovernanceRules_ExecuteConfirmedAction with
+      executor = c.m3; actionProposalCid = wrongAction; confirmations = [w1, w2]
+
+-- The committee cannot open a stream the counterparties did not agree to.
+testOpenMustMatchConsent : Script ()
+testOpenMustMatchConsent = do
+  c <- setupCommittee
+  [lender, borrower, regulator] <- mapA allocateParty ["lender", "borrower", "regulator"]
+  consent <- submit (actAs lender <> actAs borrower) do
+    createCmd StreamConsent with
+      valuationAgent = c.gov; lender; borrower; regulator; collateralAsset = tbill; initialPrice = 1.0
+  open <- submit c.m1 do
+    createCmd OpenStreamProposal with
+      governanceParty = c.gov; proposer = c.m1; consentCid = consent; collateralAsset = tbill; initialPrice = 5.0
+  let action = toInterfaceContractId @GovernableAction open
+  p <- confirm c c.m1 action
+  q <- confirm c c.m2 action
+  submitMustFail (actAs c.m3 <> readAs c.gov) do
+    exerciseCmd c.rules GovernanceRules_ExecuteConfirmedAction with
+      executor = c.m3; actionProposalCid = action; confirmations = [p, q]
+  marks <- query @CollateralValuation lender
+  length marks === 0

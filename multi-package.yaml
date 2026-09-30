@@ -1,4 +1,7 @@
 # veil contains deployable templates only; veil-test contains Daml Script tests.
+# committee is the optional price committee for BitSafe's Decentralization Manager.
 packages:
   - .
   - ./test
+  - ./committee
+  - ./committee/test
