@@ -29,6 +29,13 @@ DEC_PARTY_ID="${DEC_PARTY_ID-}"
 RULES_CID="${RULES_CID-}"
 [ -n "$DEC_PARTY_ID" ] && [ -n "$RULES_CID" ] || die "run hackathon/seed.sh in $DECMAN_DIR first"
 
+# VEIL_DEMO_STEP=1 pauses before each step until a line arrives on stdin, for
+# presenting or recording the demo at a human pace.
+step() {
+    say "$1"
+    if [ -n "${VEIL_DEMO_STEP-}" ]; then read -r _ || true; fi
+}
+
 ledger_get() { req GET "http://localhost:$1$2" "" "$LOCALNET_CANTON_TOKEN"; }
 
 # Submit one command as the given parties on a participant and return the transaction.
@@ -123,7 +130,7 @@ current_mark() {
 require_stack_up
 distribute_veil_dars
 
-say "Allocating the Veil parties on participant 1"
+step "Allocating the Veil parties on participant 1"
 ISSUER=$(allocate "veil-issuer-$RUN")
 LENDER=$(allocate "veil-lender-$RUN")
 BORROWER=$(allocate "veil-borrower-$RUN")
@@ -133,12 +140,12 @@ info "valuation agent (committee) $DEC_PARTY_ID"
 info "lender $LENDER"
 info "borrower $BORROWER"
 
-say "Lender and borrower consent to a committee-run T-Bill price stream at 1.00"
+step "Lender and borrower consent to a committee-run T-Bill price stream at 1.00"
 CONSENT=$(submit "$P1" "[\"$LENDER\",\"$BORROWER\"]" '[]' "$(jq -n --arg v "$DEC_PARTY_ID" --arg l "$LENDER" --arg b "$BORROWER" --arg r "$REGULATOR" --arg a "$TBILL" \
     '{CreateCommand: {templateId: "#veil-price-committee:Veil.Committee.Price:StreamConsent", createArguments: {valuationAgent: $v, lender: $l, borrower: $b, regulator: $r, collateralAsset: $a, initialPrice: "1.0"}}}')" | created StreamConsent)
 info "consent $CONSENT"
 
-say "Committee: node 1 proposes opening the stream"
+step "Committee: node 1 proposes opening the stream"
 OPEN=$(submit "$P1" "[\"$MEMBER_1\"]" '[]' "$(jq -n --arg g "$DEC_PARTY_ID" --arg m "$MEMBER_1" --arg c "$CONSENT" --arg a "$TBILL" \
     '{CreateCommand: {templateId: "#veil-price-committee:Veil.Committee.Price:OpenStreamProposal", createArguments: {governanceParty: $g, proposer: $m, consentCid: $c, collateralAsset: $a, initialPrice: "1.0"}}}')" | created OpenStreamProposal)
 confirm_on 1 "$OPEN"
@@ -147,7 +154,7 @@ execute_on 3 "$OPEN"
 MARK=$(current_mark); info "price mark $MARK"
 MARK_CID=$(printf '%s' "$MARK" | jq -r '.cid')
 
-say "Lender funds an offer priced off the committee's mark; the borrower accepts"
+step "Lender funds an offer priced off the committee's mark; the borrower accepts"
 CASH=$(submit "$P1" "[\"$ISSUER\",\"$LENDER\"]" '[]' "$(jq -n --arg i "$ISSUER" --arg o "$LENDER" \
     '{CreateCommand: {templateId: "#veil-lite:Veil:CashHolding", createArguments: {issuer: $i, owner: $o, amount: "100.0"}}}')" | created CashHolding)
 COLLATERAL=$(submit "$P1" "[\"$ISSUER\",\"$BORROWER\"]" '[]' "$(jq -n --arg i "$ISSUER" --arg o "$BORROWER" --arg a "$TBILL" \
@@ -162,7 +169,7 @@ LOAN=$(submit "$P1" "[\"$BORROWER\"]" '[]' "$(jq -n --arg o "$OFFER" --arg c "$C
     '{ExerciseCommand: {templateId: "#veil-lite:Veil:LoanOffer", contractId: $o, choice: "Accept", choiceArgument: {collateralCid: $c, valuationCid: $m}}}')" | created Loan)
 info "loan $LOAN: 100 against 150 T-Bill units at 1.00 (LTV 66.7%)"
 
-say "Committee: node 2 proposes dropping the price to 0.62"
+step "Committee: node 2 proposes dropping the price to 0.62"
 DROP=$(submit 2975 "[\"$MEMBER_2\"]" '[]' "$(jq -n --arg g "$DEC_PARTY_ID" --arg m "$MEMBER_2" --arg c "$MARK_CID" --arg a "$TBILL" \
     '{CreateCommand: {templateId: "#veil-price-committee:Veil.Committee.Price:PublishMarkProposal", createArguments: {governanceParty: $g, proposer: $m, markCid: $c, collateralAsset: $a, previousPrice: "1.0", newPrice: "0.62"}}}')" | created PublishMarkProposal)
 confirm_on 2 "$DROP"
@@ -174,11 +181,11 @@ confirm_on 3 "$DROP"
 execute_on 1 "$DROP"
 STRESSED=$(current_mark); info "price mark $STRESSED"
 
-say "LTV is now 107.5%: the lender issues a margin call on the committee's price"
+step "LTV is now 107.5%: the lender issues a margin call on the committee's price"
 CALLED=$(submit "$P1" "[\"$LENDER\"]" '[]' "$(jq -n --arg l "$LOAN" --arg m "$(printf '%s' "$STRESSED" | jq -r '.cid')" \
     '{ExerciseCommand: {templateId: "#veil-lite:Veil:Loan", contractId: $l, choice: "IssueMarginCall", choiceArgument: {valuationCid: $m}}}')")
 printf '%s' "$CALLED" | jq '[.transaction.events[]?.CreatedEvent? // empty | select(.templateId | endswith(":Loan")) | .createArgument.marginCall]'
 
-say "Committee audit trail (node 1)"
+step "Committee audit trail (node 1)"
 dm_get 8081 "/governance/chain-audit?party_id=$DEC_PARTY_ID&limit=20&refresh=true" \
     | jq '[.entries[]? | {event_type, timestamp, acting_parties, contract_id}]'

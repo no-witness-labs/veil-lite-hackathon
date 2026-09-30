@@ -1,0 +1,36 @@
+1
+00:00:02,110 --> 00:00:15,850
+Veil is private secured lending on Canton. Here its price feed is run by a decentralized party: a committee hosted on three Canton participants with BitSafe's Decentralization Manager. Two of the three must agree before any price is published.
+
+2
+00:00:17,008 --> 00:00:22,538
+First, Veil's lender, borrower, issuer and regulator are created on participant one.
+
+3
+00:00:23,241 --> 00:00:28,961
+The lender and borrower agree up front to a T-Bill price stream that the committee will run, starting at one dollar.
+
+4
+00:00:29,662 --> 00:00:36,422
+Node one proposes opening the stream. Nodes one and two confirm it, and node three executes it with the committee's authority.
+
+5
+00:00:38,468 --> 00:00:48,508
+The lender funds an offer priced off the committee's mark, and the borrower accepts: one hundred against one hundred and fifty T-Bill units, at sixty-seven percent loan-to-value.
+
+6
+00:00:49,209 --> 00:00:58,309
+Node two proposes dropping the price to sixty-two cents. After one confirmation it cannot execute. Node three confirms, and node one executes it.
+
+7
+00:01:00,018 --> 00:01:06,268
+Loan-to-value is now over a hundred and seven percent, so the lender issues a margin call on the committee's price.
+
+8
+00:01:06,968 --> 00:01:11,848
+DecMan's on-chain audit trail records every proposal, confirmation and execution.
+
+9
+00:01:12,549 --> 00:01:19,199
+No single operator can move Veil's price. The committee package and this demo are reproducible from the Veil repository.
+
