@@ -217,6 +217,23 @@ function PasscodeForm({
         </button>
       </div>
 
+      {open && roles.includes('regulator') && (
+        <div style={{ padding: '0 var(--space-7) var(--space-6)', display: 'grid', gap: 'var(--space-2)' }}>
+          <button
+            type="button"
+            className="v-btn v-btn--ghost v-btn--block"
+            onClick={() => onSubmit('regulator', '')}
+            disabled={busy}
+          >
+            Just look around (read-only)
+          </button>
+          <span className="v-metric__note">
+            Enters as the regulator, which can see every loan and settlement but cannot change anything. Open the
+            Loan book and Disclosure tabs.
+          </span>
+        </div>
+      )}
+
       <footer className="v-panel__foot">
         <button type="button" className="v-btn v-btn--ghost v-btn--sm" onClick={onUseToken} disabled={busy}>
           Use a role token instead
