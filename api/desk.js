@@ -3,6 +3,7 @@ const { authConfig, authenticate, AuthError, DEFAULT_ISSUER, knownParties, packa
 const { ledgerTarget, parseJsonBody, requestBody } = require('./_ledger')
 const { upstreamConfig, upstreamToken } = require('./_upstream')
 const { registryTarget } = require('./_registry')
+const { topUpHoldings } = require('./_holdings')
 const { mintRoleToken } = require('./demo-login')
 const { beginRequest, isTimeout, noteRole, readCapped, ResponseTooLargeError, sanitizeLedgerError, sendError, sendJson, upstreamFetch } = require('./_http')
 
@@ -22,7 +23,8 @@ const { beginRequest, isTimeout, noteRole, readCapped, ResponseTooLargeError, sa
 // after the create response (Vercel waitUntil), except when the desk cap is
 // hit, where it runs inline before the count is re-checked. A desk whose
 // stream was janitored is repaired on its next create (same deskId, a new
-// stream for that asset).
+// stream for that asset). After the janitor, the same background task tops up
+// the shared wallets (api/_holdings.js) so the demo never runs dry.
 
 /** Mirrors VALUED_ASSETS and SEED_PRICE in frontend/src/ledger.ts. */
 const VALUED_ASSETS = Object.freeze(['Tokenized T-Bill', 'Tokenized MMF', 'Canton Coin'])
@@ -296,8 +298,9 @@ function ledgerClient(env, access, ctx) {
 
   const exercise = (name, contractId, choice, choiceArgument = {}) => ({ ExerciseCommand: { templateId: template(name), contractId, choice, choiceArgument } })
   const createAndExercise = (name, createArguments, choice, choiceArgument) => ({ CreateAndExerciseCommand: { templateId: template(name), createArguments, choice, choiceArgument } })
+  const create = (name, createArguments) => ({ CreateCommand: { templateId: template(name), createArguments } })
 
-  return { active, submit, cancelContext, exercise, createAndExercise }
+  return { active, submit, cancelContext, exercise, createAndExercise, create }
 }
 
 /* ------------------------------------------------------- desk operations -- */
@@ -375,6 +378,16 @@ async function closeStreams(ledger, config, streamIds) {
   }
 }
 
+/** Top up drained demo wallets; failures are logged, never fatal. */
+async function topUp(ledger, config, ctx) {
+  try {
+    return await topUpHoldings(ledger, config, ctx)
+  } catch (error) {
+    console.log(JSON.stringify({ level: 'warn', msg: 'desk holdings top-up failed', requestId: ctx.id, code: error?.code || 'ERROR' }))
+    return 0
+  }
+}
+
 /** Close idle streams (not `keep`); failures are logged, never fatal. */
 async function janitor(ledger, config, marks, keep, nowMs, ctx) {
   const idle = idleStreams(marks, nowMs, keep).slice(0, JANITOR_MAX_STREAMS)
@@ -429,8 +442,12 @@ async function createDesk(env, config, access, ledger, currentToken, ctx) {
   const { token, claims } = signDeskToken({ deskId, streams, ledger: config.issuer }, privateKeyPem)
   const desk = { token, deskId, streams, expiresAt: claims.exp, reused: false }
   // The marks read above predate the new streams, so only older streams (never
-  // this desk's kept ones) can be idle.
-  const background = janitorDone ? null : () => janitor(ledger, config, marks, keepIds, Date.now(), ctx)
+  // this desk's kept ones) can be idle. The wallets are topped up after the
+  // janitor, whose closes can return escrowed cash and collateral first.
+  const background = async () => {
+    if (!janitorDone) await janitor(ledger, config, marks, keepIds, Date.now(), ctx)
+    await topUp(ledger, config, ctx)
+  }
   return { desk, background }
 }
 
