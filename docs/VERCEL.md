@@ -87,6 +87,15 @@ the app, not on the ledger: the wallets (cash, T-Bill, MMF, Canton Coin) are sha
   Every stream is a desk stream (reset no longer seeds streams; the operator's
   browser has a desk too), so the rule is uniform. A desk whose stream was
   janitored is repaired on its next sign-in.
+- Wallet top-up: in the same background task, after the janitor, `create` reads
+  the lender's and borrower's holdings. Each of lender cash, borrower cash,
+  borrower T-Bill and borrower MMF that is below 25% of its seed amount (10,000;
+  10,500; 20,000; 16,000) gets one new holding bringing it back to the seed, all in
+  one transaction acting as issuer, lender and borrower (`api/_holdings.js`).
+  Canton Coin is a real token and is never minted. Concurrent sign-ins may each top
+  up once (bounded overshoot); one top-up never exceeds the seed. Each top-up logs
+  `desk holdings top-up` (wallet, before, amount); failures log
+  `desk holdings top-up failed` and never affect the desk response.
 - Cap: with 25 or more other desks open, `create` runs the janitor inline once,
   re-counts, and answers `429 DESK_LIMIT` if the count is still at the cap.
 - **Reset demo** still clears everything; every browser opens a new desk on its

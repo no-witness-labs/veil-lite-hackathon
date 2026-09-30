@@ -104,8 +104,13 @@ See [VERCEL.md](VERCEL.md) for the environment variables and smoke checks.
 Visitors normally never need a reset: each browser works on its own desk (its own
 price streams; see [VERCEL.md](VERCEL.md#visitor-desks)), **Start over** closes just
 that desk, and desks idle for 30 minutes are closed by the next visitor's sign-in.
-The shared wallets still drain over time (a closed desk's active T-Bill loan keeps
-its collateral and principal where they are), so reset periodically.
+The shared wallets drain over time (a closed desk's active T-Bill loan keeps its
+collateral and principal where they are), so every desk sign-in tops them up in the
+background: lender cash, borrower cash, T-Bill and MMF below 25% of their seed
+amounts are refilled to the seed in one issuer-signed transaction (see
+[VERCEL.md](VERCEL.md#visitor-desks)). Canton Coin is a real token and is never
+minted, so its balance is the only wallet that still needs manual care. Reset is for clearing
+clutter, not for refilling.
 
 Sign in as **Demo operator** (operator passcode) and use **Reset demo**. Reset is a
 series of ledger transactions submitted from the browser: keep the tab open until

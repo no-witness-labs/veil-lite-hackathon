@@ -16,6 +16,7 @@ const originalEnv = { ...process.env }
 const originalFetch = globalThis.fetch
 const originalLog = console.log
 let logLines = []
+let pendingTasks = []
 
 const P = {
   issuer: 'Issuer::1', lender: 'Lender::1', borrower: 'Borrower::1', regulator: 'Regulator::1', valuer: 'Valuer::1', outsider: 'Outsider::1',
@@ -43,23 +44,28 @@ const sharedEnv = {
   VEIL_REGISTRY_URL: REGISTRY_URL,
 }
 
-beforeEach(() => {
-  logLines = []
-  console.log = (line) => { logLines.push(String(line)) }
-  for (const key of Object.keys(process.env)) delete process.env[key]
-  Object.assign(process.env, originalEnv, baseEnv, sharedEnv)
-})
-
 const REQUEST_CONTEXT = Symbol.for('@vercel/request-context')
 
 /** Stand in for Vercel's request context; returns the promises passed to waitUntil. */
 function vercelContext() {
   const pending = []
+  pendingTasks = pending
   globalThis[REQUEST_CONTEXT] = { get: () => ({ waitUntil: (promise) => { pending.push(promise) } }) }
   return pending
 }
 
-afterEach(() => {
+beforeEach(() => {
+  logLines = []
+  console.log = (line) => { logLines.push(String(line)) }
+  for (const key of Object.keys(process.env)) delete process.env[key]
+  Object.assign(process.env, originalEnv, baseEnv, sharedEnv)
+  // Background tasks finish against the test's fake ledger before cleanup.
+  vercelContext()
+})
+
+afterEach(async () => {
+  await Promise.all(pendingTasks)
+  pendingTasks = []
   delete globalThis[REQUEST_CONTEXT]
   console.log = originalLog
   resetUpstreamCache()
@@ -105,14 +111,25 @@ const STAKEHOLDERS = {
   CollateralHolding: (a) => [a.issuer, a.owner],
 }
 
-/** An in-memory ACS that applies the commands the desk endpoint sends. */
-function fakeLedger() {
-  const state = { contracts: [], offset: 10, next: 1, submissions: [], registryCalls: [], tokenRequests: 0, acsReads: 0, eventArguments: true }
+/** The demo seed wallets (frontend/src/ledger.ts SEED). */
+const SEED_WALLETS = [
+  ['CashHolding', { issuer: P.issuer, owner: P.lender, amount: '10000.0000000000' }],
+  ['CashHolding', { issuer: P.issuer, owner: P.borrower, amount: '10500.0000000000' }],
+  ['CollateralHolding', { issuer: P.issuer, owner: P.borrower, asset: 'Tokenized T-Bill', quantity: '15000.0000000000' }],
+  ['CollateralHolding', { issuer: P.issuer, owner: P.borrower, asset: 'Tokenized T-Bill', quantity: '5000.0000000000' }],
+  ['CollateralHolding', { issuer: P.issuer, owner: P.borrower, asset: 'Tokenized MMF', quantity: '16000.0000000000' }],
+]
+
+/** An in-memory ACS that applies the commands the desk endpoint sends; the
+ * wallets start seeded unless `holdings: false`. */
+function fakeLedger({ holdings = true } = {}) {
+  const state = { contracts: [], offset: 10, next: 1, submissions: [], registryCalls: [], tokenRequests: 0, acsReads: 0, acsReadsByParty: {}, eventArguments: true }
   const add = (template, args) => {
     const contract = { contractId: `${template}-${state.next++}`, template, offset: ++state.offset, args }
     state.contracts.push(contract)
     return contract
   }
+  if (holdings) for (const [template, args] of SEED_WALLETS) add(template, { ...args })
   const mark = (asset, observedAt, streamId = `stream-${state.next++}`, price = '1') => add('CollateralValuation', {
     valuationAgent: P.valuer, lender: P.lender, borrower: P.borrower, regulator: P.regulator, collateralAsset: asset, streamId, unitPrice: price, observedAt,
   })
@@ -131,6 +148,14 @@ function fakeLedger() {
   }
 
   function apply(command) {
+    if (command.CreateCommand) {
+      const { templateId, createArguments } = command.CreateCommand
+      const template = templateId.split(':').at(-1)
+      assert.equal(templateId, `#veil-lite:Veil:${template}`)
+      assert.ok(template === 'CashHolding' || template === 'CollateralHolding', template)
+      add(template, createArguments)
+      return null
+    }
     if (command.CreateAndExerciseCommand) {
       const { templateId, createArguments, choice, choiceArgument } = command.CreateAndExerciseCommand
       assert.equal(templateId, '#veil-lite:Veil:ValuationStream')
@@ -166,6 +191,7 @@ function fakeLedger() {
       state.acsReads += 1
       const body = JSON.parse(init.body)
       const party = Object.keys(body.filter.filtersByParty)[0]
+      state.acsReadsByParty[party] = (state.acsReadsByParty[party] ?? 0) + 1
       return json(state.contracts
         .filter((c) => (STAKEHOLDERS[c.template]?.(c.args) ?? []).includes(party))
         .map((c) => ({ contractEntry: { JsActiveContract: { createdEvent: { contractId: c.contractId, templateId: `pkg123:Veil:${c.template}`, offset: c.offset, createArgument: c.args } } } })))
@@ -239,8 +265,9 @@ test('create opens one stream per valued asset in one transaction and returns a 
   assert.equal(desk.reused, false)
   // One read of the valuer's prices, one submission with a command per asset;
   // the new marks come from that transaction, not from a second read.
-  assert.equal(ledger.state.acsReads, 1)
-  assert.equal(ledger.state.submissions.length, 1)
+  await Promise.all(pendingTasks)
+  assert.equal(ledger.state.acsReadsByParty[P.valuer], 1)
+  assert.equal(ledger.state.submissions.length, 1, 'full wallets are not topped up')
   const submission = ledger.state.submissions[0]
   assert.equal(submission.commands.length, 3)
   assert.deepEqual(submission.actAs, [P.lender, P.borrower, P.valuer])
@@ -268,7 +295,7 @@ test('create reads the new marks back only when the transaction carries no creat
   assert.equal(res.statusCode, 200, res.body)
   assert.equal(Object.keys(res.json().streams).length, 3)
   assert.equal(ledger.state.submissions.length, 1)
-  assert.equal(ledger.state.acsReads, 2)
+  assert.equal(ledger.state.acsReadsByParty[P.valuer], 2)
 })
 
 test('desk tokens: signature, expiry, ledger binding and type are all checked', () => {
@@ -418,21 +445,26 @@ test('cap: create is refused with 429 DESK_LIMIT when too many active desks rema
   for (const c of first) c.args.observedAt = minutesAgo(31)
   const pending = vercelContext()
   assert.equal((await call({ action: 'create' })).statusCode, 200)
-  assert.equal(pending.length, 0)
-  assert.ok(!ledger.state.contracts.some((c) => first.some((f) => f.contractId === c.contractId)))
+  assert.ok(!ledger.state.contracts.some((c) => first.some((f) => f.contractId === c.contractId)), 'janitored before the response')
+  // Only the wallet top-up is left for after it; the janitor does not run twice.
+  assert.equal(pending.length, 1)
+  await Promise.all(pending)
+  assert.equal(logLines.filter((line) => /"msg":"desk janitor"/.test(line)).length, 1)
 })
 
-test('without a Vercel request context the janitor runs detached and logs its outcome', async () => {
-  const ledger = fakeLedger()
+test('without a Vercel request context the janitor and top-up run detached and log their outcome', async () => {
+  delete globalThis[REQUEST_CONTEXT]
+  const ledger = fakeLedger({ holdings: false })
   globalThis.fetch = ledger.fetchImpl
   const idle = deskOf(ledger, minutesAgo(40))
   const res = await call({ action: 'create' })
   assert.equal(res.statusCode, 200, res.body)
-  for (let i = 0; i < 50 && ledger.state.contracts.some((c) => Object.values(idle).includes(c.args.streamId)); i += 1) {
+  for (let i = 0; i < 50 && !logLines.some((line) => /"msg":"desk holdings top-up"/.test(line)); i += 1) {
     await new Promise((resolve) => setTimeout(resolve, 5))
   }
   assert.ok(!ledger.state.contracts.some((c) => Object.values(idle).includes(c.args.streamId)))
   assert.ok(logLines.some((line) => /"msg":"desk janitor"/.test(line)))
+  assert.equal(logLines.filter((line) => /"msg":"desk holdings top-up"/.test(line)).length, 4)
 })
 
 test('close retries once when a contract moved meanwhile', async () => {
@@ -470,4 +502,108 @@ test('local sandbox: the desk submits with a minted operator token; no signing k
   const unavailable = await call({ action: 'create' })
   assert.equal(unavailable.statusCode, 503)
   assert.equal(unavailable.json().code, 'DESK_UNAVAILABLE')
+})
+
+/* ------------------------------------------------------- wallet top-up -- */
+
+const topUpSubmissions = (ledger) => ledger.state.submissions.filter((s) => s.commandId.startsWith('desk-topup-'))
+const created = (submission) => submission.commands.map((c) => ({ template: c.CreateCommand.templateId.split(':').at(-1), ...c.CreateCommand.createArguments }))
+
+test('top-up: drained wallets get one batched submission back to their seed amounts; Canton Coin is never touched', async () => {
+  const ledger = fakeLedger({ holdings: false })
+  globalThis.fetch = ledger.fetchImpl
+  // Lender cash 1999.99 of 10000 and T-Bill 4999 of 20000 are below 25%; borrower
+  // cash is full and MMF sits exactly at the 25% mark.
+  ledger.add('CashHolding', { issuer: P.issuer, owner: P.lender, amount: '1500.0000000000' })
+  ledger.add('CashHolding', { issuer: P.issuer, owner: P.lender, amount: '499.99' })
+  ledger.add('CashHolding', { issuer: P.issuer, owner: P.borrower, amount: '10500.0' })
+  ledger.add('CollateralHolding', { issuer: P.issuer, owner: P.borrower, asset: 'Tokenized T-Bill', quantity: '4999' })
+  ledger.add('CollateralHolding', { issuer: P.issuer, owner: P.borrower, asset: 'Tokenized MMF', quantity: '4000.0000000000' })
+  // Another issuer's cash does not count toward the demo wallet.
+  ledger.add('CashHolding', { issuer: 'Other::9', owner: P.lender, amount: '9000' })
+  const pending = vercelContext()
+  const res = await call({ action: 'create' })
+  assert.equal(res.statusCode, 200, res.body)
+  assert.equal(pending.length, 1)
+  await Promise.all(pending)
+
+  const [topUp, ...rest] = topUpSubmissions(ledger)
+  assert.equal(rest.length, 0, 'one submission')
+  assert.deepEqual(topUp.actAs, [P.issuer, P.lender, P.borrower])
+  assert.equal(topUp.userId, 'team-ledger-user')
+  assert.deepEqual(created(topUp), [
+    { template: 'CashHolding', issuer: P.issuer, owner: P.lender, amount: '8000.01' },
+    { template: 'CollateralHolding', issuer: P.issuer, owner: P.borrower, asset: 'Tokenized T-Bill', quantity: '15001' },
+  ])
+  assert.ok(!JSON.stringify(topUp).includes('Canton Coin'), 'no Canton Coin is minted')
+  assert.equal(ledger.state.contracts.filter((c) => c.template === 'CashHolding' && c.args.owner === P.lender && c.args.issuer === P.issuer).length, 3)
+
+  const lines = logLines.filter((line) => /"msg":"desk holdings top-up"/.test(line)).map((line) => JSON.parse(line))
+  assert.deepEqual(lines.map(({ wallet, before, amount, seed }) => ({ wallet, before, amount, seed })), [
+    { wallet: 'lenderCash', before: '1999.99', amount: '8000.01', seed: '10000' },
+    { wallet: 'borrowerTBill', before: '4999', amount: '15001', seed: '20000' },
+  ])
+  assert.ok(lines.every((line) => line.level === 'info' && line.requestId))
+  assert.ok(!logLines.some((line) => line.includes('offline-refresh') || line.includes('node-access')), 'no secrets in logs')
+
+  // The next desk finds the wallets refilled and submits nothing more.
+  const again = vercelContext()
+  assert.equal((await call({ action: 'create' })).statusCode, 200)
+  await Promise.all(again)
+  assert.equal(topUpSubmissions(ledger).length, 1)
+})
+
+test('top-up: wallets at or above the low-water mark are left alone', async () => {
+  const ledger = fakeLedger({ holdings: false })
+  globalThis.fetch = ledger.fetchImpl
+  ledger.add('CashHolding', { issuer: P.issuer, owner: P.lender, amount: '2500' })
+  ledger.add('CashHolding', { issuer: P.issuer, owner: P.borrower, amount: '2625.0000000000' })
+  ledger.add('CollateralHolding', { issuer: P.issuer, owner: P.borrower, asset: 'Tokenized T-Bill', quantity: '2500' })
+  ledger.add('CollateralHolding', { issuer: P.issuer, owner: P.borrower, asset: 'Tokenized T-Bill', quantity: '2500' })
+  ledger.add('CollateralHolding', { issuer: P.issuer, owner: P.borrower, asset: 'Tokenized MMF', quantity: '99999' })
+  const pending = vercelContext()
+  assert.equal((await call({ action: 'create' })).statusCode, 200)
+  await Promise.all(pending)
+  assert.equal(topUpSubmissions(ledger).length, 0)
+  assert.equal(ledger.state.submissions.length, 1, 'only the desk transaction')
+  assert.ok(!logLines.some((line) => /desk holdings top-up/.test(line)))
+})
+
+test('top-up: a failed top-up is logged and never breaks the desk response', async () => {
+  const ledger = fakeLedger({ holdings: false })
+  const realFetch = ledger.fetchImpl
+  globalThis.fetch = async (url, init) => {
+    if (String(url).endsWith('/submit-and-wait-for-transaction') && JSON.parse(init.body).commands.commandId.startsWith('desk-topup-')) {
+      return new Response(JSON.stringify({ code: 'PERMISSION_DENIED', cause: 'no actAs issuer', errorCategory: 7 }), { status: 403 })
+    }
+    return realFetch(url, init)
+  }
+  const pending = vercelContext()
+  const res = await call({ action: 'create' })
+  assert.equal(res.statusCode, 200, res.body)
+  assert.equal(Object.keys(res.json().streams).length, 3)
+  await Promise.all(pending)
+  const failed = logLines.filter((line) => /"msg":"desk holdings top-up failed"/.test(line)).map((line) => JSON.parse(line))
+  assert.equal(failed.length, 1)
+  assert.equal(failed[0].level, 'warn')
+  assert.ok(failed[0].code && failed[0].code !== 'ERROR', failed[0].code)
+  assert.ok(!logLines.some((line) => /"msg":"desk background task failed"/.test(line)))
+})
+
+test('top-up: the local sandbox tops up with the minted operator token', async () => {
+  for (const key of Object.keys(sharedEnv)) delete process.env[key]
+  const ledger = fakeLedger({ holdings: false })
+  globalThis.fetch = ledger.fetchImpl
+  const pending = vercelContext()
+  assert.equal((await call({ action: 'create' })).statusCode, 200)
+  await Promise.all(pending)
+  const [topUp] = topUpSubmissions(ledger)
+  assert.equal(topUp.userId, 'veil-operator')
+  assert.deepEqual(topUp.actAs, [P.issuer, P.lender, P.borrower])
+  assert.deepEqual(created(topUp), [
+    { template: 'CashHolding', issuer: P.issuer, owner: P.lender, amount: '10000' },
+    { template: 'CashHolding', issuer: P.issuer, owner: P.borrower, amount: '10500' },
+    { template: 'CollateralHolding', issuer: P.issuer, owner: P.borrower, asset: 'Tokenized T-Bill', quantity: '20000' },
+    { template: 'CollateralHolding', issuer: P.issuer, owner: P.borrower, asset: 'Tokenized MMF', quantity: '16000' },
+  ])
 })
