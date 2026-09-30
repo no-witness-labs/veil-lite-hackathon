@@ -56,3 +56,12 @@ submission as the wallet, without a signature, is refused.
   signed. This demo does not do that yet.
 - The key lives in the demo process; a browser wallet would keep it as a
   non-extractable WebCrypto key.
+
+## Recording
+
+[`docs/veil-wallet-localnet-demo.mp4`](../docs/veil-wallet-localnet-demo.mp4)
+(1:19, [subtitles](../docs/veil-wallet-localnet-demo.srt)) shows `demo.mjs`
+running on LocalNet with `VEIL_DEMO_STEP=1`, which pauses before each step. The
+panel shows the script's real output; the evidence, with the full log and the
+MP4's SHA-256, is in [`localnet/RECORDING-EVIDENCE.json`](localnet/RECORDING-EVIDENCE.json).
+Narration is the macOS Samantha voice.
