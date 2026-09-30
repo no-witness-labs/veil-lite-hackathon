@@ -7,7 +7,7 @@ const require = createRequire(import.meta.url)
 const deskHandler = require('../api/desk.js')
 const { authenticate, AuthError } = require('../api/_auth.js')
 const { resetUpstreamCache } = require('../api/_upstream.js')
-const { deskCount, idleStreams, signDeskToken, verifyDeskToken, IDLE_MS, MAX_DESKS, DESK_TTL_SECONDS } = deskHandler.internals
+const { deskCount, idleStreams, signDeskToken, verifyDeskToken, IDLE_MS, BUSY_IDLE_MS, MAX_DESKS, DESK_TTL_SECONDS } = deskHandler.internals
 
 const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 })
 const privatePem = privateKey.export({ type: 'pkcs8', format: 'pem' })
@@ -404,11 +404,15 @@ test('janitor: streams idle over 30 minutes are closed first, never the caller\'
   assert.deepEqual(idleStreams([m('a', 5), m('b', 45), m('c', 31), m('d', 120), { args: { streamId: 'e', observedAt: 'garbage' } }], now, ['d']), ['e', 'b', 'c'])
   assert.deepEqual(idleStreams([m('a', 29)], now), [])
   assert.equal(IDLE_MS, 30 * 60_000)
+  assert.equal(BUSY_IDLE_MS, 6 * 60 * 60_000)
 
   const ledger = fakeLedger()
   globalThis.fetch = ledger.fetchImpl
-  const idle = deskOf(ledger, minutesAgo(40))
+  // A loan untouched for 7 hours is abandoned; one untouched for 40 minutes is not.
+  const idle = deskOf(ledger, minutesAgo(7 * 60))
   const idleLoan = ledger.deal('Loan', idle['Tokenized T-Bill'])
+  const recent = deskOf(ledger, minutesAgo(40))
+  const recentLoan = ledger.deal('Loan', recent['Tokenized T-Bill'])
   const busy = deskOf(ledger, minutesAgo(2))
   const pending = vercelContext()
   const res = await call({ action: 'create' })
@@ -423,6 +427,10 @@ test('janitor: streams idle over 30 minutes are closed first, never the caller\'
   const ids = new Set(ledger.state.contracts.map((c) => c.contractId))
   assert.ok(!ids.has(idleLoan.contractId))
   assert.ok(!ledger.state.contracts.some((c) => Object.values(idle).includes(c.args.streamId)))
+  // The 40-minute loan and its price survive; that desk's idle loan-free streams go.
+  assert.ok(ids.has(recentLoan.contractId))
+  assert.ok(ledger.state.contracts.some((c) => c.template === 'CollateralValuation' && c.args.streamId === recent['Tokenized T-Bill']))
+  assert.ok(!ledger.state.contracts.some((c) => c.args.streamId === recent['Tokenized MMF']))
   assert.equal(ledger.state.contracts.filter((c) => Object.values(busy).includes(c.args.streamId)).length, 3)
   assert.ok(logLines.some((line) => /"msg":"desk janitor"/.test(line)))
 })

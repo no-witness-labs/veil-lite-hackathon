@@ -82,3 +82,14 @@ jobs:
           test -s daml/Veil/Test.daml
           grep -Eq '^test[A-Za-z0-9_]+[[:space:]]*:[[:space:]]*Script[[:space:]]*\(\)' daml/Veil/Test.daml
           dpm test --detail 1
+
+      - name: Verify vendored DecMan packages
+        working-directory: vendor/decman
+        run: sha256sum -c SHA256SUMS
+
+      - name: Build and test the price committee and wallet packages
+        run: |
+          set -euo pipefail
+          for pkg in committee wallet; do
+            (cd "$pkg" && dpm build && cd test && dpm build && dpm test --detail 1)
+          done

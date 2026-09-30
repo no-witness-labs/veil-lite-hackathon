@@ -31,6 +31,7 @@ acceptance, repayment and lender-priced liquidation. Built during Season 3:
 - **Production hardening:** a keeper command journal that resolves lost responses from the ledger, maker-checker approval for liquidations, and a hardened proxy (request IDs, sanitised errors, timeouts, lost-submission checks in the UI) (#70, #71)
 - **Private desks on the shared demo:** each visitor gets their own price streams, loans and guided-demo progress, with **Start over**; idle desks are cleaned up automatically (#74)
 - **Decentralized price committee (BitSafe DecMan):** a 2-of-3 decentralized party can act as the valuation agent, publishing prices only when two nodes agree; reproducible LocalNet demo in `committee/` (#75)
+- **LocalNet prototype: self-custody borrower.** The borrower is an external party whose key stays with the user; nine borrower transactions are signed by that key, and the node cannot act for it without a signature. It signs the hash the participant returns without decoding it yet, and it cannot run on the shared DevNet node (no rights to allocate external parties) (#79)
 
 ## Try it (≈2 minutes)
 
@@ -48,6 +49,8 @@ price, publish a fresh one as Valuer first. The demo ledger is shared by all vis
 
 ## Honest boundaries
 
+- **What is live and what is not:** the lending app runs on DevNet; the price committee and the self-custody wallet are LocalNet demonstrations with recorded videos (`docs/veil-bitsafe-committee-demo.mp4`, `docs/veil-wallet-localnet-demo.mp4`).
+
 - On the shared node one ledger user hosts every demo party, so our server enforces
   role separation there (locally Canton enforces it as well).
 - On DevNet, valuations are manually attested by one valuer party; the decentralized price committee runs on LocalNet only (it needs several participants we control). T-Bill/MMF units and USDC principal are simulated.
@@ -57,7 +60,7 @@ price, publish a fresh one as Valuer first. The demo ledger is shared by all vis
 
 ## Evidence
 
-62 Daml scripts (58 core, 4 price committee) and 107 server, keeper and UI-logic tests pass, as did 49 live auth checks
+64 Daml scripts (58 core, 4 price committee, 2 wallet) and 111 server, keeper and UI-logic tests pass, as did 49 live auth checks
 and 12 browser checks. On hackcanton-01 with real DevNet CC: Canton Coin repay,
 liquidation (by hand and by the keeper) and reset; T-Bill liquidation returning surplus
 collateral; and both guided-demo tracks completed by following the guide alone, including

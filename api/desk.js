@@ -19,7 +19,8 @@ const { beginRequest, isTimeout, noteRole, readCapped, ResponseTooLargeError, sa
 // CollateralValuation names it. Every stream is a desk stream (the operator's
 // browser gets a desk like any other, and reset no longer seeds streams), so
 // the janitor rule is uniform: a stream whose current mark is older than
-// IDLE_MS has been left alone and its contracts are closed. The janitor runs
+// IDLE_MS (BUSY_IDLE_MS while it has a live loan) has been left alone and its
+// contracts are closed; both are re-checked just before closing. The janitor runs
 // after the create response (Vercel waitUntil), except when the desk cap is
 // hit, where it runs inline before the count is re-checked. A desk whose
 // stream was janitored is repaired on its next create (same deskId, a new
@@ -33,6 +34,9 @@ const DESK_TTL_SECONDS = 24 * 60 * 60
 const DESK_AUDIENCE = 'veil-desk'
 const DESK_TYPE = 'veil-desk'
 const IDLE_MS = 30 * 60 * 1000
+/** A desk with a live loan is left alone much longer: an old price alone does
+ * not mean the visitor abandoned the loan. */
+const BUSY_IDLE_MS = 6 * 60 * 60 * 1000
 const MAX_DESKS = 25
 /** Idle streams closed per create, so one visitor's sign-in stays bounded. */
 const JANITOR_MAX_STREAMS = 6
@@ -390,14 +394,26 @@ async function topUp(ledger, config, ctx) {
 
 /** Close idle streams (not `keep`); failures are logged, never fatal. */
 async function janitor(ledger, config, marks, keep, nowMs, ctx) {
-  const idle = idleStreams(marks, nowMs, keep).slice(0, JANITOR_MAX_STREAMS)
-  if (idle.length === 0) return 0
+  if (idleStreams(marks, nowMs, keep).length === 0) return 0
   try {
+    // Re-read prices and loans right before closing: the marks passed in may
+    // be seconds old, and a visitor may have published or borrowed since.
+    const fresh = demoMarks(await ledger.active(config.parties.valuer), config)
+    const busy = new Set(
+      (await ledger.active(config.parties.lender))
+        .filter((c) => (c.template === 'Loan' || c.template === 'CoinLoan') && c.args.issuer === config.issuer)
+        .map(streamOf),
+    )
+    const longIdle = new Set(idleStreams(fresh, nowMs, keep, BUSY_IDLE_MS))
+    const idle = idleStreams(fresh, nowMs, keep)
+      .filter((stream) => !busy.has(stream) || longIdle.has(stream))
+      .slice(0, JANITOR_MAX_STREAMS)
+    if (idle.length === 0) return 0
     await closeStreams(ledger, config, idle)
     console.log(JSON.stringify({ level: 'info', msg: 'desk janitor', requestId: ctx.id, streams: idle.length }))
     return idle.length
   } catch (error) {
-    console.log(JSON.stringify({ level: 'warn', msg: 'desk janitor failed', requestId: ctx.id, streams: idle.length, code: error?.code || 'ERROR' }))
+    console.log(JSON.stringify({ level: 'warn', msg: 'desk janitor failed', requestId: ctx.id, code: error?.code || 'ERROR' }))
     return 0
   }
 }
@@ -522,6 +538,7 @@ module.exports = handler
 module.exports.internals = {
   DESK_TTL_SECONDS,
   IDLE_MS,
+  BUSY_IDLE_MS,
   JANITOR_MAX_STREAMS,
   MAX_DESKS,
   VALUED_ASSETS,
