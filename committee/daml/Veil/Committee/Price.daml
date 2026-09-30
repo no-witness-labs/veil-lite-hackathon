@@ -1,0 +1,91 @@
+-- | A price committee for Veil: the valuation agent is a decentralized party
+-- (several participants, threshold signing) governed through BitSafe's
+-- Decentralization Manager. Committee actions implement DecMan's
+-- GovernableAction, so GovernanceRules runs them only after enough members
+-- confirm, with the committee's authority. Veil's own contracts are unchanged.
+module Veil.Committee.Price where
+
+import Governance.Action
+import Veil
+
+-- | Lender and borrower agree up front to a price stream that the committee
+-- will run. A stream needs the valuer, lender and borrower together, and a
+-- committee action only carries the committee's authority, so the two
+-- counterparties sign this consent first and the committee accepts it.
+template StreamConsent
+  with
+    valuationAgent : Party
+    lender : Party
+    borrower : Party
+    regulator : Party
+    collateralAsset : Text
+    initialPrice : Decimal
+  where
+    signatory lender, borrower
+    observer valuationAgent, regulator
+    ensure collateralAsset /= "" && initialPrice > 0.0
+
+    choice StreamConsent_Accept : ContractId CollateralValuation
+      controller valuationAgent
+      do
+        streamCid <- create ValuationStream with
+          valuationAgent; lender; borrower; regulator; collateralAsset
+        exercise streamCid PublishInitial with unitPrice = initialPrice
+
+-- | Committee action: open the agreed stream and publish its first mark.
+template OpenStreamProposal
+  with
+    governanceParty : Party
+    proposer : Party
+    consentCid : ContractId StreamConsent
+    collateralAsset : Text
+    initialPrice : Decimal
+  where
+    signatory proposer
+    observer governanceParty
+
+    interface instance GovernableAction for OpenStreamProposal where
+      view = GovernableActionView with
+        governanceParty
+        proposer
+        actionLabel = "VeilOpenPriceStream"
+        description = "Open a " <> collateralAsset <> " price stream at " <> show initialPrice
+
+      executeImpl = do
+        consent <- fetch consentCid
+        assertMsg "consent names another valuation agent" (consent.valuationAgent == governanceParty)
+        assertMsg "consent does not match the proposal"
+          (consent.collateralAsset == collateralAsset && consent.initialPrice == initialPrice)
+        _ <- exercise consentCid StreamConsent_Accept
+        pure ()
+
+-- | Committee action: move one stream's price from the confirmed previous
+-- value to a new one. Members confirm the exact move; if anyone published in
+-- between, the mark is gone or its price differs and execution fails.
+template PublishMarkProposal
+  with
+    governanceParty : Party
+    proposer : Party
+    markCid : ContractId CollateralValuation
+    collateralAsset : Text
+    previousPrice : Decimal
+    newPrice : Decimal
+  where
+    signatory proposer
+    observer governanceParty
+    ensure newPrice > 0.0
+
+    interface instance GovernableAction for PublishMarkProposal where
+      view = GovernableActionView with
+        governanceParty
+        proposer
+        actionLabel = "VeilPublishMark"
+        description = collateralAsset <> ": " <> show previousPrice <> " -> " <> show newPrice
+
+      executeImpl = do
+        mark <- fetch markCid
+        assertMsg "mark belongs to another valuation agent" (mark.valuationAgent == governanceParty)
+        assertMsg "mark is for another asset" (mark.collateralAsset == collateralAsset)
+        assertMsg "price moved since the proposal" (mark.unitPrice == previousPrice)
+        _ <- exercise markCid Publish with unitPrice = newPrice
+        pure ()

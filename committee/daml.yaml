@@ -1,0 +1,12 @@
+sdk-version: 3.5.1
+name: veil-price-committee
+source: daml
+version: 0.1.0
+dependencies:
+  - daml-prim
+  - daml-stdlib
+data-dependencies:
+  - ../.daml/dist/veil-lite-0.9.0.dar
+  - ../vendor/decman/governance-action-v1-0.1.0.dar
+build-options:
+  - --target=2.2
