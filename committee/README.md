@@ -30,3 +30,32 @@ cannot act alone, a non-member cannot confirm, stale or misstated proposals fail
 and a committee price drop lets the lender issue a margin call on a live loan.
 
 The DecMan DARs in `vendor/decman/` are copied unchanged; see `vendor/decman/SOURCE`.
+
+## Run it on DecMan LocalNet
+
+A reproducible end-to-end demo on BitSafe's LocalNet: three Canton participants,
+three DecMan nodes, and a 2-of-3 decentralized party as Veil's valuation agent.
+It needs Docker with 12 GB of memory and 4 CPUs.
+
+```bash
+git clone -b hackathon https://github.com/DLC-link/decentralization-manager
+export DECMAN_DIR=$PWD/decentralization-manager
+$DECMAN_DIR/hackathon/up.sh                                  # LocalNet + three DecMan nodes
+PARTY_PREFIX=veil-price-committee $DECMAN_DIR/hackathon/seed.sh   # the committee party
+
+dpm build && (cd committee && dpm build)                     # from this repository's root
+./committee/localnet/demo.sh
+```
+
+`demo.sh` installs Veil and this package on all three participants through
+DecMan's DAR distribution, then:
+
+1. Lender and borrower consent to a committee-run T-Bill price stream.
+2. The committee opens it at 1.00: node 1 proposes, nodes 1 and 2 confirm, node 3 executes.
+3. The lender funds an offer priced off that mark; the borrower accepts (LTV 66.7%).
+4. Node 2 proposes 0.62. After one confirmation the proposal is not executable;
+   node 3 confirms, node 1 executes.
+5. LTV is 107.5%, so the lender issues a margin call on the committee's price.
+6. DecMan's on-chain audit trail lists every propose, confirm and execute.
+
+Re-running `demo.sh` is safe; each run uses fresh Veil parties.
