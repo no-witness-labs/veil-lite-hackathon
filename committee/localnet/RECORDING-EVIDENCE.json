@@ -1,0 +1,60 @@
+{
+  "recordedAt": "2026-09-30T14:56:37.740Z",
+  "scenes": [
+    {
+      "id": "intro",
+      "startMs": 1810,
+      "endMs": 16708
+    },
+    {
+      "id": "parties",
+      "startMs": 16708,
+      "endMs": 22941
+    },
+    {
+      "id": "consent",
+      "startMs": 22941,
+      "endMs": 29362
+    },
+    {
+      "id": "open",
+      "startMs": 29362,
+      "endMs": 38168
+    },
+    {
+      "id": "loan",
+      "startMs": 38168,
+      "endMs": 48909
+    },
+    {
+      "id": "drop",
+      "startMs": 48909,
+      "endMs": 59718
+    },
+    {
+      "id": "call",
+      "startMs": 59718,
+      "endMs": 66668
+    },
+    {
+      "id": "audit",
+      "startMs": 66668,
+      "endMs": 72249
+    },
+    {
+      "id": "outro",
+      "startMs": 72249,
+      "endMs": 79601
+    }
+  ],
+  "exitCode": 0,
+  "log": "  the Veil DARs are already on all three participants\n==> Allocating the Veil parties on participant 1\n  valuation agent (committee) veil-price-committee::12202348b2\u2026\n  lender veil-lender-1790780214::1220972bf9\u2026\n  borrower veil-borrower-1790780214::1220972bf9\u2026\n==> Lender and borrower consent to a committee-run T-Bill price stream at 1.00\n  consent 0041168d94\u2026\n==> Committee: node 1 proposes opening the stream\n  decman-1 confirmed\n  decman-2 confirmed\n  decman-3 executed with confirmations [\"00f4f5e368\u2026\",\"00f57f1970\u2026\"]\n  price mark {\"cid\":\"00412670c8\u2026\",\"price\":\"1.0000000000\"}\n==> Lender funds an offer priced off the committee's mark; the borrower accepts\n  loan 00ecbd3156\u2026: 100 against 150 T-Bill units at 1.00 (LTV 66.7%)\n==> Committee: node 2 proposes dropping the price to 0.62\n  decman-2 confirmed\n  after one confirmation, executable: false\n  decman-3 confirmed\n  decman-1 executed with confirmations [\"0080a3f7d5\u2026\",\"000bcfa819\u2026\"]\n  price mark {\"cid\":\"00feb3978c\u2026\",\"price\":\"0.6200000000\"}\n==> LTV is now 107.5%: the lender issues a margin call on the committee's price\n  {\n  \"issuedAt\": \"2026-09-30T14:57:39.293253Z\",\n  \"deadline\": \"2026-09-30T14:58:39.293253Z\",\n  \"unitPrice\": \"0.6200000000\"\n  }\n==> Committee audit trail (node 1)\n  {\n  \"event_type\": \"execute\",\n  \"timestamp\": 1790780254,\n  \"acting_parties\": [\n    \"party-73575d8d-2642-4e74-8318-e39465233b0e::1220972bf9\u2026\"\n  ],\n  \"contract_id\": \"003df1831c\u2026\"\n  },\n  {\n  \"event_type\": \"execute\",\n  \"timestamp\": 1790780254,\n  \"acting_parties\": [\n    \"veil-price-committee::12202348b2\u2026\"\n  ],\n  \"contract_id\": \"00777e8fdd\u2026\"\n  },\n  {\n  \"event_type\": \"execute_result\",\n  \"timestamp\": 1790780254,\n  \"acting_parties\": [\n    \"veil-price-committee::12202348b2\u2026\"\n  ],\n  \"contract_id\": \"00b3adb858\u2026\"\n  },\n  {\n  \"event_type\": \"confirm\",\n  \"timestamp\": 1790780253,\n  \"acting_parties\": [\n    \"party-6b9e546e-0fa6-4faa-9b41-214143c0dc39::12205c8b57\u2026\"\n  ],\n  \"contract_id\": \"003df1831c\u2026\"\n  },\n  {\n  \"event_type\": \"confirm\",\n  \"timestamp\": 1790780253,\n  \"acting_parties\": [\n    \"party-6b9e546e-0fa6-4faa-9b41-214143c0dc39::12205c8b57\u2026\",\n    \"veil-price-committee::12202348b2\u2026\"\n  ],\n  \"contract_id\": \"0080a3f7d5\u2026\"\n  },\n  {\n  \"event_type\": \"confirm\",\n  \"timestamp\": 1790780249,\n  \"acting_parties\": [\n    \"party-2021bedf-64a9-49b6-a994-13eedad0e20f::122052765c\u2026\"\n  ],\n  \"contract_id\": \"003df1831c\u2026\"\n  },\n  {\n  \"event_type\": \"confirm\",\n  \"timestamp\": 1790780249,\n  \"acting_parties\": [\n    \"party-2021bedf-64a9-49b6-a994-13eedad0e20f::122052765c\u2026\",\n    \"veil-price-committee::12202348b2\u2026\"\n  ],\n  \"contract_id\": \"000bcfa819\u2026\"\n  },\n  {\n  \"event_type\": \"propose\",\n  \"timestamp\": 1790780248,\n  \"acting_parties\": [\n    \"party-2021bedf-64a9-49b6-a994-13eedad0e20f::122052765c\u2026\"\n  ],\n  \"contract_id\": \"00777e8fdd\u2026\"\n  },\n  {\n  \"event_type\": \"execute\",\n  \"timestamp\": 1790780232,\n  \"acting_parties\": [\n    \"party-6b9e546e-0fa6-4faa-9b41-214143c0dc39::12205c8b57\u2026\"\n  ],\n  \"contract_id\": \"003df1831c\u2026\"\n  },\n  {\n  \"event_type\": \"execute\",\n  \"timestamp\": 1790780232,\n  \"acting_parties\": [\n    \"veil-price-committee::12202348b2\u2026\"\n  ],\n  \"contract_id\": \"0083977190\u2026\"\n  },\n  {\n  \"event_type\": \"execute_result\",\n  \"timestamp\": 1790780232,\n  \"acting_parties\": [\n    \"veil-price-committee::12202348b2\u2026\"\n  ],\n  \"contract_id\": \"005b1cd3b9\u2026\"\n  },\n  {\n  \"event_type\": \"confirm\",\n  \"timestamp\": 1790780230,\n  \"acting_parties\": [\n    \"party-2021bedf-64a9-49b6-a994-13eedad0e20f::122052765c\u2026\"\n  ],\n  \"contract_id\": \"003df1831c\u2026\"\n  },\n  {\n  \"event_type\": \"confirm\",\n  \"timestamp\": 1790780230,\n  \"acting_parties\": [\n    \"party-2021bedf-64a9-49b6-a994-13eedad0e20f::122052765c\u2026\",\n    \"veil-price-committee::12202348b2\u2026\"\n  ],\n  \"contract_id\": \"00f4f5e368\u2026\"\n  },\n  {\n  \"event_type\": \"confirm\",\n  \"timestamp\": 1790780229,\n  \"acting_parties\": [\n    \"party-73575d8d-2642-4e74-8318-e39465233b0e::1220972bf9\u2026\"\n  ],\n  \"contract_id\": \"003df1831c\u2026\"\n  },\n  {\n  \"event_type\": \"confirm\",\n  \"timestamp\": 1790780229,\n  \"acting_parties\": [\n    \"party-73575d8d-2642-4e74-8318-e39465233b0e::1220972bf9\u2026\",\n    \"veil-price-committee::12202348b2\u2026\"\n  ],\n  \"contract_id\": \"00f57f1970\u2026\"\n  },\n  {\n  \"event_type\": \"propose\",\n  \"timestamp\": 1790780229,\n  \"acting_parties\": [\n    \"party-73575d8d-2642-4e74-8318-e39465233b0e::1220972bf9\u2026\"\n  ],\n  \"contract_id\": \"0083977190\u2026\"\n  },\n  {\n  \"event_type\": \"execute\",\n  \"timestamp\": 1790780138,\n  \"acting_parties\": [\n    \"party-73575d8d-2642-4e74-8318-e39465233b0e::1220972bf9\u2026\"\n  ],\n  \"contract_id\": \"003df1831c\u2026\"\n  },\n  {\n  \"event_type\": \"execute\",\n  \"timestamp\": 1790780138,\n  \"acting_parties\": [\n    \"veil-price-committee::12202348b2\u2026\"\n  ],\n  \"contract_id\": \"000fde65b5\u2026\"\n  },\n  {\n  \"event_type\": \"execute_result\",\n  \"timestamp\": 1790780138,\n  \"acting_parties\": [\n    \"veil-price-committee::12202348b2\u2026\"\n  ],\n  \"contract_id\": \"004c639bbd\u2026\"\n  },\n  {\n  \"event_type\": \"confirm\",\n  \"timestamp\": 1790780137,\n  \"acting_parties\": [\n    \"party-6b9e546e-0fa6-4faa-9b41-214143c0dc39::12205c8b57\u2026\"\n  ],\n  \"contract_id\": \"003df1831c\u2026\"\n  },\n  {\n  \"event_type\": \"confirm\",\n  \"timestamp\": 1790780137,\n  \"acting_parties\": [\n    \"party-6b9e546e-0fa6-4faa-9b41-214143c0dc39::12205c8b57\u2026\",\n    \"veil-price-committee::12202348b2\u2026\"\n  ],\n  \"contract_id\": \"002affb28d\u2026\"\n  }",
+  "totalMs": 80802,
+  "output": {
+    "file": "docs/veil-bitsafe-committee-demo.mp4",
+    "sha256": "bc5cf705eff21bbbecb0915e2c58522291ba5ad33423cdce297045bf128ed247",
+    "format": "1600x900 H.264/AAC 25 fps",
+    "durationS": 79.196
+  },
+  "setup": "BitSafe DecMan LocalNet (hackathon branch, bundle 0.6.12, DecMan v1.8.0): 3 Canton participants, 3 DecMan nodes, party veil-price-committee with threshold 2 of 3. The script ran with VEIL_DEMO_STEP=1; browser actions were automated at normal speed."
+}
