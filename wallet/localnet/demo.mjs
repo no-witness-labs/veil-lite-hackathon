@@ -1,7 +1,8 @@
 // Self-custody borrower on Canton LocalNet. The wallet's Ed25519 key is made
 // here and never leaves this process, as it would stay in a browser: the
-// participant prepares each transaction, the wallet signs its hash, and the
-// participant executes it. Every borrower step is signed by the wallet alone.
+// participant prepares each transaction, the wallet checks it (verify.mjs) and
+// signs its hash, and the participant executes it. Every borrower step is
+// signed by the wallet alone.
 //
 // Needs a LocalNet whose participant 1 JSON API is on :3975 with auth off (e.g.
 // BitSafe DecMan's hackathon LocalNet) and the DARs built:
@@ -9,6 +10,7 @@
 // Usage: CANTON_TOKEN=<localnet token> node wallet/localnet/demo.mjs
 import { generateKeyPairSync, sign as edSign, createPublicKey, randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
+import { VerificationError, toBase64, verifyPrepared } from './verify.mjs'
 
 const J = process.env.JSON_API ?? 'http://localhost:3975'
 const TOKEN = process.env.CANTON_TOKEN
@@ -55,15 +57,28 @@ const WALLET = (await call('/v2/parties/external/allocate', { synchronizer, onbo
 const FINGERPRINT = topology.publicKeyFingerprint
 info(`wallet party ${short(WALLET)} (key fingerprint ${FINGERPRINT.slice(0, 16)}…); the private key never left this process`)
 let signed = 0
+// The wallet signs only after verify.mjs has decoded the prepared transaction,
+// recomputed its V2 hash, and matched it to the intent: this exercise, on this
+// contract, with these arguments, submitted by the wallet alone. On any
+// mismatch it refuses, and the demo stops.
 async function walletSigns(what, command) {
+  const intent = { actAs: [WALLET], exercise: command.ExerciseCommand }
   const prepared = await call('/v2/interactive-submission/prepare', { userId: USER, commandId: `wallet-${randomUUID()}`, commands: [command], actAs: [WALLET], readAs: [WALLET], disclosedContracts: [], synchronizerId: synchronizer, packageIdSelectionPreference: [] })
+  let verified
+  try {
+    verified = await verifyPrepared(prepared, intent)
+  } catch (error) {
+    if (error instanceof VerificationError) info(`wallet REFUSED to sign "${what}": ${error.message}`)
+    throw error
+  }
+  info(`wallet verified: ${verified.summary}`)
   const result = await call('/v2/interactive-submission/executeAndWaitForTransaction', {
     preparedTransaction: prepared.preparedTransaction,
-    partySignatures: { signatures: [{ party: WALLET, signatures: [signature(prepared.preparedTransactionHash, FINGERPRINT)] }] },
+    partySignatures: { signatures: [{ party: WALLET, signatures: [signature(toBase64(verified.hash), FINGERPRINT)] }] },
     submissionId: randomUUID(), userId: USER, hashingSchemeVersion: prepared.hashingSchemeVersion, deduplicationPeriod: { Empty: {} },
   })
   signed += 1
-  info(`wallet signed: ${what}  (hash ${prepared.preparedTransactionHash.slice(0, 12)}…, ${prepared.hashingSchemeVersion})`)
+  info(`wallet signed: ${what}  (hash ${prepared.preparedTransactionHash.slice(0, 12)}…, recomputed and matched, ${prepared.hashingSchemeVersion})`)
   return result.transaction
 }
 const exercise = (entity, contractId, choice, choiceArgument) => ({ ExerciseCommand: { templateId: entity, contractId, choice, choiceArgument } })
