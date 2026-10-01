@@ -113,7 +113,7 @@ wrong hash, any other hashing scheme, and an intent mismatch.
 ## Recording
 
 [`docs/veil-wallet-localnet-demo.mp4`](../docs/veil-wallet-localnet-demo.mp4)
-(1:19, [subtitles](../docs/veil-wallet-localnet-demo.srt)) shows `demo.mjs`
+(1:19, [YouTube](https://youtu.be/q-W_29Ro4kM), [subtitles](../docs/veil-wallet-localnet-demo.srt)) shows `demo.mjs`
 running on LocalNet with `VEIL_DEMO_STEP=1`, which pauses before each step. The
 panel shows the script's real output; the evidence, with the full log and the
 MP4's SHA-256, is in [`localnet/RECORDING-EVIDENCE.json`](localnet/RECORDING-EVIDENCE.json).

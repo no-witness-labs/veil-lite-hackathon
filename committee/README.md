@@ -73,7 +73,7 @@ press Enter, for presenting live.
 ## Recording
 
 [`docs/veil-bitsafe-committee-demo.mp4`](../docs/veil-bitsafe-committee-demo.mp4)
-(1:19, [subtitles](../docs/veil-bitsafe-committee-demo.srt)) shows `demo.sh`
+(1:19, [YouTube](https://youtu.be/h2ZJ1PZMuWw), [subtitles](../docs/veil-bitsafe-committee-demo.srt)) shows `demo.sh`
 running on LocalNet, with the DecMan UI of whichever node is acting. The script
 output in the panel is the real output of that run; the evidence, including the
 full log and the MP4's SHA-256, is in

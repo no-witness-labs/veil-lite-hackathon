@@ -2,7 +2,7 @@
 
 ## Canton Coin demo on DevNet (submission video)
 
-[**veil-season3-cc-demo.mp4**](veil-season3-cc-demo.mp4) (2:32, 1600 × 900 H.264/AAC, 25 fps;
+[**veil-season3-cc-demo.mp4**](veil-season3-cc-demo.mp4) ([YouTube](https://youtu.be/-WDBjhal_3U), 2:32, 1600 × 900 H.264/AAC, 25 fps;
 [subtitles](veil-season3-cc-demo.srt), [evidence](SEASON3-CC-RECORDING-EVIDENCE.json)).
 Recorded September 27, 2026 on the live app, https://veil-lite-hackathon.vercel.app,
 against the HackCanton DevNet node with contract release 0.9.0 and real DevNet
