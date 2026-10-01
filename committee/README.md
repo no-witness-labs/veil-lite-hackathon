@@ -31,6 +31,13 @@ and a committee price drop lets the lender issue a margin call on a live loan.
 
 The DecMan DARs in `vendor/decman/` are copied unchanged; see `vendor/decman/SOURCE`.
 
+## Contributed upstream
+
+A generic version of this pattern, not tied to Veil, is proposed to DecMan as
+`governance-price-feed-v1`: a price feed run by a decentralized party, where a
+publish names the exact round and price it moves from. See
+[DLC-link/decentralization-manager#504](https://github.com/DLC-link/decentralization-manager/pull/504).
+
 ## Run it on DecMan LocalNet
 
 A reproducible end-to-end demo on BitSafe's LocalNet: three Canton participants,

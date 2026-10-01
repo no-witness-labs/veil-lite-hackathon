@@ -30,7 +30,7 @@ acceptance, repayment and lender-priced liquidation. Built during Season 3:
 - **Guided demo** that walks a first visit through the T-Bill or Canton Coin loan, and fixes so consecutive visitors can share the demo (#64–#66)
 - **Production hardening:** a keeper command journal that resolves lost responses from the ledger, maker-checker approval for liquidations, and a hardened proxy (request IDs, sanitised errors, timeouts, lost-submission checks in the UI) (#70, #71)
 - **Private desks on the shared demo:** each visitor gets their own price streams, loans and guided-demo progress, with **Start over**; idle desks are cleaned up automatically (#74)
-- **Decentralized price committee (BitSafe DecMan):** a 2-of-3 decentralized party can act as the valuation agent, publishing prices only when two nodes agree; reproducible LocalNet demo in `committee/` (#75)
+- **Decentralized price committee (BitSafe DecMan):** a 2-of-3 decentralized party can act as the valuation agent, publishing prices only when two nodes agree; reproducible LocalNet demo in `committee/` (#75); a generic price-feed package contributed to DecMan ([DLC-link/decentralization-manager#504](https://github.com/DLC-link/decentralization-manager/pull/504))
 - **LocalNet prototype: self-custody borrower.** The borrower is an external party whose key stays with the user; nine borrower transactions are signed by that key, and the node cannot act for it without a signature. It signs the hash the participant returns without decoding it yet, and it cannot run on the shared DevNet node (no rights to allocate external parties) (#79)
 
 ## Try it (≈2 minutes)
