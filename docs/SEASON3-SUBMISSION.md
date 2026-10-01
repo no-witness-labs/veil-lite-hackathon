@@ -1,7 +1,7 @@
 # Veil — HackCanton Season 3 submission notes
 
 **Track:** 2 — Financial Applications
-**Live app:** https://veil-lite-hackathon.vercel.app (DevNet, open access: pick a party and click **Enter**)
+**Live app:** https://veil-lite-hackathon.vercel.app (DevNet, open access: pick a party and click **Enter**, or **Just look around** for a read-only view)
 **Repository:** https://github.com/no-witness-labs/veil-lite-hackathon
 **Deck:** [`docs/SUBMISSION-DECK.pdf`](SUBMISSION-DECK.pdf)
 **Video:** [`docs/veil-season3-cc-demo.mp4`](veil-season3-cc-demo.mp4) (2:32, Canton Coin loan on DevNet; see [`SEASON3-RECORDINGS.md`](SEASON3-RECORDINGS.md))
@@ -45,17 +45,17 @@ Easiest: open the app, pick any party and follow the **Guided demo** panel; it t
 6. **Outsider** → *Raw ledger* shows `[]`; **Valuer** sees prices only.
 
 A price is usable for five minutes; if *Create offer* or *Accept* reports a stale
-price, publish a fresh one as Valuer first. The demo ledger is shared by all visitors.
+price, publish a fresh one as Valuer first. Visitors share the demo parties, but each browser gets
+its own desk (prices, loans, guided-demo progress); **Start over** clears only yours.
 
 ## Honest boundaries
 
 - **What is live and what is not:** the lending app runs on DevNet; the price committee and the self-custody wallet are LocalNet demonstrations with recorded videos (`docs/veil-bitsafe-committee-demo.mp4`, `docs/veil-wallet-localnet-demo.mp4`).
-
 - On the shared node one ledger user hosts every demo party, so our server enforces
   role separation there (locally Canton enforces it as well).
-- On DevNet, valuations are manually attested by one valuer party; the decentralized price committee runs on LocalNet only (it needs several participants we control). T-Bill/MMF units and USDC principal are simulated.
 - Visitor desks separate visitors in the app, not on the ledger: all visitors share the same demo parties.
-  Canton Coin collateral is real DevNet CC.
+- On DevNet, valuations are manually attested by one valuer party; the decentralized price committee runs on LocalNet only (it needs several participants we control).
+- T-Bill/MMF units and USDC principal are simulated; Canton Coin collateral is real DevNet CC.
 - No customer validation or external audit yet.
 
 ## Evidence
@@ -64,4 +64,5 @@ price, publish a fresh one as Valuer first. The demo ledger is shared by all vis
 and 12 browser checks. On hackcanton-01 with real DevNet CC: Canton Coin repay,
 liquidation (by hand and by the keeper) and reset; T-Bill liquidation returning surplus
 collateral; and both guided-demo tracks completed by following the guide alone, including
-two consecutive visitors without a reset (PRs #51, #63–#66).
+two consecutive visitors without a reset and, with desks, two visitors at the same time
+(PRs #51, #63–#66, #74).
