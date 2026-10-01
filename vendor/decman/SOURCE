@@ -1,3 +1,4 @@
 governance-action-v1-0.1.0.dar and governance-core-v1-0.1.0.dar are copied unchanged from
 https://github.com/DLC-link/decentralization-manager (branch hackathon, commit 21ffdedf64366b1f2824301c434b427bf4726663),
-releases/v1/. Apache License 2.0, (c) DLC-Link, Inc.
+releases/v1/. Licensed under the Apache License 2.0; see NOTICE (copied from that repository).
+SHA256SUMS lists their checksums; CI verifies them.

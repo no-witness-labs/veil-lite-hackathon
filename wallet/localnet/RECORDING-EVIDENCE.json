@@ -1,0 +1,75 @@
+{
+  "recordedAt": "2026-09-30T15:39:03.995Z",
+  "scenes": [
+    {
+      "id": "intro",
+      "startMs": 0,
+      "endMs": 11937
+    },
+    {
+      "id": "key",
+      "startMs": 11937,
+      "endMs": 18461
+    },
+    {
+      "id": "install",
+      "startMs": 18461,
+      "endMs": 24115
+    },
+    {
+      "id": "parties",
+      "startMs": 24115,
+      "endMs": 29642
+    },
+    {
+      "id": "grants",
+      "startMs": 29642,
+      "endMs": 36869
+    },
+    {
+      "id": "stream",
+      "startMs": 36869,
+      "endMs": 42391
+    },
+    {
+      "id": "loan",
+      "startMs": 42391,
+      "endMs": 49443
+    },
+    {
+      "id": "stress",
+      "startMs": 49443,
+      "endMs": 54377
+    },
+    {
+      "id": "cure",
+      "startMs": 54377,
+      "endMs": 58669
+    },
+    {
+      "id": "repay",
+      "startMs": 58669,
+      "endMs": 63092
+    },
+    {
+      "id": "refuse",
+      "startMs": 63092,
+      "endMs": 68945
+    },
+    {
+      "id": "outro",
+      "startMs": 68945,
+      "endMs": 79296
+    }
+  ],
+  "exitCode": 0,
+  "totalMs": 80497,
+  "log": "==> The wallet makes its own key and becomes a Canton party\n    wallet party veil-wallet-1790782755930 (key fingerprint 12205dac4fee32b0\u2026); the private key never left this process\n==> Installing veil-wallet on participant 1\n    uploaded and vetted\n==> Issuer, lender, valuer and regulator (ordinary parties on participant 1)\n    lender veil-lender-1790782755930 \u00b7 valuer veil-valuer-1790782755930\n==> The issuer grants the wallet 150 T-Bill units and 105 cash; the wallet accepts\n    wallet signed: accept 150 T-Bill units  (hash ymTFs9NHC5Nr\u2026, HASHING_SCHEME_VERSION_V2)\n    wallet signed: accept 105 cash  (hash +tYfOS8VQEsW\u2026, HASHING_SCHEME_VERSION_V2)\n==> Lender and valuer invite the wallet to a T-Bill price stream at 1.00; the wallet accepts\n    wallet signed: join the price stream  (hash e/wbdjK5bvyQ\u2026, HASHING_SCHEME_VERSION_V2)\n==> The lender funds an offer of 100; the wallet accepts, locking its 150 units\n    wallet signed: accept the loan (100 against 150 units)  (hash nVKlBOblTlQW\u2026, HASHING_SCHEME_VERSION_V2)\n==> The valuer drops the price to 0.62 (LTV 107.5%); the lender issues a margin call\n    margin call open\n==> The wallet cures the call by paying down 30\n    wallet signed: split 30 from the principal  (hash XFPeL5DOQtYB\u2026, HASHING_SCHEME_VERSION_V2)\n    wallet signed: pay down 30  (hash 86wBgxM8cFE8\u2026, HASHING_SCHEME_VERSION_V2)\n    margin call after pay-down: cleared\n==> The wallet repays the remaining 75 and gets its collateral back\n    wallet signed: pay down 70  (hash baYjCNhl8NGN\u2026, HASHING_SCHEME_VERSION_V2)\n    wallet signed: split 5 from its own cash  (hash zA1KuysQCKP7\u2026, HASHING_SCHEME_VERSION_V2)\n    wallet signed: repay the last 5  (hash jxCVYXnaZQPR\u2026, HASHING_SCHEME_VERSION_V2)\n    loan closed: Repaid, collateral released: true\n==> Without the key, the participant cannot act for the wallet\n    plain submission as the wallet, on its live 100 cash, refused: cannot submit as the given submitter\n==> Summary\n    9 transactions signed by the wallet's own key; none by the participant on its behalf",
+  "output": {
+    "file": "docs/veil-wallet-localnet-demo.mp4",
+    "sha256": "48d63a450cf8ae47c7179b0ee3abb0bbc629fb259555008bf3fa14dc613b7c0d",
+    "format": "1600x900 H.264/AAC 25 fps",
+    "durationS": 78.886
+  },
+  "setup": "BitSafe DecMan hackathon LocalNet (Canton 3.5.8), participant 1 JSON API on :3975. wallet/localnet/demo.mjs ran with VEIL_DEMO_STEP=1; the page shows its real output."
+}
