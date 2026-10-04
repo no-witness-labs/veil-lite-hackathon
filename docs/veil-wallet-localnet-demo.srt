@@ -1,48 +1,48 @@
 1
-00:00:00,300 --> 00:00:11,460
-This is a LocalNet prototype of a self-custody borrower for Veil. The borrower is an external Canton party: its signing key stays with the user, and the node can only act for it with that key's signature.
+00:00:00,300 --> 00:00:15,740
+This is a LocalNet prototype of a self-custody borrower for Veil. The borrower is an external Canton party: its signing key stays with the user. Before every signature, the wallet decodes the transaction, recomputes its hash and checks it matches what the user asked for.
 
 2
-00:00:12,237 --> 00:00:18,057
+00:00:16,513 --> 00:00:22,333
 The wallet generates its own key and is allocated as an external party. Only the public key leaves the wallet.
 
 3
-00:00:18,761 --> 00:00:23,711
+00:00:23,038 --> 00:00:27,988
 A small onboarding package is installed on the node. Veil's core contracts are unchanged.
 
 4
-00:00:24,415 --> 00:00:29,235
+00:00:28,689 --> 00:00:33,509
 The issuer, lender, valuer and regulator are ordinary parties on the same node.
 
 5
-00:00:29,942 --> 00:00:36,462
-The issuer offers the wallet T-Bill units and cash. Each acceptance is prepared by the node and signed by the wallet's key.
+00:00:34,218 --> 00:00:43,138
+The issuer offers the wallet T-Bill units and cash. For each acceptance, the wallet verifies the prepared transaction and recomputes its hash before signing.
 
 6
-00:00:37,169 --> 00:00:41,989
+00:00:43,842 --> 00:00:48,662
 The lender and valuer invite the wallet to a price stream, and the wallet signs to join it.
 
 7
-00:00:42,691 --> 00:00:49,041
+00:00:49,364 --> 00:00:55,714
 The lender funds an offer of one hundred, and the wallet signs to accept it, locking its one hundred and fifty units.
 
 8
-00:00:49,743 --> 00:00:53,973
+00:00:56,423 --> 00:01:00,653
 The price drops to sixty-two cents, and the lender issues a margin call.
 
 9
-00:00:54,677 --> 00:00:58,267
+00:01:01,360 --> 00:01:04,950
 The wallet signs a pay-down of thirty, and the margin call clears.
 
 10
-00:00:58,969 --> 00:01:02,689
+00:01:05,661 --> 00:01:09,381
 It signs the remaining repayments, and its collateral comes back.
 
 11
-00:01:03,392 --> 00:01:08,532
+00:01:10,101 --> 00:01:15,231
 Finally, the node tries to act for the wallet without a signature, and Canton refuses it.
 
 12
-00:01:09,245 --> 00:01:18,885
-Nine transactions, all signed by the wallet's own key. This is a prototype: it does not yet decode and verify what it signs, and it runs on LocalNet only.
+00:01:15,937 --> 00:01:25,617
+Nine transactions, each verified and then signed by the wallet's own key. This is a prototype that runs on LocalNet; the repository lists what it does not check yet.
 

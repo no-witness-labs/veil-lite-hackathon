@@ -32,6 +32,14 @@ template StreamConsent
           valuationAgent; lender; borrower; regulator; collateralAsset
         exercise streamCid PublishInitial with unitPrice = initialPrice
 
+-- | A price proposal must execute promptly. Veil stamps a mark with the time
+-- it is published, so a price confirmed now but executed hours later would
+-- look fresh to the loan's five-minute freshness check.
+checkDeadline : Time -> Update ()
+checkDeadline executeBefore = do
+  now <- getTime
+  assertMsg "proposal has expired" (now <= executeBefore)
+
 -- | Committee action: open the agreed stream and publish its first mark.
 template OpenStreamProposal
   with
@@ -40,6 +48,7 @@ template OpenStreamProposal
     consentCid : ContractId StreamConsent
     collateralAsset : Text
     initialPrice : Decimal
+    executeBefore : Time
   where
     signatory proposer
     observer governanceParty
@@ -49,9 +58,10 @@ template OpenStreamProposal
         governanceParty
         proposer
         actionLabel = "VeilOpenPriceStream"
-        description = "Open a " <> collateralAsset <> " price stream at " <> show initialPrice
+        description = "Open a " <> collateralAsset <> " price stream at " <> show initialPrice <> " (execute before " <> show executeBefore <> ")"
 
       executeImpl = do
+        checkDeadline executeBefore
         consent <- fetch consentCid
         assertMsg "consent names another valuation agent" (consent.valuationAgent == governanceParty)
         assertMsg "consent does not match the proposal"
@@ -70,6 +80,7 @@ template PublishMarkProposal
     collateralAsset : Text
     previousPrice : Decimal
     newPrice : Decimal
+    executeBefore : Time
   where
     signatory proposer
     observer governanceParty
@@ -80,9 +91,10 @@ template PublishMarkProposal
         governanceParty
         proposer
         actionLabel = "VeilPublishMark"
-        description = collateralAsset <> ": " <> show previousPrice <> " -> " <> show newPrice
+        description = collateralAsset <> ": " <> show previousPrice <> " -> " <> show newPrice <> " (execute before " <> show executeBefore <> ")"
 
       executeImpl = do
+        checkDeadline executeBefore
         mark <- fetch markCid
         assertMsg "mark belongs to another valuation agent" (mark.valuationAgent == governanceParty)
         assertMsg "mark is for another asset" (mark.collateralAsset == collateralAsset)

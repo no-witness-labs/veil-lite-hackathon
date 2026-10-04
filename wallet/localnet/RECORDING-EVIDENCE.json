@@ -1,75 +1,75 @@
 {
-  "recordedAt": "2026-09-30T15:39:03.995Z",
+  "recordedAt": "2026-10-04T08:15:02.152Z",
   "scenes": [
     {
       "id": "intro",
       "startMs": 0,
-      "endMs": 11937
+      "endMs": 16213
     },
     {
       "id": "key",
-      "startMs": 11937,
-      "endMs": 18461
+      "startMs": 16213,
+      "endMs": 22738
     },
     {
       "id": "install",
-      "startMs": 18461,
-      "endMs": 24115
+      "startMs": 22738,
+      "endMs": 28389
     },
     {
       "id": "parties",
-      "startMs": 24115,
-      "endMs": 29642
+      "startMs": 28389,
+      "endMs": 33918
     },
     {
       "id": "grants",
-      "startMs": 29642,
-      "endMs": 36869
+      "startMs": 33918,
+      "endMs": 43542
     },
     {
       "id": "stream",
-      "startMs": 36869,
-      "endMs": 42391
+      "startMs": 43542,
+      "endMs": 49064
     },
     {
       "id": "loan",
-      "startMs": 42391,
-      "endMs": 49443
+      "startMs": 49064,
+      "endMs": 56123
     },
     {
       "id": "stress",
-      "startMs": 49443,
-      "endMs": 54377
+      "startMs": 56123,
+      "endMs": 61060
     },
     {
       "id": "cure",
-      "startMs": 54377,
-      "endMs": 58669
+      "startMs": 61060,
+      "endMs": 65361
     },
     {
       "id": "repay",
-      "startMs": 58669,
-      "endMs": 63092
+      "startMs": 65361,
+      "endMs": 69800
     },
     {
       "id": "refuse",
-      "startMs": 63092,
-      "endMs": 68945
+      "startMs": 69801,
+      "endMs": 75637
     },
     {
       "id": "outro",
-      "startMs": 68945,
-      "endMs": 79296
+      "startMs": 75637,
+      "endMs": 86022
     }
   ],
   "exitCode": 0,
-  "totalMs": 80497,
-  "log": "==> The wallet makes its own key and becomes a Canton party\n    wallet party veil-wallet-1790782755930 (key fingerprint 12205dac4fee32b0\u2026); the private key never left this process\n==> Installing veil-wallet on participant 1\n    uploaded and vetted\n==> Issuer, lender, valuer and regulator (ordinary parties on participant 1)\n    lender veil-lender-1790782755930 \u00b7 valuer veil-valuer-1790782755930\n==> The issuer grants the wallet 150 T-Bill units and 105 cash; the wallet accepts\n    wallet signed: accept 150 T-Bill units  (hash ymTFs9NHC5Nr\u2026, HASHING_SCHEME_VERSION_V2)\n    wallet signed: accept 105 cash  (hash +tYfOS8VQEsW\u2026, HASHING_SCHEME_VERSION_V2)\n==> Lender and valuer invite the wallet to a T-Bill price stream at 1.00; the wallet accepts\n    wallet signed: join the price stream  (hash e/wbdjK5bvyQ\u2026, HASHING_SCHEME_VERSION_V2)\n==> The lender funds an offer of 100; the wallet accepts, locking its 150 units\n    wallet signed: accept the loan (100 against 150 units)  (hash nVKlBOblTlQW\u2026, HASHING_SCHEME_VERSION_V2)\n==> The valuer drops the price to 0.62 (LTV 107.5%); the lender issues a margin call\n    margin call open\n==> The wallet cures the call by paying down 30\n    wallet signed: split 30 from the principal  (hash XFPeL5DOQtYB\u2026, HASHING_SCHEME_VERSION_V2)\n    wallet signed: pay down 30  (hash 86wBgxM8cFE8\u2026, HASHING_SCHEME_VERSION_V2)\n    margin call after pay-down: cleared\n==> The wallet repays the remaining 75 and gets its collateral back\n    wallet signed: pay down 70  (hash baYjCNhl8NGN\u2026, HASHING_SCHEME_VERSION_V2)\n    wallet signed: split 5 from its own cash  (hash zA1KuysQCKP7\u2026, HASHING_SCHEME_VERSION_V2)\n    wallet signed: repay the last 5  (hash jxCVYXnaZQPR\u2026, HASHING_SCHEME_VERSION_V2)\n    loan closed: Repaid, collateral released: true\n==> Without the key, the participant cannot act for the wallet\n    plain submission as the wallet, on its live 100 cash, refused: cannot submit as the given submitter\n==> Summary\n    9 transactions signed by the wallet's own key; none by the participant on its behalf",
+  "totalMs": 87225,
+  "log": "==> The wallet makes its own key and becomes a Canton party\n    wallet party veil-wallet-1791101718361 (key fingerprint 1220047d6724ad2e\u2026); the private key never left this process\n==> Installing veil-wallet on participant 1\n    uploaded and vetted\n==> Issuer, lender, valuer and regulator (ordinary parties on participant 1)\n    lender veil-lender-1791101718361 \u00b7 valuer veil-valuer-1791101718361\n==> The issuer grants the wallet 150 T-Bill units and 105 cash; the wallet accepts\n    wallet verified: Veil.Wallet.Onboarding:CollateralGrant.CollateralGrant_Accept {} on 00c9ff6b6d\u2026 as veil-wallet-1791101718361; archives CollateralGrant 00c9ff6b6d\u2026; creates CollateralHolding(owner veil-wallet-1791101718361, quantity 150)\n    wallet signed: accept 150 T-Bill units  (hash ivzQFKjHhaaE\u2026, recomputed and matched, HASHING_SCHEME_VERSION_V2)\n    wallet verified: Veil.Wallet.Onboarding:CashGrant.CashGrant_Accept {} on 00391e8d1b\u2026 as veil-wallet-1791101718361; archives CashGrant 00391e8d1b\u2026; creates CashHolding(owner veil-wallet-1791101718361, amount 105)\n    wallet signed: accept 105 cash  (hash udCa1XPnWv0J\u2026, recomputed and matched, HASHING_SCHEME_VERSION_V2)\n==> Lender and valuer invite the wallet to a T-Bill price stream at 1.00; the wallet accepts\n    wallet verified: Veil.Wallet.Onboarding:StreamInvite.StreamInvite_Accept {} on 00e8099db9\u2026 as veil-wallet-1791101718361; archives StreamInvite 00e8099db9\u2026, ValuationStream 00f157f330\u2026; creates ValuationStream, CollateralValuation(unitPrice 1)\n    wallet signed: join the price stream  (hash DWkuPGJBEfR8\u2026, recomputed and matched, HASHING_SCHEME_VERSION_V2)\n==> The lender funds an offer of 100; the wallet accepts, locking its 150 units\n    wallet verified: Veil:LoanOffer.Accept {collateralCid 002ce33c2b\u2026, valuationCid 00722924d2\u2026} on 0036949820\u2026 as veil-wallet-1791101718361; archives LoanOffer 0036949820\u2026, CollateralHolding 002ce33c2b\u2026; creates CashHolding(owner veil-wallet-1791101718361, amount 100), Loan(principal 100)\n    wallet signed: accept the loan (100 against 150 units)  (hash vFcoQIpn+JzH\u2026, recomputed and matched, HASHING_SCHEME_VERSION_V2)\n==> The valuer drops the price to 0.62 (LTV 107.5%); the lender issues a margin call\n    margin call open\n==> The wallet cures the call by paying down 30\n    wallet verified: Veil:CashHolding.Split {splitAmount 30} on 004f3bf790\u2026 as veil-wallet-1791101718361; archives CashHolding 004f3bf790\u2026; creates CashHolding(owner veil-wallet-1791101718361, amount 30), CashHolding(owner veil-wallet-1791101718361, amount 70)\n    wallet signed: split 30 from the principal  (hash I6CJRTgeg6nQ\u2026, recomputed and matched, HASHING_SCHEME_VERSION_V2)\n    wallet verified: Veil:Loan.PartialRepay {paymentCid 005ca7d237\u2026, valuationCid 00522b04d7\u2026} on 005a2c2031\u2026 as veil-wallet-1791101718361; archives Loan 005a2c2031\u2026, CashHolding 005ca7d237\u2026; creates CashHolding(owner veil-lender-1791101718361, amount 30), Loan(principal 100, amountRepaid 30)\n    wallet signed: pay down 30  (hash g1U6g6EQp77t\u2026, recomputed and matched, HASHING_SCHEME_VERSION_V2)\n    margin call after pay-down: cleared\n==> The wallet repays the remaining 75 and gets its collateral back\n    wallet verified: Veil:Loan.PartialRepay {paymentCid 003edc5af7\u2026, valuationCid 00522b04d7\u2026} on 00fc03cdf2\u2026 as veil-wallet-1791101718361; archives Loan 00fc03cdf2\u2026, CashHolding 003edc5af7\u2026; creates CashHolding(owner veil-lender-1791101718361, amount 70), Loan(principal 100, amountRepaid 100)\n    wallet signed: pay down 70  (hash ZKf6fokd1I51\u2026, recomputed and matched, HASHING_SCHEME_VERSION_V2)\n    wallet verified: Veil:CashHolding.Split {splitAmount 5} on 005c9cdfb0\u2026 as veil-wallet-1791101718361; archives CashHolding 005c9cdfb0\u2026; creates CashHolding(owner veil-wallet-1791101718361, amount 5), CashHolding(owner veil-wallet-1791101718361, amount 100)\n    wallet signed: split 5 from its own cash  (hash uEa84ZcKf62W\u2026, recomputed and matched, HASHING_SCHEME_VERSION_V2)\n    wallet verified: Veil:Loan.Repay {repaymentCid 0013f93d21\u2026} on 00b99253e2\u2026 as veil-wallet-1791101718361; archives Loan 00b99253e2\u2026, CashHolding 0013f93d21\u2026; creates CashHolding(owner veil-lender-1791101718361, amount 5), CollateralHolding(owner veil-wallet-1791101718361, quantity 150), LoanClosed(principal 100, amountRepaid 105)\n    wallet signed: repay the last 5  (hash cDclcYxftzVx\u2026, recomputed and matched, HASHING_SCHEME_VERSION_V2)\n    loan closed: Repaid, collateral released: true\n==> Without the key, the participant cannot act for the wallet\n    plain submission as the wallet, on its live 100 cash, refused: cannot submit as the given submitter\n==> Summary\n    9 transactions signed by the wallet's own key; none by the participant on its behalf",
   "output": {
     "file": "docs/veil-wallet-localnet-demo.mp4",
-    "sha256": "48d63a450cf8ae47c7179b0ee3abb0bbc629fb259555008bf3fa14dc613b7c0d",
+    "sha256": "ba6bdf70b0c65e9328e6215495f4ab8681f09a2ae741660327454563796b5fd4",
     "format": "1600x900 H.264/AAC 25 fps",
-    "durationS": 78.886
+    "durationS": 85.612
   },
-  "setup": "BitSafe DecMan hackathon LocalNet (Canton 3.5.8), participant 1 JSON API on :3975. wallet/localnet/demo.mjs ran with VEIL_DEMO_STEP=1; the page shows its real output."
+  "setup": "BitSafe DecMan hackathon LocalNet (Canton 3.5.8), wiped with reset.sh and brought up fresh; participant 1 JSON API on :3975. wallet/localnet/demo.mjs (with transaction verification) ran with VEIL_DEMO_STEP=1; the page shows its real output."
 }

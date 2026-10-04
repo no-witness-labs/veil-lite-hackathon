@@ -15,7 +15,9 @@ threshold of its members agree, using BitSafe's
 Both proposals implement DecMan's `GovernableAction`, so `GovernanceRules`
 executes them only after enough members confirm, and records a
 `GovernanceExecutionResult` for the audit trail. A proposal names the exact mark
-it replaces, so it cannot execute after another publish.
+it replaces, so it cannot execute after another publish. Each proposal also has a deadline
+(`executeBefore`): Veil stamps a mark with the time it is published, so a price
+confirmed now but executed hours later would otherwise look fresh.
 
 ## Build and test
 

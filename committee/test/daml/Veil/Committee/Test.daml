@@ -4,7 +4,7 @@ import Daml.Script
 import DA.Assert ((===))
 import DA.Date
 import qualified DA.Set as Set
-import DA.Time (hours, time)
+import DA.Time (addRelTime, hours, minutes, time)
 import Governance.Action
 import Governance.Confirmation
 import Governance.Rules
@@ -62,6 +62,7 @@ testCommitteeRunsTheLoanPrice = do
   -- Offers must mature within ten years of ledger time.
   setTime (time (date 2026 Sep 30) 12 0 0)
   c <- setupCommittee
+  deadline <- (`addRelTime` minutes 10) <$> getTime
   [issuer, lender, borrower, regulator] <- mapA allocateParty ["issuer", "lender", "borrower", "regulator"]
   consent <- submit (actAs lender <> actAs borrower) do
     createCmd StreamConsent with
@@ -69,6 +70,7 @@ testCommitteeRunsTheLoanPrice = do
 
   open <- submit c.m1 do
     createCmd OpenStreamProposal with
+      executeBefore = deadline
       governanceParty = c.gov; proposer = c.m1; consentCid = consent; collateralAsset = tbill; initialPrice = 1.0
   let openAction = toInterfaceContractId @GovernableAction open
   one <- confirm c c.m1 openAction
@@ -97,6 +99,7 @@ testCommitteeRunsTheLoanPrice = do
   -- The committee drops the price: 100 / (150 * 0.62) = 107.5% LTV.
   drop <- submit c.m2 do
     createCmd PublishMarkProposal with
+      executeBefore = deadline
       governanceParty = c.gov; proposer = c.m2; markCid; collateralAsset = tbill
       previousPrice = 1.0; newPrice = 0.62
   let dropAction = toInterfaceContractId @GovernableAction drop
@@ -113,12 +116,14 @@ testCommitteeRunsTheLoanPrice = do
 testStaleOrForeignProposalsFail : Script ()
 testStaleOrForeignProposalsFail = do
   c <- setupCommittee
+  deadline <- (`addRelTime` minutes 10) <$> getTime
   [lender, borrower, regulator, outsider] <- mapA allocateParty ["lender", "borrower", "regulator", "outsider"]
   consent <- submit (actAs lender <> actAs borrower) do
     createCmd StreamConsent with
       valuationAgent = c.gov; lender; borrower; regulator; collateralAsset = tbill; initialPrice = 1.0
   open <- submit c.m1 do
     createCmd OpenStreamProposal with
+      executeBefore = deadline
       governanceParty = c.gov; proposer = c.m1; consentCid = consent; collateralAsset = tbill; initialPrice = 1.0
   let openAction = toInterfaceContractId @GovernableAction open
   x <- confirm c c.m1 openAction
@@ -128,9 +133,11 @@ testStaleOrForeignProposalsFail = do
 
   first <- submit c.m1 do
     createCmd PublishMarkProposal with
+      executeBefore = deadline
       governanceParty = c.gov; proposer = c.m1; markCid; collateralAsset = tbill; previousPrice = 1.0; newPrice = 0.9
   second <- submit c.m2 do
     createCmd PublishMarkProposal with
+      executeBefore = deadline
       governanceParty = c.gov; proposer = c.m2; markCid; collateralAsset = tbill; previousPrice = 1.0; newPrice = 1.1
   let firstAction = toInterfaceContractId @GovernableAction first
       secondAction = toInterfaceContractId @GovernableAction second
@@ -155,6 +162,7 @@ testStaleOrForeignProposalsFail = do
   -- price cannot execute even when the confirmations are valid.
   wrong <- submit c.m3 do
     createCmd PublishMarkProposal with
+      executeBefore = deadline
       governanceParty = c.gov; proposer = c.m3; markCid = currentCid; collateralAsset = tbill
       previousPrice = 1.0; newPrice = 0.5
   let wrongAction = toInterfaceContractId @GovernableAction wrong
@@ -168,12 +176,14 @@ testStaleOrForeignProposalsFail = do
 testOpenMustMatchConsent : Script ()
 testOpenMustMatchConsent = do
   c <- setupCommittee
+  deadline <- (`addRelTime` minutes 10) <$> getTime
   [lender, borrower, regulator] <- mapA allocateParty ["lender", "borrower", "regulator"]
   consent <- submit (actAs lender <> actAs borrower) do
     createCmd StreamConsent with
       valuationAgent = c.gov; lender; borrower; regulator; collateralAsset = tbill; initialPrice = 1.0
   open <- submit c.m1 do
     createCmd OpenStreamProposal with
+      executeBefore = deadline
       governanceParty = c.gov; proposer = c.m1; consentCid = consent; collateralAsset = tbill; initialPrice = 5.0
   let action = toInterfaceContractId @GovernableAction open
   p <- confirm c c.m1 action
@@ -183,3 +193,37 @@ testOpenMustMatchConsent = do
       executor = c.m3; actionProposalCid = action; confirmations = [p, q]
   marks <- query @CollateralValuation lender
   length marks === 0
+
+-- A confirmed price cannot be executed after its deadline: Veil stamps a mark
+-- with the time it is published, so a late execution would look fresh.
+testExpiredProposalCannotExecute : Script ()
+testExpiredProposalCannotExecute = do
+  c <- setupCommittee
+  deadline <- (`addRelTime` minutes 10) <$> getTime
+  [lender, borrower, regulator] <- mapA allocateParty ["lender", "borrower", "regulator"]
+  consent <- submit (actAs lender <> actAs borrower) do
+    createCmd StreamConsent with
+      valuationAgent = c.gov; lender; borrower; regulator; collateralAsset = tbill; initialPrice = 1.0
+  open <- submit c.m1 do
+    createCmd OpenStreamProposal with
+      executeBefore = deadline
+      governanceParty = c.gov; proposer = c.m1; consentCid = consent; collateralAsset = tbill; initialPrice = 1.0
+  let openAction = toInterfaceContractId @GovernableAction open
+  x <- confirm c c.m1 openAction
+  y <- confirm c c.m2 openAction
+  execute c c.m1 openAction [x, y]
+  (markCid, _) <- currentMark lender
+
+  late <- submit c.m2 do
+    createCmd PublishMarkProposal with
+      executeBefore = deadline
+      governanceParty = c.gov; proposer = c.m2; markCid; collateralAsset = tbill; previousPrice = 1.0; newPrice = 0.62
+  let lateAction = toInterfaceContractId @GovernableAction late
+  a <- confirm c c.m2 lateAction
+  b <- confirm c c.m3 lateAction
+  passTime (minutes 11)
+  submitMustFail (actAs c.m1 <> readAs c.gov) do
+    exerciseCmd c.rules GovernanceRules_ExecuteConfirmedAction with
+      executor = c.m1; actionProposalCid = lateAction; confirmations = [a, b]
+  (_, mark) <- currentMark lender
+  mark.unitPrice === 1.0
