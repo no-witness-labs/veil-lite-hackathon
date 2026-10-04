@@ -113,10 +113,11 @@ wrong hash, any other hashing scheme, and an intent mismatch.
 ## Recording
 
 [`docs/veil-wallet-localnet-demo.mp4`](../docs/veil-wallet-localnet-demo.mp4)
-(1:19, [YouTube](https://youtu.be/q-W_29Ro4kM), [subtitles](../docs/veil-wallet-localnet-demo.srt)) shows `demo.mjs`
-running on LocalNet with `VEIL_DEMO_STEP=1`, which pauses before each step. The
-panel shows the script's real output; the evidence, with the full log and the
-MP4's SHA-256, is in [`localnet/RECORDING-EVIDENCE.json`](localnet/RECORDING-EVIDENCE.json).
-Narration is the macOS Samantha voice. The recording predates the checks above,
-so it does not show the `wallet verified:` lines; with LocalNet down, the demo
-with verification has been syntax-checked but not run.
+(1:26, [subtitles](../docs/veil-wallet-localnet-demo.srt)) shows `demo.mjs` with
+transaction verification running on a freshly reset LocalNet, with
+`VEIL_DEMO_STEP=1`, which pauses before each step. Before each of the nine
+signatures it prints `wallet verified:` with what the transaction does; the
+wallet card shows the last verified summary. The panel shows the script's real
+output; the evidence, with the full log and the MP4's SHA-256, is in
+[`localnet/RECORDING-EVIDENCE.json`](localnet/RECORDING-EVIDENCE.json).
+Narration is the macOS Samantha voice.
