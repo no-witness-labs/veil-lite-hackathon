@@ -89,6 +89,15 @@ repaidTotal = fromOptional 0.0
 outstandingPrincipal : Decimal -> Decimal -> Optional Decimal -> Decimal
 outstandingPrincipal principal interest amountRepaid = principal - max 0.0 (repaidTotal amountRepaid - interest)
 
+-- What a settlement costs and what a close-out nets, interest included.
+outstandingBalance : Decimal -> Decimal -> Optional Decimal -> Decimal
+outstandingBalance principal interest amountRepaid = principal + interest - repaidTotal amountRepaid
+
+-- LTV points a release must leave clear of the threshold, so a withdrawal
+-- cannot hand the lender a margin call on the next tick.
+releaseHeadroomLtv : Decimal
+releaseHeadroomLtv = 10.0
+
 -- The demo issuer authorizes issuance. Spending choices carry that authority
 -- forward without giving the owner permission to create arbitrary holdings.
 template CashHolding
@@ -446,6 +455,31 @@ template Loan
         archive collateralCid
         create this with collateralQuantity = totalQuantity; marginCall = None
 
+    -- | Mirror of TopUpCollateral: the borrower withdraws collateral the loan
+    -- no longer needs. The lender authorized the threshold by signing this
+    -- Loan, so the guard replaces its consent: checked on the balance a
+    -- close-out nets, with headroom to spare.
+    choice ReleaseExcessCollateral : (ContractId Loan, ContractId CollateralHolding)
+      with
+        releaseQuantity : Decimal
+        valuationCid : ContractId CollateralValuation
+      controller borrower
+      do
+        now <- getTime
+        assertMsg "cannot release collateral at or after maturity" (now < maturity)
+        assertMsg "cannot release collateral while a margin call is open" (marginCall == None)
+        assertMsg "release must be positive and leave collateral behind; use Repay to take it all"
+          (releaseQuantity > 0.0 && releaseQuantity < collateralQuantity)
+        unitPrice <- checkedPrice valuationAgent lender borrower regulator collateralAsset valuationStreamId valuationCid
+        let remainingQuantity = collateralQuantity - releaseQuantity
+        assertMsg "release must leave the loan clear of the liquidation threshold"
+          ((outstandingBalance principal interest amountRepaid / (remainingQuantity * unitPrice)) * 100.0
+            <= liquidationThresholdLtv - releaseHeadroomLtv)
+        releasedCid <- create CollateralHolding with
+          issuer; owner = borrower; asset = collateralAsset; quantity = releaseQuantity
+        loanCid <- create this with collateralQuantity = remainingQuantity
+        pure (loanCid, releasedCid)
+
     -- A recovered price can cure the call without an unnecessary deposit.
     choice ResolveMarginCall : ContractId Loan
       with
@@ -532,7 +566,7 @@ template Loan
         repaymentCid : ContractId CashHolding
       controller borrower
       do
-        let repayment = principal + interest - repaidTotal amountRepaid
+        let repayment = outstandingBalance principal interest amountRepaid
         cash <- fetch repaymentCid
         assertMsg "repayment issuer mismatch" (cash.issuer == issuer)
         assertMsg "repayment cash must be owned by the borrower" (cash.owner == borrower)
@@ -644,7 +678,7 @@ template LoanClosed
 closeOut : Loan -> Text -> Decimal -> Update (ContractId LoanClosed)
 closeOut loan reason unitPrice = do
   now <- getTime
-  let owed = loan.principal + loan.interest - repaidTotal loan.amountRepaid
+  let owed = outstandingBalance loan.principal loan.interest loan.amountRepaid
       seized = seizedQuantity loan.collateralQuantity owed unitPrice
       returned = loan.collateralQuantity - seized
   _ <- create CollateralHolding with
@@ -915,7 +949,7 @@ template CoinLoan
         cancelExtraArgs : ExtraArgs
       controller borrower
       do
-        let repayment = principal + interest - repaidTotal amountRepaid
+        let repayment = outstandingBalance principal interest amountRepaid
         cash <- fetch repaymentCid
         assertMsg "repayment issuer mismatch" (cash.issuer == issuer)
         assertMsg "repayment cash must be owned by the borrower" (cash.owner == borrower)

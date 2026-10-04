@@ -1440,6 +1440,75 @@ testPartialRepaymentMaturity = script do
   submitMustFail borrower do exerciseCmd loanCid PartialRepay with paymentCid = ten; valuationCid = None
   pure ()
 
+-- 55 paid leaves a 50 balance, so 87.5 of the 150 locked units is spare at 1.0.
+testReleaseExcessCollateralAfterPaydown : Script ()
+testReleaseExcessCollateralAfterPaydown = script do
+  setTime testStart
+  ((issuer, _, borrower, regulator, _), (loanCid, mark, cash)) <- paydownSetup
+  (paidCid, rest) <- payDown borrower loanCid cash 55.0 None
+  -- 50 / 62.4 = 80.1%, a hair over the clearance a release has to leave.
+  submitMustFail borrower do
+    exerciseCmd paidCid ReleaseExcessCollateral with releaseQuantity = 87.6; valuationCid = mark
+  -- 50 / 62.5 = 80.0%, exactly the 10 points of headroom below the 90% threshold.
+  (releasedLoanCid, releasedCid) <- submit borrower do
+    exerciseCmd paidCid ReleaseExcessCollateral with releaseQuantity = 87.5; valuationCid = mark
+  Some releasedLoan <- queryContractId regulator releasedLoanCid
+  releasedLoan.collateralQuantity === 62.5
+  releasedLoan.amountRepaid === Some 55.0
+  releasedLoan.marginCall === None
+  Some released <- queryContractId borrower releasedCid
+  (released.quantity, released.owner, released.issuer) === (87.5, borrower, issuer)
+  -- Settling the remaining 50 returns the rest: the 150 units are conserved.
+  (final, _) <- submit borrower do exerciseCmd rest Split with splitAmount = 50.0
+  closedCid <- submit borrower do exerciseCmd releasedLoanCid Repay with repaymentCid = final
+  Some closed <- queryContractId regulator closedCid
+  closed.reason === "Repaid"
+  closed.collateralQuantity === 62.5
+  collateralQuantities borrower >>= \quantities -> quantities === [62.5, 87.5]
+
+testReleaseExcessCollateralGuards : Script ()
+testReleaseExcessCollateralGuards = script do
+  setTime testStart
+  ((_, lender, borrower, regulator, valuationAgent), (loanCid, mark, _)) <- paydownSetup
+  -- Without a paydown the balance is 105 against 150 units: only 18.75 is spare.
+  submitMustFail borrower do
+    exerciseCmd loanCid ReleaseExcessCollateral with releaseQuantity = 20.0; valuationCid = mark
+  submitMustFail borrower do
+    exerciseCmd loanCid ReleaseExcessCollateral with releaseQuantity = 0.0; valuationCid = mark
+  -- A release must leave collateral behind; Repay is how you take it all back.
+  submitMustFail borrower do
+    exerciseCmd loanCid ReleaseExcessCollateral with releaseQuantity = 150.0; valuationCid = mark
+  submitMustFail borrower do
+    exerciseCmd loanCid ReleaseExcessCollateral with releaseQuantity = 200.0; valuationCid = mark
+  -- Only the borrower withdraws, and only against a fresh mark.
+  submitMustFail lender do
+    exerciseCmd loanCid ReleaseExcessCollateral with releaseQuantity = 18.75; valuationCid = mark
+  setTime (addRelTime testStart (seconds 301))
+  submitMustFail borrower do
+    exerciseCmd loanCid ReleaseExcessCollateral with releaseQuantity = 18.75; valuationCid = mark
+  fresh <- publishPrice valuationAgent mark 1.0
+  -- 105 / 131.25 = 80.0%, the exact clearance required.
+  (releasedLoanCid, releasedCid) <- submit borrower do
+    exerciseCmd loanCid ReleaseExcessCollateral with releaseQuantity = 18.75; valuationCid = fresh
+  Some releasedLoan <- queryContractId regulator releasedLoanCid
+  releasedLoan.collateralQuantity === 131.25
+  Some released <- queryContractId borrower releasedCid
+  released.quantity === 18.75
+  -- 100 / (131.25 * 0.8) = 95.2%, a breach on the reduced collateral.
+  stressed <- publishPrice valuationAgent fresh 0.8
+  calledCid <- submit lender do exerciseCmd releasedLoanCid IssueMarginCall with valuationCid = stressed
+  submitMustFail borrower do
+    exerciseCmd calledCid ReleaseExcessCollateral with releaseQuantity = 1.0; valuationCid = stressed
+
+testReleaseExcessCollateralMaturity : Script ()
+testReleaseExcessCollateralMaturity = script do
+  setTime testStart
+  ((_, _, borrower, _, valuationAgent), (loanCid, mark, _)) <- paydownSetup
+  setTime maturityTime
+  fresh <- publishPrice valuationAgent mark 1.0
+  submitMustFail borrower do
+    exerciseCmd loanCid ReleaseExcessCollateral with releaseQuantity = 18.75; valuationCid = fresh
+
 
 noExtra : ExtraArgs
 noExtra = ExtraArgs with context = emptyChoiceContext; meta = emptyMetadata
