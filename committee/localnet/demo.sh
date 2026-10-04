@@ -118,6 +118,9 @@ execute_on() {
     info "$(node_name "$idx") executed with confirmations $confirmations"
 }
 
+# Committee proposals must execute within ten minutes of being made.
+deadline() { date -u -v+10M +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '+10 minutes' +%Y-%m-%dT%H:%M:%SZ; }
+
 # The single current price mark the lender sees on the committee's stream.
 current_mark() {
     local end
@@ -146,8 +149,8 @@ CONSENT=$(submit "$P1" "[\"$LENDER\",\"$BORROWER\"]" '[]' "$(jq -n --arg v "$DEC
 info "consent $CONSENT"
 
 step "Committee: node 1 proposes opening the stream"
-OPEN=$(submit "$P1" "[\"$MEMBER_1\"]" '[]' "$(jq -n --arg g "$DEC_PARTY_ID" --arg m "$MEMBER_1" --arg c "$CONSENT" --arg a "$TBILL" \
-    '{CreateCommand: {templateId: "#veil-price-committee:Veil.Committee.Price:OpenStreamProposal", createArguments: {governanceParty: $g, proposer: $m, consentCid: $c, collateralAsset: $a, initialPrice: "1.0"}}}')" | created OpenStreamProposal)
+OPEN=$(submit "$P1" "[\"$MEMBER_1\"]" '[]' "$(jq -n --arg g "$DEC_PARTY_ID" --arg m "$MEMBER_1" --arg c "$CONSENT" --arg a "$TBILL" --arg eb "$(deadline)" \
+    '{CreateCommand: {templateId: "#veil-price-committee:Veil.Committee.Price:OpenStreamProposal", createArguments: {governanceParty: $g, proposer: $m, consentCid: $c, collateralAsset: $a, initialPrice: "1.0", executeBefore: $eb}}}')" | created OpenStreamProposal)
 confirm_on 1 "$OPEN"
 confirm_on 2 "$OPEN"
 execute_on 3 "$OPEN"
@@ -170,8 +173,8 @@ LOAN=$(submit "$P1" "[\"$BORROWER\"]" '[]' "$(jq -n --arg o "$OFFER" --arg c "$C
 info "loan $LOAN: 100 against 150 T-Bill units at 1.00 (LTV 66.7%)"
 
 step "Committee: node 2 proposes dropping the price to 0.62"
-DROP=$(submit 2975 "[\"$MEMBER_2\"]" '[]' "$(jq -n --arg g "$DEC_PARTY_ID" --arg m "$MEMBER_2" --arg c "$MARK_CID" --arg a "$TBILL" \
-    '{CreateCommand: {templateId: "#veil-price-committee:Veil.Committee.Price:PublishMarkProposal", createArguments: {governanceParty: $g, proposer: $m, markCid: $c, collateralAsset: $a, previousPrice: "1.0", newPrice: "0.62"}}}')" | created PublishMarkProposal)
+DROP=$(submit 2975 "[\"$MEMBER_2\"]" '[]' "$(jq -n --arg g "$DEC_PARTY_ID" --arg m "$MEMBER_2" --arg c "$MARK_CID" --arg a "$TBILL" --arg eb "$(deadline)" \
+    '{CreateCommand: {templateId: "#veil-price-committee:Veil.Committee.Price:PublishMarkProposal", createArguments: {governanceParty: $g, proposer: $m, markCid: $c, collateralAsset: $a, previousPrice: "1.0", newPrice: "0.62", executeBefore: $eb}}}')" | created PublishMarkProposal)
 confirm_on 2 "$DROP"
 sleep 3
 ONE=$(try_get 8081 "/governance/confirmations?party_id=$DEC_PARTY_ID" | jq -r --arg cid "$DROP" 'first(.domain_actions[]? | select(.proposal_cid == $cid) | .can_execute) // false')
