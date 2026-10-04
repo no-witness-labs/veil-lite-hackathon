@@ -113,7 +113,7 @@ wrong hash, any other hashing scheme, and an intent mismatch.
 ## Recording
 
 [`docs/veil-wallet-localnet-demo.mp4`](../docs/veil-wallet-localnet-demo.mp4)
-(1:26, [subtitles](../docs/veil-wallet-localnet-demo.srt)) shows `demo.mjs` with
+(1:26, [YouTube](https://youtu.be/o_4EjcfgKgI), [subtitles](../docs/veil-wallet-localnet-demo.srt)) shows `demo.mjs` with
 transaction verification running on a freshly reset LocalNet, with
 `VEIL_DEMO_STEP=1`, which pauses before each step. Before each of the nine
 signatures it prints `wallet verified:` with what the transaction does; the

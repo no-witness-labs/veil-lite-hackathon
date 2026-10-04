@@ -5,7 +5,7 @@
 **Repository:** https://github.com/no-witness-labs/veil-lite-hackathon
 **Deck:** [`docs/SUBMISSION-DECK.pdf`](SUBMISSION-DECK.pdf)
 **Video:** https://youtu.be/-WDBjhal_3U (2:32, Canton Coin loan on DevNet; file [`docs/veil-season3-cc-demo.mp4`](veil-season3-cc-demo.mp4), see [`SEASON3-RECORDINGS.md`](SEASON3-RECORDINGS.md))
-**LocalNet videos:** price committee https://youtu.be/h2ZJ1PZMuWw · self-custody wallet https://youtu.be/q-W_29Ro4kM
+**LocalNet videos:** price committee https://youtu.be/h2ZJ1PZMuWw · self-custody wallet https://youtu.be/o_4EjcfgKgI
 
 ## One-line description
 
