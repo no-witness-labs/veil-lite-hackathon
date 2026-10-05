@@ -119,3 +119,24 @@ Line numbers refer to `daml/Veil.daml` in 0.10.0.
   return type) was confirmed to fail the build. The build passes with one
   warning on the unchanged `Loan`/`CoinLoan` preconditions: a renamed
   compiler-generated helper, the same as in the 0.8.1 → 0.9.0 check.
+
+## Verified on DevNet after the 0.10.0 upload (Oct 5, 2026)
+
+On hackcanton-01, with real DevNet Canton Coin and package `17fcd804…` (0.10.0) vetted
+alongside `fbdd86ab…` (0.9.0):
+
+- A Canton Coin loan opened through the live app recorded
+  `settlementExecutors = [lender, borrower]`.
+- The lender alone then made its own receiving allocation and called the registry's
+  `SettlementFactory_SettleBatch` with `actors = [lender]`, outside Veil. Canton Coin
+  refused it: *"'actors' does not have the same elements as one of 'allowed actors'"*.
+  The borrower's 1,000 CC stayed locked.
+- Repaying that loan through Veil (`RepayCoin`) released all 1,000 CC to the borrower.
+- A second loan was margin-called and, after the deadline, liquidated by the keeper
+  (`LiquidateCoin` with the joint executors). The 1,000 CC settled to the lender. It was
+  then returned to the demo borrower.
+- Both guided-demo tracks completed on the live site, with two visitors running at the
+  same time.
+
+Side effect: the refused attack left a lender-owned receive-side allocation holding no
+funds; it expires with its settlement deadline.
