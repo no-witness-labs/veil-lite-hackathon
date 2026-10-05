@@ -1,0 +1,5 @@
+veil-lite-0.9.0.dar is the package live on Canton DevNet before 0.10.0, built with
+`dpm build` (SDK 3.5.1) from this repository at commit 1e6f2c0 (main, package 0.9.0).
+Main package id: fbdd86abb1da31062751d5db264f293c71e9074845c1a349524204ddf29afc43.
+The root daml.yaml names it under `upgrades:`, so every build checks that the current
+package is a valid Smart Contract Upgrade of it. SHA256SUMS lists its checksum; CI verifies it.

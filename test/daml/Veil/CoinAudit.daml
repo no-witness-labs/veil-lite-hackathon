@@ -1,0 +1,457 @@
+-- | Regression tests for the 0.10.0 Canton Coin audit (docs/AUDIT-TRIAGE.md).
+-- Each attack below succeeded against 0.9.0 and must now fail.
+module Veil.CoinAudit where
+
+import Daml.Script
+import DA.Assert ((===))
+import DA.Foldable (forA_)
+import DA.Map qualified as Map
+import DA.Time (addRelTime, days, seconds)
+import Veil
+import Veil.CoinMocks
+import Veil.Test
+import Splice.Api.Token.AllocationInstructionV2 qualified as Instr
+import Splice.Api.Token.AllocationV2 qualified as Token
+import Splice.Api.Token.MetadataV1 (emptyMetadata)
+
+-- ---------------------------------------------------------------------------
+-- Impostor registry: a factory that claims the DSO as admin and returns an
+-- allocation that holds nothing and reports success to every action. Its
+-- Cancel uses whatever authority it is handed to write off a victim loan.
+
+template FakeAllocationFactory
+  with
+    owner : Party
+    claimedAdmin : Party
+    victim : Optional (ContractId CoinLoan)
+  where
+    signatory owner
+
+    interface instance Instr.AllocationFactory for FakeAllocationFactory where
+      view = Instr.AllocationFactoryView with admin = claimedAdmin; meta = emptyMetadata
+      allocationFactory_publicFetchImpl _ _ = pure Instr.AllocationFactoryView with admin = claimedAdmin; meta = emptyMetadata
+      allocationFactory_allocateExtraObservers _ = []
+      allocationFactory_allocateImpl _ arg = do
+        cid <- create FakeAllocation with owner; settlement = arg.settlement; allocation = arg.allocation; victim
+        pure Instr.AllocationInstructionResult with
+          output = Instr.AllocationInstructionResult_Completed with allocationCid = toInterfaceContractId cid
+          authorizerChangeCids = mempty
+          meta = emptyMetadata
+
+template FakeAllocation
+  with
+    owner : Party
+    settlement : Token.SettlementInfo
+    allocation : Token.AllocationSpecification
+    victim : Optional (ContractId CoinLoan)
+  where
+    signatory owner
+    observer settlement.executors
+
+    interface instance Token.Allocation for FakeAllocation where
+      view = Token.AllocationView with
+        originalAllocationCid = None
+        settlement
+        allocation
+        holdingCids = []
+        createdAt = testStart
+        numIterations = 0
+        expiresAt = allocation.settlementDeadline
+        availableActions = Map.empty
+        meta = emptyMetadata
+      allocation_settleImpl self _ = do
+        archive (fromInterfaceContractId @FakeAllocation self)
+        pure Token.AllocationResult with
+          output = Token.AllocationResult_Settled with nextIterationAllocationCid = None
+          authorizerHoldingCids = mempty
+          meta = emptyMetadata
+      allocation_cancelImpl self arg = do
+        -- Runs with the authority of arg.actors plus the owner.
+        case victim of
+          Some v -> do
+            _ <- exercise v WriteOffCoin with cancelExtraArgs = arg.extraArgs
+            pure ()
+          None -> pure ()
+        archive (fromInterfaceContractId @FakeAllocation self)
+        pure Token.AllocationResult with output = Token.AllocationResult_Cancelled; authorizerHoldingCids = mempty; meta = emptyMetadata
+      allocation_withdrawImpl self _ = do
+        archive (fromInterfaceContractId @FakeAllocation self)
+        pure Token.AllocationResult with output = Token.AllocationResult_Withdrawn; authorizerHoldingCids = mempty; meta = emptyMetadata
+      allocation_settleExtraObservers _ = []
+      allocation_cancelExtraObservers _ = []
+      allocation_withdrawExtraObservers _ = []
+
+-- ---------------------------------------------------------------------------
+-- Helpers
+
+collateralLeg : CoinFixture -> Token.TransferLeg
+collateralLeg f = Token.TransferLeg with
+  transferLegId = "collateral"
+  sender = coinAccount f.borrower
+  receiver = coinAccount f.lender
+  amount = 150.0
+  instrumentId = coinInstrumentId
+  meta = emptyMetadata
+
+settleBatch : CoinFixture -> [Party] -> Text -> [ContractId Token.Allocation] -> [Party] -> Token.SettlementFactory_SettleBatch
+settleBatch f executors ref allocationCids actors = Token.SettlementFactory_SettleBatch with
+  settlement = coinSettlement executors ref
+  transferLegs = [collateralLeg f]
+  allocations = [Token.FinalizedAllocation with allocationCid; extraTransferLegSides = []; nextIterationFunding = None | allocationCid <- allocationCids]
+  actors
+  extraArgs = noExtra
+
+settleFactory : CoinFixture -> ContractId Token.SettlementFactory
+settleFactory f = toInterfaceContractId f.settle
+
+liquidateOverdue : CoinFixture -> ContractId CoinLoan -> ContractId Token.Allocation -> Commands (ContractId LoanClosed)
+liquidateOverdue f loanCid receipt =
+  exerciseCmd loanCid LiquidateCoinOverdue with settlementFactoryCid = settleFactory f; receiptAllocationCid = receipt; extraArgs = noExtra
+
+-- What 0.9.0's AcceptCoin left on the ledger: a lock executed by the lender
+-- alone and a CoinLoan without the 0.10.0 field. An upgraded read of a 0.9.0
+-- contract fills the missing trailing Optional with None.
+legacyCoinLoan : CoinFixture -> Text -> Optional (ContractId Token.Allocation) -> Script (ContractId CoinLoan)
+legacyCoinLoan f ref existingLock = do
+  Some mark <- queryContractId f.lender f.mark
+  lock <- case existingLock of
+    Some cid -> pure cid
+    None -> do
+      cid <- (actAs f.dso <> actAs f.borrower) `submit` do
+        createCmd MockAllocation with
+          settlement = coinSettlement [f.lender] ref
+          allocation = coinAllocationSpec f.dso f.borrower True (coinCollateralLeg Token.SenderSide f.lender 150.0) maturityTime
+      pure (toInterfaceContractId cid)
+  (actAs f.issuer <> actAs f.lender <> actAs f.borrower) `submit` do
+    createCmd CoinLoan with
+      issuer = f.issuer; lender = f.lender; borrower = f.borrower; regulator = f.regulator
+      valuationAgent = f.valuer; valuationStreamId = mark.streamId; coinAdmin = f.dso
+      principal = 100.0; interest = 5.0; collateralQuantity = 150.0; maturity = maturityTime
+      liquidationThresholdLtv = 90.0; marginCallWindowSeconds = 60
+      settlementRef = ref; allocationCid = lock
+      marginCall = None; amountRepaid = None
+      settlementExecutors = None
+
+-- Every registry allocation, locks and receipts alike (the admin signs all).
+locks : CoinFixture -> Script Int
+locks f = length <$> query @MockAllocation f.dso
+
+-- ---------------------------------------------------------------------------
+-- Finding 1 (High): the lender, as sole executor, settled the borrower's lock
+-- to itself directly on the registry, outside every CoinLoan check.
+
+testLenderAloneCannotSettleOrCancelCoinLock : Script ()
+testLenderAloneCannotSettleOrCancelCoinLock = script do
+  f <- coinSetup
+  loanCid <- acceptCoin f f.mark
+  Some loan <- queryContractId f.lender loanCid
+  loan.settlementExecutors === Some [f.lender, f.borrower]
+  -- Healthy loan, no margin call, before maturity: the 0.9.0 attack.
+  receipt <- prepareReceipt f loanCid
+  let both = [f.lender, f.borrower]
+      direct actors = exerciseCmd (settleFactory f) (settleBatch f both loan.settlementRef [loan.allocationCid, receipt] actors)
+  -- As the lender alone with its own authority only ...
+  (actAs f.lender <> disclose f.settleDisclosure) `submitMustFail` direct [f.lender]
+  -- ... or naming both executors without the borrower's authority.
+  (actAs f.lender <> disclose f.settleDisclosure) `submitMustFail` direct both
+  -- A lender-made receipt with the 0.9.0 lender-only settlement fails as well.
+  ownReceipt <- (actAs f.lender <> disclose f.factoryDisclosure) `submit` do
+    exerciseCmd (toInterfaceContractId @Instr.AllocationFactory f.factory) Instr.AllocationFactory_Allocate with
+      settlement = coinSettlement [f.lender] loan.settlementRef
+      allocation = coinAllocationSpec f.dso f.lender False (coinCollateralLeg Token.ReceiverSide f.borrower 150.0) maturityTime
+      requestedAt = testStart
+      inputHoldingCids = []
+      extraArgs = noExtra
+      actors = [f.lender]
+  Instr.AllocationInstructionResult_Completed ownReceiptCid <- pure ownReceipt.output
+  (actAs f.lender <> disclose f.settleDisclosure) `submitMustFail` do
+    exerciseCmd (settleFactory f) (settleBatch f [f.lender] loan.settlementRef [loan.allocationCid, ownReceiptCid] [f.lender])
+  -- Neither side can cancel the lock alone either.
+  let cancel actors = exerciseCmd loan.allocationCid Token.Allocation_Cancel with actors; extraArgs = noExtra
+  submitMustFail f.lender (cancel [f.lender])
+  submitMustFail f.lender (cancel both)
+  submitMustFail f.borrower (cancel [f.borrower])
+  submitMustFail f.borrower (cancel both)
+  -- The lock is intact and the borrower can still repay through Veil.
+  locks f >>= (=== 3)  -- the lock and two unused receipts
+  closedCid <- submit f.borrower do exerciseCmd loanCid RepayCoin with repaymentCid = f.borrowerCash; cancelExtraArgs = noExtra
+  Some closed <- queryContractId f.regulator closedCid
+  closed.reason === "Repaid"
+  query @MockAllocation f.dso >>= \as -> [a.allocation.committed | (_, a) <- as] === [False, False]
+
+-- Veil's own liquidation still settles a new loan: the CoinLoan signatories
+-- supply both executors' authority inside the choice.
+testJointExecutorsLiquidateThroughVeil : Script ()
+testJointExecutorsLiquidateThroughVeil = script do
+  f <- coinSetup
+  loanCid <- acceptCoin f f.mark
+  receipt <- prepareReceipt f loanCid
+  Some r <- queryContractId f.lender (fromInterfaceContractId @MockAllocation receipt)
+  r.settlement.executors === [f.lender, f.borrower]
+  setTime (addRelTime maturityTime (seconds 1))
+  closedCid <- (actAs f.lender <> disclose f.settleDisclosure) `submit` liquidateOverdue f loanCid receipt
+  Some closed <- queryContractId f.regulator closedCid
+  (closed.reason, closed.collateralSeized) === ("LiquidatedAtMaturity", Some 150.0)
+  locks f >>= (=== 0)
+
+-- Loans opened by 0.9.0 keep their lender-only lock and still repay,
+-- liquidate and write off.
+testLegacyCoinLoansStillClose : Script ()
+testLegacyCoinLoansStillClose = script do
+  f <- coinSetup
+  repaid <- legacyCoinLoan f "veil-legacy-1" None
+  closed1 <- submit f.borrower do exerciseCmd repaid RepayCoin with repaymentCid = f.borrowerCash; cancelExtraArgs = noExtra
+  Some c1 <- queryContractId f.regulator closed1
+  c1.reason === "Repaid"
+  locks f >>= (=== 0)
+
+  writtenOff <- legacyCoinLoan f "veil-legacy-2" None
+  closed2 <- submit f.lender do exerciseCmd writtenOff WriteOffCoin with cancelExtraArgs = noExtra
+  Some c2 <- queryContractId f.regulator closed2
+  c2.reason === "WrittenOff"
+  locks f >>= (=== 0)
+
+  overdue <- legacyCoinLoan f "veil-legacy-3" None
+  receipt <- prepareReceipt f overdue
+  Some r <- queryContractId f.lender (fromInterfaceContractId @MockAllocation receipt)
+  r.settlement.executors === [f.lender]
+  setTime (addRelTime maturityTime (seconds 1))
+  closed3 <- (actAs f.lender <> disclose f.settleDisclosure) `submit` liquidateOverdue f overdue receipt
+  Some c3 <- queryContractId f.regulator closed3
+  (c3.reason, c3.collateralSeized) === ("LiquidatedAtMaturity", Some 150.0)
+  locks f >>= (=== 0)
+
+-- ---------------------------------------------------------------------------
+-- Finding 2 (High): AcceptCoin trusted the borrower-chosen factory's
+-- self-reported admin and never checked the allocation it returned.
+
+testFakeFactoryCannotOpenUnsecuredCoinLoan : Script ()
+testFakeFactoryCannotOpenUnsecuredCoinLoan = script do
+  f <- coinSetup
+  fake <- submit f.borrower do createCmd FakeAllocationFactory with owner = f.borrower; claimedAdmin = f.dso; victim = None
+  submitMustFail f.borrower do
+    exerciseCmd f.offerCid AcceptCoin with
+      valuationCid = f.mark
+      allocationFactoryCid = toInterfaceContractId fake
+      inputHoldingCids = []
+      extraArgs = noExtra
+  -- No principal moved and no loan exists; the offer is still acceptable.
+  cashAmounts f.borrower >>= (=== [105.0])
+  query @CoinLoan f.lender >>= \ls -> length ls === 0
+  _ <- acceptCoin f f.mark
+  locks f >>= (=== 1)
+
+-- A registry allocation that does not match the requested lock is refused
+-- too: here an uncommitted one, which the borrower could withdraw at once.
+testAcceptCoinRejectsMismatchedAllocation : Script ()
+testAcceptCoinRejectsMismatchedAllocation = script do
+  f <- coinSetup
+  -- A borrower factory that forwards to the real registry but asks for an
+  -- uncommitted allocation.
+  wrapper <- submit f.borrower do createCmd UncommittingFactory with owner = f.borrower; registry = toInterfaceContractId f.factory; admin = f.dso
+  (actAs f.borrower <> disclose f.factoryDisclosure) `submitMustFail` do
+    exerciseCmd f.offerCid AcceptCoin with
+      valuationCid = f.mark
+      allocationFactoryCid = toInterfaceContractId wrapper
+      inputHoldingCids = []
+      extraArgs = noExtra
+  locks f >>= (=== 0)
+
+template UncommittingFactory
+  with
+    owner : Party
+    registry : ContractId Instr.AllocationFactory
+    admin : Party
+  where
+    signatory owner
+
+    interface instance Instr.AllocationFactory for UncommittingFactory where
+      view = Instr.AllocationFactoryView with admin; meta = emptyMetadata
+      allocationFactory_publicFetchImpl _ _ = pure Instr.AllocationFactoryView with admin; meta = emptyMetadata
+      allocationFactory_allocateExtraObservers _ = []
+      allocationFactory_allocateImpl _ arg =
+        exercise registry Instr.AllocationFactory_Allocate with
+          settlement = arg.settlement
+          allocation = arg.allocation with committed = False
+          requestedAt = arg.requestedAt
+          inputHoldingCids = arg.inputHoldingCids
+          extraArgs = arg.extraArgs
+          actors = arg.actors
+
+-- The 0.9.0 attack used the fake allocation's Cancel, run with the lender's
+-- authority on repayment, to write off a second, genuinely secured loan.
+testFakeAllocationCannotBorrowLenderAuthority : Script ()
+testFakeAllocationCannotBorrowLenderAuthority = script do
+  f <- coinSetup
+  bigCash <- issueCash f.issuer f.lender 1000.0
+  offer2 <- submit f.lender do
+    exerciseCmd bigCash MakeCoinOffer with
+      borrower = f.borrower; regulator = f.regulator; valuationAgent = f.valuer
+      valuationCid = f.mark
+      coinAdmin = f.dso
+      principal = 1000.0; interest = 50.0; collateralQuantity = 1500.0
+      maturity = maturityTime; liquidationThresholdLtv = 90.0; marginCallWindowSeconds = 60
+      settlementRef = "veil-coin-2"
+      expiresAt = None
+  victim <- (actAs f.borrower <> disclose f.factoryDisclosure) `submit` do
+    exerciseCmd offer2 AcceptCoin with
+      valuationCid = f.mark
+      allocationFactoryCid = toInterfaceContractId f.factory
+      inputHoldingCids = []
+      extraArgs = noExtra
+  locks f >>= (=== 1)
+
+  -- New acceptance through the impostor fails outright.
+  fake <- submit f.borrower do createCmd FakeAllocationFactory with owner = f.borrower; claimedAdmin = f.dso; victim = Some victim
+  submitMustFail f.borrower do
+    exerciseCmd f.offerCid AcceptCoin with
+      valuationCid = f.mark
+      allocationFactoryCid = toInterfaceContractId fake
+      inputHoldingCids = []
+      extraArgs = noExtra
+
+  -- A loan that 0.9.0 opened through the impostor: releasing or settling it
+  -- re-verifies the lock, so the fake never receives the lender's authority.
+  fakeLock <- submit f.borrower do
+    createCmd FakeAllocation with
+      owner = f.borrower
+      settlement = coinSettlement [f.lender] "veil-legacy-fake"
+      allocation = coinAllocationSpec f.dso f.borrower True (coinCollateralLeg Token.SenderSide f.lender 150.0) maturityTime
+      victim = Some victim
+  unsecured <- legacyCoinLoan f "veil-legacy-fake" (Some (toInterfaceContractId fakeLock))
+  submitMustFail f.borrower do exerciseCmd unsecured RepayCoin with repaymentCid = f.borrowerCash; cancelExtraArgs = noExtra
+  submitMustFail f.lender do exerciseCmd unsecured WriteOffCoin with cancelExtraArgs = noExtra
+  receipt <- prepareReceipt f unsecured
+  setTime (addRelTime maturityTime (seconds 1))
+  (actAs f.lender <> disclose f.settleDisclosure) `submitMustFail` liquidateOverdue f unsecured receipt
+  -- The victim loan and its 1,500 CC lock are untouched.
+  Some _ <- queryContractId f.regulator victim
+  query @MockAllocation f.borrower >>= \as -> [a.allocation.transferLegSides | (_, a) <- as, a.allocation.committed]
+    === [[coinCollateralLeg Token.SenderSide f.lender 1500.0]]
+  -- Once its lock has lapsed, the unsecured legacy loan can still be closed.
+  setTime (addRelTime (coinSettlementDeadline maturityTime) (seconds 1))
+  closedCid <- submit f.lender do exerciseCmd unsecured CloseLapsedCoinLoan
+  Some closed <- queryContractId f.regulator closedCid
+  closed.reason === "CollateralLapsed"
+
+-- The receipt passed to a liquidation must be the registry's too: a
+-- lender-written look-alike would otherwise receive the executors' authority.
+testForgedReceiptRejected : Script ()
+testForgedReceiptRejected = script do
+  f <- coinSetup
+  loanCid <- acceptCoin f f.mark
+  Some loan <- queryContractId f.lender loanCid
+  forged <- submit f.lender do
+    createCmd FakeAllocation with
+      owner = f.lender
+      settlement = coinSettlement [f.lender, f.borrower] loan.settlementRef
+      allocation = coinAllocationSpec f.dso f.lender False (coinCollateralLeg Token.ReceiverSide f.borrower 150.0) maturityTime
+      victim = None
+  setTime (addRelTime maturityTime (seconds 1))
+  (actAs f.lender <> disclose f.settleDisclosure) `submitMustFail` liquidateOverdue f loanCid (toInterfaceContractId forged)
+  locks f >>= (=== 1)
+  receipt <- prepareReceipt f loanCid
+  _ <- (actAs f.lender <> disclose f.settleDisclosure) `submit` liquidateOverdue f loanCid receipt
+  locks f >>= (=== 0)
+
+-- ---------------------------------------------------------------------------
+-- Finding 3 (Low): a day after maturity the borrower withdraws the coin and
+-- the CoinLoan had no terminal path.
+
+testLapsedCoinLoanCloses : Script ()
+testLapsedCoinLoanCloses = script do
+  f <- coinSetup
+  loanCid <- acceptCoin f f.mark
+  receipt <- prepareReceipt f loanCid
+  let deadline = coinSettlementDeadline maturityTime
+  -- Not before the deadline, nor at it: the lock can still settle then.
+  setTime (addRelTime maturityTime (seconds 1))
+  submitMustFail f.lender do exerciseCmd loanCid CloseLapsedCoinLoan
+  setTime deadline
+  submitMustFail f.lender do exerciseCmd loanCid CloseLapsedCoinLoan
+  setTime (addRelTime deadline (seconds 1))
+  [(lockCid, _)] <- query @MockAllocation f.borrower >>= pure . filter (\(_, a) -> a.allocation.committed)
+  _ <- submit f.borrower do
+    exerciseCmd (toInterfaceContractId @Token.Allocation lockCid) Token.Allocation_Withdraw with actors = [f.borrower]; extraArgs = noExtra
+  -- Every other close path is now dead ...
+  (actAs f.lender <> disclose f.settleDisclosure) `submitMustFail` liquidateOverdue f loanCid receipt
+  submitMustFail f.lender do exerciseCmd loanCid WriteOffCoin with cancelExtraArgs = noExtra
+  submitMustFail f.borrower do exerciseCmd loanCid RepayCoin with repaymentCid = f.borrowerCash; cancelExtraArgs = noExtra
+  -- ... and only the lender records the lapse.
+  submitMustFail f.borrower do exerciseCmd loanCid CloseLapsedCoinLoan
+  closedCid <- submit f.lender do exerciseCmd loanCid CloseLapsedCoinLoan
+  None <- queryContractId f.regulator loanCid
+  Some closed <- queryContractId f.regulator closedCid
+  (closed.reason, closed.collateralReleased, closed.collateralSeized, closed.collateralReturned) === ("CollateralLapsed", True, None, Some 150.0)
+  (closed.amountRepaid, closed.liquidationUnitPrice, closed.closedAt) === (None, None, Some (addRelTime deadline (seconds 1)))
+  -- The borrower keeps the principal; the unused receipt is the lender's.
+  cashAmounts f.borrower >>= (=== [100.0, 105.0])
+
+-- The close never touches the allocation: a lapsed lock that was not yet
+-- withdrawn stays the borrower's to withdraw. Legacy loans can lapse too.
+testLapsedCloseLeavesAllocation : Script ()
+testLapsedCloseLeavesAllocation = script do
+  f <- coinSetup
+  loanCid <- acceptCoin f f.mark
+  legacy <- legacyCoinLoan f "veil-legacy-lapse" None
+  setTime (addRelTime (coinSettlementDeadline maturityTime) (seconds 1))
+  _ <- submit f.lender do exerciseCmd loanCid CloseLapsedCoinLoan
+  _ <- submit f.lender do exerciseCmd legacy CloseLapsedCoinLoan
+  as <- query @MockAllocation f.borrower
+  length as === 2
+  forA_ as $ \(cid, _) -> submit f.borrower do
+    exerciseCmd (toInterfaceContractId @Token.Allocation cid) Token.Allocation_Withdraw with actors = [f.borrower]; extraArgs = noExtra
+  locks f >>= (=== 0)
+
+-- ---------------------------------------------------------------------------
+-- Finding 4 (Low): LTV divided by quantity × price, which aborts when the
+-- collateral value rounds to zero at Decimal's 10 places.
+
+testLtvAtNearZeroPrice : Script ()
+testLtvAtNearZeroPrice = script do
+  setTime testStart
+  ((issuer, lender, borrower, regulator, valuer, _), (mark, lenderCash, _, _)) <- setup
+  -- 0.1 units at 2,000 cover 100 at 50% LTV.
+  rich <- publishPrice valuer mark 2000.0
+  offerCid <- makeCustomOffer lender borrower regulator valuer lenderCash rich 100.0 0.1 90.0 maturityTime
+  small <- issueCollateral issuer borrower tbill 0.1
+  loanCid <- acceptLoan borrower offerCid small rich
+  -- 0.1 × 0.0000000001 rounds to 0.0: the 0.9.0 division aborted here.
+  (0.1 * 0.0000000001 : Decimal) === 0.0
+  crashed <- publishPrice valuer rich 0.0000000001
+  calledCid <- submit lender do exerciseCmd loanCid IssueMarginCall with valuationCid = crashed
+  submitMustFail borrower do exerciseCmd calledCid ResolveMarginCall with valuationCid = crashed
+  passTime (seconds 60)
+  fresh <- publishPrice valuer crashed 0.0000000001
+  closedCid <- submit lender do exerciseCmd calledCid Liquidate with valuationCid = fresh
+  Some closed <- queryContractId regulator closedCid
+  (closed.reason, closed.collateralSeized, closed.collateralReturned) === ("Liquidated", Some 0.1, Some 0.0)
+
+-- Cross-multiplying gives the 0.9.0 answer wherever the division was defined,
+-- except where the division's own rounding (to 10 places, then × 100) moved
+-- the LTV across the threshold. There the new comparison is the exact one.
+testLtvComparisonMatchesDivision : Script ()
+testLtvComparisonMatchesDivision = script do
+  let divided : Decimal -> Decimal -> Decimal -> Decimal -> Bool
+      divided t owed q u = (owed / (q * u)) * 100.0 < t
+      roundingBand : Decimal -> Decimal -> Decimal -> Decimal -> Bool
+      roundingBand t owed q u = abs ((owed / (q * u)) * 100.0 - t) <= 0.00000001
+      cases : [(Decimal, Decimal, Decimal, Decimal)]
+      cases =
+        [ (t, owed, q, u)
+        | t <- [0.5, 50.0, 66.6666666667, 89.9999999999, 90.0, 100.0]
+        , owed <- [0.0000000001, 1.0, 90.0, 100.0, 105.0, 135.0, 999999.9999999999]
+        , q <- [0.0001, 1.0, 3.0, 150.0, 1000000.0]
+        , u <- [0.0001, 0.15, 0.62, 1.0, 0.6, 2000.0] ]
+      outside = filter (\(t, owed, q, u) -> not (roundingBand t owed q u)) cases
+  assertMsg "the grid exercises the comparison" (length outside > 1000)
+  forA_ outside $ \(t, owed, q, u) ->
+    (t, owed, q, u, ltvBelow t owed q u) === (t, owed, q, u, divided t owed q u)
+  -- Exact boundaries: 90 owed on 100 units at 1.0 is exactly 90% LTV.
+  ltvBelow 90.0 90.0 100.0 1.0 === False
+  ltvAtOrAbove 90.0 90.0 100.0 1.0 === True
+  ltvBelow 90.0 89.9999999999 100.0 1.0 === True
+  -- Inside the band: 100 on 150 units is 66.666...%, below 66.6666666667,
+  -- but the division rounded it up to exactly the threshold.
+  divided 66.6666666667 100.0 150.0 1.0 === False
+  ltvBelow 66.6666666667 100.0 150.0 1.0 === True
