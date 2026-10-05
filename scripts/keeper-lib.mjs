@@ -5,12 +5,15 @@
 // The rules mirror daml/Veil.daml so that a decided action is one the ledger
 // will accept (modulo clock skew between this process and ledger time):
 //   - a mark is usable only if observedAt <= now <= observedAt + 300s;
-//   - breach = outstandingPrincipal / (collateralQuantity * unitPrice) * 100 >= threshold;
+//   - breach = outstandingPrincipal * 100 >= threshold * (collateralQuantity * unitPrice)
+//     (0.10.0 cross-multiplies, so a value that rounds to zero is a breach);
 //   - outstandingPrincipal = principal - max(0, amountRepaid - interest);
 //   - margin calls only before maturity; liquidation only once the call
 //     deadline has passed on a fresh, still-breaching mark;
 //   - overdue liquidation once now > maturity. A T-Bill Loan needs a fresh mark
-//     (0.9.0 returns surplus collateral at that price); a CoinLoan needs none.
+//     (0.9.0 returns surplus collateral at that price); a CoinLoan needs none;
+//   - a CoinLoan past its settlement deadline (maturity + 1 day) can no longer
+//     settle: it is closed with CloseLapsedCoinLoan (0.10.0), nothing seized.
 
 export const COIN_ASSET = 'Canton Coin'
 export const FRESHNESS_MS = 300_000
@@ -72,11 +75,20 @@ export function outstandingPrincipal(principal, interest, amountRepaid) {
   return parseDecimal(principal) - (overInterest > 0n ? overInterest : 0n)
 }
 
-/** LTV in percent (scaled Decimal), computed exactly as the Daml choices do. */
+/** LTV in percent (scaled Decimal) for display; null when the collateral
+ * value rounds to zero. Decisions use ltvBreached, which never divides. */
 export function loanLtv(args, unitPrice) {
   const outstanding = outstandingPrincipal(args.principal, args.interest, args.amountRepaid)
   const collateralValue = mulDec(parseDecimal(args.collateralQuantity), parseDecimal(unitPrice))
+  if (collateralValue === 0n) return null
   return mulDec(divDec(outstanding, collateralValue), HUNDRED)
+}
+
+/** The ledger's breach test, exactly as Veil.ltvAtOrAbove computes it. */
+export function ltvBreached(args, unitPrice) {
+  const outstanding = outstandingPrincipal(args.principal, args.interest, args.amountRepaid)
+  const collateralValue = mulDec(parseDecimal(args.collateralQuantity), parseDecimal(unitPrice))
+  return mulDec(outstanding, HUNDRED) >= mulDec(parseDecimal(args.liquidationThresholdLtv), collateralValue)
 }
 
 // ------------------------------------------------------------------ Time --
@@ -103,11 +115,11 @@ export function marksForLoan(loan, marks) {
 
 const CHOICES = {
   Loan: { issueMarginCall: 'IssueMarginCall', liquidate: 'Liquidate', liquidateOverdue: 'LiquidateOverdue' },
-  CoinLoan: { issueMarginCall: 'IssueCoinMarginCall', liquidate: 'LiquidateCoin', liquidateOverdue: 'LiquidateCoinOverdue' },
+  CoinLoan: { issueMarginCall: 'IssueCoinMarginCall', liquidate: 'LiquidateCoin', liquidateOverdue: 'LiquidateCoinOverdue', closeLapsed: 'CloseLapsedCoinLoan' },
 }
 
 /** Kinds that change ledger state; every other kind is informational. */
-export const EXECUTABLE = new Set(['issueMarginCall', 'liquidate', 'liquidateOverdue'])
+export const EXECUTABLE = new Set(['issueMarginCall', 'liquidate', 'liquidateOverdue', 'closeLapsed'])
 
 /**
  * Decide what the lender should do for each loan.
@@ -116,7 +128,7 @@ export const EXECUTABLE = new Set(['issueMarginCall', 'liquidate', 'liquidateOve
  * @param marks  [{ contractId, args }] active CollateralValuation contracts
  * @param now    Date or epoch ms (the keeper's estimate of ledger time)
  * @returns one or more actions per loan: executable kinds (issueMarginCall,
- *   liquidate, liquidateOverdue) plus informational ones (hold,
+ *   liquidate, liquidateOverdue, closeLapsed) plus informational ones (hold,
  *   needsFreshPrice, warnSettlementDeadline, invalid).
  */
 export function decide(loans, marks, now, options = {}) {
@@ -191,6 +203,11 @@ function decideLoan(loan, marks, nowMs, skewMs, settlementWarnHours) {
   }
 
   if (nowMs > maturityMs + skewMs) {
+    if (loan.template === 'CoinLoan' && nowMs > maturityMs + COIN_SETTLEMENT_GRACE_MS + skewMs) {
+      // The registry refuses to settle a lapsed lock; record the lapse.
+      out.push({ ...base(loan), kind: 'closeLapsed', choice: choices.closeLapsed, reason: `collateral lock lapsed at ${new Date(maturityMs + COIN_SETTLEMENT_GRACE_MS).toISOString()}; nothing can be seized` })
+      return out
+    }
     if (loan.template === 'CoinLoan') {
       // The Canton Coin allocation settles its fixed leg; no price is involved.
       out.push({ ...base(loan), kind: 'liquidateOverdue', choice: choices.liquidateOverdue, reason: `past maturity ${a.maturity}` })
@@ -231,9 +248,9 @@ function decideLoan(loan, marks, nowMs, skewMs, settlementWarnHours) {
 
   const ltv = loanLtv(a, mark.args.unitPrice)
   const threshold = parseDecimal(a.liquidationThresholdLtv)
-  const breached = ltv >= threshold
+  const breached = ltvBreached(a, mark.args.unitPrice)
   const metrics = {
-    ltv: formatDecimal(ltv),
+    ltv: ltv === null ? 'unbounded' : formatDecimal(ltv),
     thresholdLtv: formatDecimal(threshold),
     outstandingPrincipal: formatDecimal(outstandingPrincipal(a.principal, a.interest, a.amountRepaid)),
     unitPrice: String(mark.args.unitPrice),

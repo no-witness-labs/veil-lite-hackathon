@@ -397,7 +397,7 @@ export const DISCLOSURE: DisclosureRow[] = [
   },
   {
     template: 'CC allocation (CIP-112)',
-    note: 'Committed Canton Coin lock: the DSO and borrower sign; the lender executes. Not visible to the regulator.',
+    note: 'Committed Canton Coin lock: the DSO and borrower sign; lender and borrower execute it jointly, through Veil. Not visible to the regulator.',
     by: { lender: 'observer', borrower: 'signatory', regulator: 'none', valuer: 'none', issuer: 'none', outsider: 'none' },
   },
   {

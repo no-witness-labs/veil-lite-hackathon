@@ -1507,10 +1507,10 @@ testCoinLoanRepayReleasesCollateral = script do
   submitMustFail f.borrower do
     exerciseCmd f.offerCid AcceptCoin with valuationCid = f.mark; allocationFactoryCid = toInterfaceContractId f.factory; inputHoldingCids = []; extraArgs = noExtra
   loanCid <- acceptCoin f f.mark
-  -- The Canton Coin sits in one committed allocation executed only by the lender.
+  -- The Canton Coin sits in one committed allocation executed by lender and borrower together.
   [(allocCid, alloc)] <- query @MockAllocation f.borrower
   alloc.allocation.committed === True
-  alloc.settlement.executors === [f.lender]
+  alloc.settlement.executors === [f.lender, f.borrower]
   alloc.settlement.id === "veil-coin-1"
   alloc.allocation.settlementDeadline === Some (addRelTime maturityTime (days 1))
   query @MockAllocation f.lender >>= \as -> length as === 1
@@ -1546,7 +1546,7 @@ testCoinLiquidationSettlesToLender = script do
   Some loan <- queryContractId f.lender calledCid
   wrongReceipt <- (actAs f.lender <> disclose f.factoryDisclosure) `submit` do
     exerciseCmd (toInterfaceContractId @Instr.AllocationFactory f.factory) Instr.AllocationFactory_Allocate with
-      settlement = coinSettlement f.lender loan.settlementRef
+      settlement = coinSettlement (coinExecutorsOf loan) loan.settlementRef
       allocation = coinAllocationSpec loan.coinAdmin f.lender False (coinCollateralLeg Token.ReceiverSide f.borrower 1.0) loan.maturity
       requestedAt = addRelTime testStart (seconds 61)
       inputHoldingCids = []

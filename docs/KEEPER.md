@@ -20,12 +20,14 @@ For every active loan where the configured party is the lender:
 | Call deadline passed, fresh mark, still breached | `Liquidate`, or for Canton Coin `PrepareCoinReceipt` → `LiquidateCoin` |
 | Call deadline passed, price recovered | nothing (the borrower can resolve the call) |
 | Ledger time past maturity | T-Bill: `LiquidateOverdue` with the fresh mark (0.9.0 returns surplus collateral at that price; without a fresh mark the keeper reports `needsFreshPrice`). Canton Coin: `PrepareCoinReceipt` → `LiquidateCoinOverdue` (no mark needed) |
+| CoinLoan past its settlement deadline (maturity + 1 day) | `CloseLapsedCoinLoan` (0.10.0): the registry no longer settles the lock, so the loan closes as `CollateralLapsed` with nothing seized. No registry call and no approval quorum: nothing changes hands |
 | No mark, ambiguous marks, or a mark older than 300 s | nothing; logs `needsFreshPrice` |
 | CoinLoan within `--warn-hours` of its allocation settlement deadline (maturity + 1 day) | warning on stdout and stderr: after that deadline the borrower can withdraw the locked coin |
 
 The rules match `daml/Veil.daml`: a mark is usable only while
 `observedAt <= now <= observedAt + 300s`; breach is
-`outstandingPrincipal / (collateralQuantity * unitPrice) * 100 >= threshold`, with
+`outstandingPrincipal * 100 >= threshold * (collateralQuantity * unitPrice)` (0.10.0
+cross-multiplies, so a collateral value that rounds to zero is a breach), with
 `outstandingPrincipal = principal - max(0, amountRepaid - interest)`, computed in
 exact Numeric-10 arithmetic. The keeper uses this host's clock as an estimate of
 ledger time and keeps a `--skew-seconds` margin (default 5) on every time check,
@@ -37,8 +39,13 @@ blocks margin-call and price-based liquidation until the valuer publishes.
 Canton Coin liquidation fetches the allocation-factory choice context from the
 token registry, submits `PrepareCoinReceipt` with its disclosed contracts, then
 fetches the settlement-factory context and submits `LiquidateCoin` or
-`LiquidateCoinOverdue`. If an earlier attempt already created a matching receipt
-allocation, the keeper reuses it instead of creating another.
+`LiquidateCoinOverdue`. Both registry requests name the loan's executors: the
+recorded `settlementExecutors` (lender and borrower, since 0.10.0), or the lender
+alone for a loan opened by 0.9.0. The settlement batch lists all of them as
+actors; the keeper still submits as the lender only, because the `CoinLoan`
+signatories supply the borrower's authority on-ledger. If an earlier attempt
+already created a matching receipt allocation (same executors), the keeper
+reuses it instead of creating another.
 
 ### Command journal
 
@@ -46,7 +53,7 @@ With `--execute`, every submission goes through a write-ahead journal in
 `--state-dir` (default `.local/keeper/`, env `VEIL_KEEPER_STATE_DIR`):
 
 - `journal.json`: one entry per operation key `<kind>:<loan contract id>`
-  (kinds `issueMarginCall`, `liquidate`, `liquidateOverdue`, and `receipt` for
+  (kinds `issueMarginCall`, `liquidate`, `liquidateOverdue`, `closeLapsed`, and `receipt` for
   the Canton Coin `PrepareCoinReceipt` step). Rewritten atomically (temp file,
   fsync, rename) under `journal.lock`, so a running keeper and the operator
   commands below can share it.

@@ -64,6 +64,8 @@ export interface DealArgs {
   coinAdmin?: string
   settlementRef?: string
   allocationCid?: string
+  // 0.10.0: the lock's executors; absent or null on loans opened by 0.9.0
+  settlementExecutors?: string[] | null
   // Substitution request
   releaseAsset?: string
   releaseQuantity?: string

@@ -8,7 +8,7 @@ dependencies:
   - daml-script
 data-dependencies:
   - ../.daml/dist/veil-price-committee-0.1.0.dar
-  - ../../.daml/dist/veil-lite-0.9.0.dar
+  - ../../.daml/dist/veil-lite-0.10.0.dar
   - ../../vendor/decman/governance-action-v1-0.1.0.dar
   - ../../vendor/decman/governance-core-v1-0.1.0.dar
 build-options:

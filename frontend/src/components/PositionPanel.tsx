@@ -194,8 +194,9 @@ export function PositionPanel({
           </div>
           {deal.template === 'CoinLoan' && (
             <div className="v-metric__note" style={{ marginTop: 'var(--space-2)' }}>
-              Locked by the token standard itself: a CIP-112 committed allocation that only the lender can settle
-              (liquidation) or cancel (release on repayment).{' '}
+              {deal.args.settlementExecutors && deal.args.settlementExecutors.length > 1
+                ? 'Locked by the token standard itself: a CIP-112 committed allocation that settles (liquidation) or cancels (release on repayment) only with both the lender\'s and the borrower\'s authority, which Veil\'s loan choices supply.'
+                : 'Locked by the token standard itself: a CIP-112 committed allocation opened before 0.10.0, which the lender alone executes.'}{' '}
               {deal.args.allocationCid && <span className="v-id" title={deal.args.allocationCid}>allocation {shortId(deal.args.allocationCid, 10, 6)}</span>}
             </div>
           )}

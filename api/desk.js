@@ -336,6 +336,18 @@ async function openStreams(ledger, config, assets) {
   return streams
 }
 
+// A Canton Coin lock lapses a day after maturity (Veil.coinSettlementDeadline):
+// the registry then refuses to settle or release it through Veil, and only
+// CloseLapsedCoinLoan can close the loan. The margin keeps this server's clock,
+// if slightly ahead of ledger time, from choosing it before the ledger agrees.
+const COIN_SETTLEMENT_GRACE_MS = 86_400_000
+const LAPSE_MARGIN_MS = 60_000
+
+function coinLockLapsed(maturity, nowMs) {
+  const maturityMs = Date.parse(maturity)
+  return Number.isFinite(maturityMs) && nowMs > maturityMs + COIN_SETTLEMENT_GRACE_MS + LAPSE_MARGIN_MS
+}
+
 function retryable(error) {
   return error instanceof LedgerCallError && /CONTRACT_NOT_FOUND|CONTRACT_NOT_ACTIVE|INACTIVE_CONTRACTS|INCONSISTENT|LOCKED_CONTRACTS/.test(error.code)
 }
@@ -350,8 +362,15 @@ async function closeStreams(ledger, config, streamIds) {
   let scoped = deskContracts(await ledger.active(parties.lender), streamIds, issuer)
   const coinLoans = scoped.coinLoans.length
   for (const loan of scoped.coinLoans) {
+    if (coinLockLapsed(loan.args.maturity, Date.now())) {
+      // The lock lapsed: nothing to release, and the borrower can withdraw it.
+      // Record the lapse; the LoanClosed is dismissed below.
+      await ledger.submit([parties.lender], [ledger.exercise('CoinLoan', loan.contractId, 'CloseLapsedCoinLoan')], 'close-lapsed-coin')
+      continue
+    }
     // Never strand borrower Canton Coin: the lender releases it (WriteOffCoin),
     // which cancels the allocation and leaves a LoanClosed to dismiss below.
+    // The CoinLoan's signatories supply every executor's authority on-ledger.
     const ctx = await ledger.cancelContext(loan.args.allocationCid)
     await ledger.submit(
       [parties.lender],

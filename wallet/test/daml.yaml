@@ -8,6 +8,6 @@ dependencies:
   - daml-script
 data-dependencies:
   - ../.daml/dist/veil-wallet-0.1.0.dar
-  - ../../.daml/dist/veil-lite-0.9.0.dar
+  - ../../.daml/dist/veil-lite-0.10.0.dar
 build-options:
   - --target=2.2
