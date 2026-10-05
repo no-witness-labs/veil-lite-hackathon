@@ -31,3 +31,91 @@ Upgrade of 0.8.1. Line numbers refer to `daml/Veil.daml` in 0.9.0.
   - `Dismiss` needs both counterparties.
   - Deploy the 0.9.0 DAR before the frontend: the new UI sends `expiresAt`, which 0.8.1 does not know.
 - Verified with `dpm build` and `upgrades:` pointing at the 0.8.1 DAR built from `c7c6681`. The build passes. It reports warnings only: changed controller expressions on `Dismiss`/`LiquidateOverdue` (intended), and a renamed compiler-generated helper in the unchanged `Loan`/`CoinLoan` preconditions.
+
+# Audit triage: Canton Coin collateral (0.10.0)
+
+A second review covered the Canton Coin path of package 0.9.0 (live on DevNet).
+Each finding was proven with a Daml Script against 0.9.0; the scripts are ported
+to `test/daml/Veil/CoinAudit.daml` as regression tests that now must fail to
+exploit. Fixes ship in package **0.10.0**, a Smart Contract Upgrade of 0.9.0.
+Line numbers refer to `daml/Veil.daml` in 0.10.0.
+
+| Finding | Severity | Verdict | Evidence (0.9.0) | Fix (0.10.0) | Regression tests |
+| --- | --- | --- | --- | --- | --- |
+| C-01 Lender seizes Canton Coin outside Veil | High | **Fixed for new loans**; residual on 0.9.0 loans | `coinSettlement` made the lender the lock's only executor, so the lender alone could call the registry's `SettlementFactory_SettleBatch` with `actors = [lender]`: no margin call, healthy price, before maturity. The coin moved to the lender and the `CoinLoan` stayed open, owed and unrepayable. | `AcceptCoin` locks with `executors = [lender, borrower]` (`coinLoanExecutors`, 711) and records them in a new trailing `CoinLoan.settlementExecutors : Optional [Party]` (897). `releaseCoin` (1055) and `settleCoin` (1071) pass `actors = ` the loan's executors (`coinExecutorsOf`, 715); both executors are `CoinLoan` signatories, so the choice bodies hold that authority. `PrepareCoinReceipt` gives the receipt the same executors. Loans opened by 0.9.0 read `None` and keep `[lender]`, so they still repay, liquidate and write off; their lock stays settleable by the lender alone until they close (it cannot be re-locked without the borrower). | `testLenderAloneCannotSettleOrCancelCoinLock`, `testJointExecutorsLiquidateThroughVeil`, `testLegacyCoinLoansStillClose` |
+| C-02 Borrower-supplied allocation factory | High | **Fixed** | `allocateCoin` trusted the factory's self-reported `PublicFetch` admin and never looked at the allocation it returned. A borrower template claiming the DSO as admin opened a loan with nothing locked and the principal paid out. Later `RepayCoin`/`WriteOffCoin` exercised `Allocation_Cancel` on that fake with `actors = [lender]`, and the fake used the lender's authority to write off another, genuinely secured loan. | `checkCoinAllocation` (759) fetches the allocation and requires the coin admin among its signatories (only the registry's own templates carry it) and a view equal to the request: settlement id, executors and `cid`, and the full specification (admin, authorizer, the one collateral leg with amount = `collateralQuantity` and the counterparty, settlement deadline, `committed`, no iteration funding). Top-level `meta` fields are not compared. It runs after every `Allocate` (lock and receipt) and on the receipt passed to `settleCoin`. Before `releaseCoin` and `settleCoin` hand the lock the executors' authority, `checkCoinSettlement` (767) re-checks its admin signature and settlement. It does not re-judge the terms of a 0.9.0 lock, so a live loan cannot be stranded by a view detail. A 0.9.0 loan opened through an impostor can therefore no longer leak the lender's authority. Such a loan closes with `CloseLapsedCoinLoan` after its deadline. | `testFakeFactoryCannotOpenUnsecuredCoinLoan`, `testAcceptCoinRejectsMismatchedAllocation`, `testFakeAllocationCannotBorrowLenderAuthority`, `testForgedReceiptRejected` |
+| C-03 Zombie `CoinLoan` after the settlement deadline | Low | **Fixed** | A day after maturity the registry refuses to settle and the borrower may withdraw the lock. `LiquidateCoinOverdue`, `WriteOffCoin` and `RepayCoin` then all fail, and the loan has no terminal path. | New lender choice `CloseLapsedCoinLoan` (1044): only when `now > maturity + 1 day` (the instant settlement stops), it creates `LoanClosed` with reason `CollateralLapsed`, `collateralReleased = True`, `collateralSeized = None`, `collateralReturned = Some collateralQuantity` and the loan's `amountRepaid`, so the unpaid balance stays on record. It does not touch the allocation. | `testLapsedCoinLoanCloses`, `testLapsedCloseLeavesAllocation` |
+| C-04 LTV divides by quantity × price | Low | **Fixed** | Every LTV check computed `owed / (quantity × price) × 100`. A collateral value that rounds to zero at 10 places (for example 0.1 units at 0.0000000001) aborted margin calls and liquidation with a division by zero. | `ltvBelow` / `ltvAtOrAbove` (95) compare `owed × 100` with `threshold × (quantity × price)` at all 14 call sites. The result equals the old one except where the old division's own rounding moved the LTV across the threshold (within 10⁻⁸ LTV points). There the new answer is the exact one, e.g. 100 owed on 150 units at 1.0 against a 66.6666666667 threshold. The keeper mirrors it (`ltvBreached`). | `testLtvAtNearZeroPrice`, `testLtvComparisonMatchesDivision` |
+
+## Residual risks and design-level items (documented, not changed)
+
+- **R-1 Settlement factory authenticity.** Only the coin admin is a stakeholder
+  of the registry's `SettlementFactory`, so Daml cannot `fetch` it (verified: the
+  fetch is refused for lack of a stakeholder authorizer), and `PublicFetch`
+  returns whatever the factory's code says. `LiquidateCoin*` exercises
+  `SettleBatch` on the factory the lender names with `actors = [lender,
+  borrower]`. A lender who names a forged factory during a liquidation that is
+  otherwise valid hands that code the borrower's authority. With that authority
+  it could, for example, settle another lock between the same two parties or
+  dismiss a shared `LoanClosed`. Both allocations are verified, so the
+  liquidated loan itself is safe. This is narrower than C-01 in 0.9.0, where the
+  lender could do this at any time with no conditions. The full fix is to settle
+  the two verified allocations directly with `Allocation_Settle` and not call a
+  factory at all. That depends on Amulet V2 accepting a direct settle, which has
+  not been verified on DevNet.
+- **Registry semantics assumed, not verified on DevNet.** The fix assumes that
+  Amulet V2 requires the authority of every executor to settle or cancel, and
+  that it accepts a lock whose authorizer (the borrower) is also an executor.
+  The mocks in `test/daml/Veil/CoinMocks.daml` enforce `actors == executors`.
+  Before relying on 0.10.0 Canton Coin loans, open one on DevNet. Then check
+  that its allocation view shows both executors, that the lender alone cannot
+  `SettleBatch` it, that the borrower alone cannot cancel it, and that repay and
+  liquidation still work.
+- **0.9.0 loans** keep the lender-only lock until they close (C-01). They cannot
+  be migrated without the borrower re-locking.
+- **Duplicate `settlementRef`.** The view check binds an allocation to its
+  settlement id, executors and terms, not to one loan. If a lender issues two
+  offers with identical terms and the same `settlementRef`, the borrower's
+  factory could present one registry lock for both. The app uses a unique
+  `veil-<timestamp>` per offer.
+- Unchanged by design: interest is excluded from the LTV numerator (outstanding
+  principal only), the cure rules (top-up, pay-down and price recovery each clear
+  a call on a fresh mark), a `SubstitutionRequest` is not tied to a specific loan
+  id (it names the collateral it releases), and `AcceptCoin` discloses the
+  borrower's input holdings to the lender and regulator in the accepting
+  transaction.
+
+## Upgrade compatibility (0.9.0 → 0.10.0)
+
+- No template, choice or field was removed or renamed, no field type changed, and
+  no choice return type changed. No `ensure` clause changed.
+- New template field: `CoinLoan.settlementExecutors : Optional [Party]`, appended
+  last. `CoinLoanOffer` is unchanged: an offer has no allocation yet, so offers
+  created by 0.9.0 lock jointly on acceptance as well.
+- New choice: `CoinLoan.CloseLapsedCoinLoan`.
+- Behaviour changes that clients must follow:
+  - Registry requests for a new loan carry `executors = [lender, borrower]`, and
+    the settlement batch carries `actors = [lender, borrower]`. A 0.9.0 loan
+    (`settlementExecutors` absent or null) keeps `[lender]`. Commands are still
+    submitted as the lender, or as the borrower for `AcceptCoin` and `RepayCoin`.
+  - A Canton Coin lock or receipt that is not signed by the coin admin, or that
+    differs from the requested settlement or terms, is now refused at
+    acceptance, repay, write-off and liquidation.
+  - After maturity + 1 day, use `CloseLapsedCoinLoan`: the frontend's overdue
+    action and reset, `api/desk.js` close and the keeper (`closeLapsed`) do.
+  - Order: upload the 0.10.0 DAR before deploying the app, because the new app
+    sends `CloseLapsedCoinLoan` and joint-executor registry requests. The
+    on-ledger lock and receipt specifications are built by Daml, not by the app.
+    The old app sends the same commands, so it keeps working against 0.10.0,
+    but its registry choice-context requests name `[lender]` for new loans.
+    Whether Amulet's choice context depends on the executors is not verified,
+    so deploy the app right after the upload. The keeper must be updated too:
+    the old keeper may reuse a lender-only receipt for a new loan, which
+    0.10.0 refuses.
+- The check is permanent: `daml.yaml` names `vendor/veil-lite/veil-lite-0.9.0.dar`
+  (built from `1e6f2c0`, SHA-256 in `vendor/veil-lite/SHA256SUMS`, verified in
+  CI) under `upgrades:`, so every `dpm build` fails if the package stops being a
+  valid upgrade of the live one. A deliberate breaking change (a changed choice
+  return type) was confirmed to fail the build. The build passes with one
+  warning on the unchanged `Loan`/`CoinLoan` preconditions: a renamed
+  compiler-generated helper, the same as in the 0.8.1 → 0.9.0 check.

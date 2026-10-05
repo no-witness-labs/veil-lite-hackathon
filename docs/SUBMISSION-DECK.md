@@ -124,7 +124,7 @@ section.dark code { background: #22344a; }
 <img src="assets/veil-cc-collateral.png" style="height:auto">
 <div>
 <h3>A committed allocation, not an escrow account</h3>
-<p>On acceptance the borrower's Canton Coin is locked in a <b>Token Standard V2 committed allocation</b> whose only executor is the lender.</p>
+<p>On acceptance the borrower's Canton Coin is locked in a <b>Token Standard V2 committed allocation</b> that the lender and the borrower execute jointly, so neither can settle or release it outside Veil.</p>
 <div class="rule"><p class="small">✓ Borrower's early withdrawal <b>refused by Canton Coin itself</b><br>✓ Repay → allocation cancelled, coin unlocks<br>✓ Liquidation → settled to the lender via <code>SettleBatch</code><br>✓ Verified on hackcanton-01 with real DevNet CC</p></div>
 </div>
 </div>
