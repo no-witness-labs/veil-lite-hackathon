@@ -7,7 +7,8 @@
 //   1. decodes the protobuf (a strict decoder for just the messages involved),
 //   2. recomputes the hash with hashing scheme V2 and refuses any other scheme
 //      or a returned hash that differs,
-//   3. checks the transaction against what the wallet meant to do, and
+//   3. checks the whole transaction tree, node for node, against the intent:
+//      the transaction the wallet itself expects, with pinned package ids, and
 //   4. returns a one-line summary of what is being signed.
 //
 // The V2 encoding follows Canton's reference implementation
@@ -180,6 +181,8 @@ const Metadata = message({
   11: ['max_record_time', 'uint64', 'optional'],
 })
 const PreparedTransaction = message({ 1: ['transaction', DamlTransaction], 2: ['metadata', Metadata] })
+/** The decoder's schema, for tests that build prepared transactions. */
+export const preparedTransactionSchema = PreparedTransaction
 
 /** Decode a `PreparedTransaction` (bytes or base64) into plain objects. */
 export function decodePreparedTransaction(input) {
@@ -382,25 +385,97 @@ export async function hashPreparedTransaction(tx) {
 }
 
 // --- the wallet's intent
+//
+// The intent is the whole transaction the wallet expects, built by the wallet
+// from what it is about to do, never from the prepared transaction:
+//
+//   intent = { actAs: [party], packages: { 'package-name': 'package id', ... }, roots: [node, ...] }
+//   node   = { exercise: { templateId, contractId, choice, choiceArgument, consuming, actingParties,
+//                          children: [node, ...], interfaceId?, choiceObservers? } }
+//          | { create: { templateId, createArguments, signatories, stakeholders, label? } }
+//          | { fetch: { templateId, contractId, actingParties, interfaceId? } }
+//          | { rollback: { children: [node, ...] } }
+//
+// Template and interface ids are `#package-name:Module:Entity`, and every
+// package a node names must be pinned to one package id in `packages`. The
+// transaction's tree must equal the intent's node for node, in order: no node
+// more, none less, none different. An archive is an exercise of `Archive`
+// with argument {}. A create may carry a `label`; a later contract id
+// (an exercised contract or a value) can then be `{ $created: label }`, the
+// id that create got. A ledger time the wallet cannot know in advance can be
+// `{ $any: 'timestamp' }`, which matches any timestamp and nothing else.
 
-/**
- * Parse a JSON Ledger API template id: `#package-name:Module:Entity` or
- * `packageId:Module:Entity`.
- */
+const INTENT_NODES = {
+  exercise: { required: ['templateId', 'contractId', 'choice', 'choiceArgument', 'consuming', 'actingParties', 'children'], optional: ['interfaceId', 'choiceObservers'] },
+  create: { required: ['templateId', 'createArguments', 'signatories', 'stakeholders'], optional: ['label'] },
+  fetch: { required: ['templateId', 'contractId', 'actingParties'], optional: ['interfaceId'] },
+  rollback: { required: ['children'], optional: [] },
+}
+const isObject = (x) => x !== null && typeof x === 'object' && !Array.isArray(x)
+
+// An intent the wallet wrote wrongly must fail, never silently compare less.
+function intentNode(expected, where) {
+  const kinds = isObject(expected) ? Object.keys(expected) : []
+  if (kinds.length !== 1 || !Object.hasOwn(INTENT_NODES, kinds[0])) refuse(`intent: ${where} must be one of ${Object.keys(INTENT_NODES).join(', ')}`)
+  const [kind] = kinds
+  const spec = expected[kind]
+  if (!isObject(spec)) refuse(`intent: ${where} ${kind} is not an object`)
+  const { required, optional } = INTENT_NODES[kind]
+  for (const key of required) if (spec[key] === undefined) refuse(`intent: ${where} ${kind} has no ${key}`)
+  for (const key of Object.keys(spec)) if (!required.includes(key) && !optional.includes(key)) refuse(`intent: ${where} ${kind} has unknown property ${key}`)
+  return [kind, spec]
+}
+
+/** Parse an intent template or interface id: `#package-name:Module:Entity`. */
 function parseTemplateId(templateId) {
   const parts = String(templateId).split(':')
-  if (parts.length !== 3 || parts.some((p) => p === '')) refuse(`intent template id ${templateId} is not package:Module:Entity`)
-  const [pkg, module, entity] = parts
-  return pkg.startsWith('#') ? { packageName: pkg.slice(1), module, entity } : { packageId: pkg, module, entity }
+  if (parts.length !== 3 || parts.some((p) => p === '') || !parts[0].startsWith('#') || parts[0].length === 1) {
+    refuse(`intent: template id ${templateId} is not #package-name:Module:Entity`)
+  }
+  return { packageName: parts[0].slice(1), module: parts[1], entity: parts[2] }
 }
-
-function sameTemplate(node, templateId) {
+function pinnedPackage(ctx, name) {
+  const id = Object.hasOwn(ctx.packages, name) ? ctx.packages[name] : undefined
+  if (typeof id !== 'string' || !/^[0-9a-f]{64}$/.test(id)) refuse(`intent pins no package id for ${name}`)
+  return id
+}
+function checkTemplate(at, node, templateId, ctx) {
   const want = parseTemplateId(templateId)
   const id = node.template_id ?? EMPTY_IDENTIFIER
-  return id.module_name === want.module && id.entity_name === want.entity
-    && (want.packageName === undefined || node.package_name === want.packageName)
-    && (want.packageId === undefined || id.package_id === want.packageId)
+  if (node.package_name !== want.packageName || id.module_name !== want.module || id.entity_name !== want.entity) {
+    refuse(`${at} is on ${node.package_name}:${templateName(node)}, expected ${templateId}`)
+  }
+  const pinned = pinnedPackage(ctx, want.packageName)
+  if (id.package_id !== pinned) refuse(`${at} uses ${want.packageName} package ${id.package_id}, expected the pinned ${pinned}`)
 }
+function checkInterface(at, node, interfaceId, ctx) {
+  const id = node.interface_id
+  if (interfaceId === undefined) {
+    if (id !== undefined) refuse(`${at} goes through interface ${id.module_name}:${id.entity_name}, which the intent does not name`)
+    return
+  }
+  const want = parseTemplateId(interfaceId)
+  if (id === undefined || id.module_name !== want.module || id.entity_name !== want.entity || id.package_id !== pinnedPackage(ctx, want.packageName)) {
+    refuse(`${at} goes through ${id ? `${id.package_id}:${id.module_name}:${id.entity_name}` : 'no interface'}, expected ${interfaceId}`)
+  }
+}
+// Party lists are sets: equal members, no duplicates on either side.
+function checkParties(at, what, actual, expected) {
+  if (!Array.isArray(expected) || expected.some((p) => typeof p !== 'string')) refuse(`intent: ${at} ${what} is not a list of parties`)
+  const have = new Set(actual)
+  const want = new Set(expected)
+  if (have.size !== actual.length || want.size !== expected.length || have.size !== want.size || ![...want].every((p) => have.has(p))) {
+    refuse(`${at} ${what} are [${actual.map(shortParty).join(', ')}], expected [${expected.map(shortParty).join(', ')}]`)
+  }
+}
+function contractIdMatches(expected, actual, created) {
+  if (typeof expected === 'string') return expected === actual
+  if (isObject(expected) && Object.keys(expected).length === 1 && typeof expected.$created === 'string') {
+    return created.has(expected.$created) && created.get(expected.$created) === actual
+  }
+  return refuse(`intent: contract id ${JSON.stringify(expected)} is neither an id nor { $created: label }`)
+}
+const cidText = (c) => (typeof c === 'string' ? shortCid(c) : `the contract created as ${c.$created}`)
 
 const DECIMAL = /^(-?)(\d+)(?:\.(\d+))?$/
 function normalizeDecimal(s) {
@@ -416,97 +491,152 @@ const microsOf = (iso) => {
   if (!m) return undefined
   return BigInt(Date.parse(`${m[1]}Z`)) * 1000n + BigInt((m[2] ?? '').padEnd(6, '0'))
 }
+const isAnyTimestamp = (x) => isObject(x) && Object.keys(x).length === 1 && x.$any === 'timestamp'
 
 /**
  * Does the decoded Daml value equal what the wallet asked for? `expected` uses
  * the JSON Ledger API encoding the command was written in: numbers as decimal
  * strings, times as ISO strings, optionals as null or the value, records as
- * objects (every named field must match; fields the intent leaves out are not
- * compared), lists as arrays, variants as {tag, value}, enums as the constructor.
+ * objects, lists as arrays, variants as {tag, value}, enums as the
+ * constructor, text maps as objects, generic maps as [key, value] pairs.
+ *
+ * Records compare exactly: every field the intent names must be equal (a
+ * field Canton left out, as it does trailing None fields, counts as None),
+ * and a field the intent leaves out must be an Optional that is None. That is
+ * what the JSON Ledger API gives a command that omits an optional field, and
+ * with the package id pinned no other field can exist. Anything else the
+ * intent leaves out is a mismatch. A record or text map with a
+ * repeated label or key is refused. `created` maps create labels to contract
+ * ids for `{ $created: label }`.
  */
-export function valueMatches(expected, v) {
+export function valueMatches(expected, v, created = new Map()) {
   switch (v.sum) {
-    case 'unit': return expected !== null && typeof expected === 'object' && Object.keys(expected).length === 0
+    case 'unit': return isObject(expected) && Object.keys(expected).length === 0
     case 'bool': return expected === v.bool
     case 'int64': return /^-?\d+$/.test(String(expected)) && BigInt(String(expected)) === v.int64
     case 'numeric': return normalizeDecimal(expected) !== undefined && normalizeDecimal(expected) === normalizeDecimal(v.numeric)
-    case 'timestamp': return microsOf(expected) === v.timestamp
+    case 'timestamp': return isAnyTimestamp(expected) || microsOf(expected) === v.timestamp
     case 'date': return typeof expected === 'string' && Date.parse(`${expected}T00:00:00Z`) / 864e5 === v.date
     case 'party': return expected === v.party
     case 'text': return expected === v.text
-    case 'contract_id': return expected === v.contract_id
+    case 'contract_id': return (typeof expected === 'string' || isObject(expected)) && contractIdMatches(expected, v.contract_id, created)
     case 'optional': {
       const inner = v.optional.value
       if (inner === undefined) return expected === null
       // Some of an optional is written as a list: [] for Some None, [x] for Some (Some x).
       if (inner.sum === 'optional') {
-        return Array.isArray(expected) && (inner.optional.value === undefined ? expected.length === 0 : expected.length === 1 && valueMatches(expected[0], inner.optional.value))
+        return Array.isArray(expected) && (inner.optional.value === undefined ? expected.length === 0 : expected.length === 1 && valueMatches(expected[0], inner.optional.value, created))
       }
-      return expected !== null && expected !== undefined && valueMatches(expected, inner)
+      return expected !== null && expected !== undefined && valueMatches(expected, inner, created)
     }
-    case 'list': return Array.isArray(expected) && expected.length === v.list.elements.length && expected.every((e, i) => valueMatches(e, v.list.elements[i]))
-    case 'record': return recordMatches(expected, v.record)
-    case 'variant': return expected !== null && typeof expected === 'object' && expected.tag === v.variant.constructor && valueMatches(expected.value, v.variant.value)
+    case 'list': return Array.isArray(expected) && expected.length === v.list.elements.length && expected.every((e, i) => valueMatches(e, v.list.elements[i], created))
+    case 'record': return isObject(expected) && recordDiff(expected, v.record, created).length === 0
+    case 'variant': return isObject(expected) && Object.keys(expected).every((k) => k === 'tag' || k === 'value')
+      && expected.tag === v.variant.constructor && valueMatches(expected.value, v.variant.value, created)
     case 'enum': return expected === v.enum.constructor
-    case 'text_map': return expected !== null && typeof expected === 'object' && Object.keys(expected).length === v.text_map.entries.length
-      && v.text_map.entries.every((e) => Object.hasOwn(expected, e.key) && valueMatches(expected[e.key], e.value))
+    case 'text_map': {
+      const keys = new Set(v.text_map.entries.map((e) => e.key))
+      if (keys.size !== v.text_map.entries.length) refuse('a text map repeats a key')
+      return isObject(expected) && Object.keys(expected).length === keys.size
+        && v.text_map.entries.every((e) => Object.hasOwn(expected, e.key) && valueMatches(expected[e.key], e.value, created))
+    }
     case 'gen_map': return Array.isArray(expected) && expected.length === v.gen_map.entries.length
-      && v.gen_map.entries.every((e, i) => valueMatches(expected[i][0], e.key) && valueMatches(expected[i][1], e.value))
+      && v.gen_map.entries.every((e, i) => Array.isArray(expected[i]) && expected[i].length === 2 && valueMatches(expected[i][0], e.key, created) && valueMatches(expected[i][1], e.value, created))
     default: return false
   }
 }
-function recordMatches(expected, record) {
-  if (expected === null || typeof expected !== 'object' || Array.isArray(expected)) return false
+/** The labels on which `record` and `expected` disagree, by the rule above. */
+function recordDiff(expected, record, created) {
   const byLabel = new Map(record.fields.map((f) => [f.label, f.value]))
-  if (byLabel.size !== record.fields.length) return false
-  return Object.entries(expected).every(([label, want]) => byLabel.has(label) && valueMatches(want, byLabel.get(label)))
+  if (byLabel.size !== record.fields.length) refuse('a record repeats a field label')
+  // Canton drops trailing None fields, so an absent field is None.
+  const differs = Object.entries(expected).filter(([label, want]) => (byLabel.has(label) ? !valueMatches(want, byLabel.get(label), created) : want !== null)).map(([label]) => label)
+  const unnamed = record.fields.filter((f) => !Object.hasOwn(expected, f.label) && !(f.value.sum === 'optional' && f.value.optional.value === undefined)).map((f) => f.label)
+  return [...differs, ...unnamed]
 }
-function mismatchedFields(expected, record) {
-  if (!record) return ['(not a record)']
-  return Object.keys(expected).filter((label) => !recordMatches({ [label]: expected[label] }, record))
+function checkArgument(at, what, expected, v, created) {
+  if (!isObject(expected)) refuse(`intent: ${at} ${what} is not an object`)
+  if (v?.sum !== 'record') refuse(`${at} ${what} is not a record`)
+  const bad = recordDiff(expected, v.record, created)
+  if (bad.length > 0) refuse(`${at} ${what} ${bad.join(', ')} differs from the intent (${argText(v)})`)
+}
+
+function checkChildren(at, ids, expected, ctx) {
+  if (!Array.isArray(expected)) refuse(`intent: ${at} children is not a list`)
+  if (ids.length !== expected.length) refuse(`${at} has ${ids.length} child nodes, expected ${expected.length}`)
+  ids.forEach((id, i) => checkNode(id, expected[i], ctx))
+}
+
+const article = (word) => `${/^[aeiou]/.test(word) ? 'an' : 'a'} ${word}`
+function checkNode(id, expected, ctx) {
+  const node = ctx.nodes.get(id)
+  const at = `node ${id}`
+  const [kind, spec] = intentNode(expected, at)
+  if (node.node_type !== kind) refuse(`${at} is ${article(node.node_type)}, expected ${article(kind)}${spec.templateId ? ` of ${spec.templateId}` : ''}${spec.choice ? ` ${spec.choice}` : ''}`)
+  switch (kind) {
+    case 'exercise': {
+      const e = node.exercise
+      const where = `${at} (${templateName(e)}.${e.choice_id})`
+      checkTemplate(where, e, spec.templateId, ctx)
+      checkInterface(where, e, spec.interfaceId, ctx)
+      if (e.choice_id !== spec.choice) refuse(`${at} exercises ${templateName(e)}.${e.choice_id}, expected ${spec.choice}`)
+      if (!contractIdMatches(spec.contractId, e.contract_id, ctx.created)) refuse(`${where} is on contract ${shortCid(e.contract_id)}, expected ${cidText(spec.contractId)}`)
+      if (typeof spec.consuming !== 'boolean') refuse(`intent: ${at} consuming is not a boolean`)
+      if (e.consuming !== spec.consuming) refuse(`${where} is ${e.consuming ? 'consuming' : 'non-consuming'}, expected ${spec.consuming ? 'consuming' : 'non-consuming'}`)
+      checkParties(where, 'acting parties', e.acting_parties, spec.actingParties)
+      checkParties(where, 'choice observers', e.choice_observers, spec.choiceObservers ?? [])
+      checkArgument(where, 'choice argument', spec.choiceArgument, e.chosen_value, ctx.created)
+      checkChildren(where, e.children, spec.children, ctx)
+      break
+    }
+    case 'create': {
+      const c = node.create
+      const where = `${at} (create ${templateName(c)})`
+      checkTemplate(where, c, spec.templateId, ctx)
+      checkArgument(where, 'create argument', spec.createArguments, c.argument, ctx.created)
+      checkParties(where, 'signatories', c.signatories, spec.signatories)
+      checkParties(where, 'stakeholders', c.stakeholders, spec.stakeholders)
+      if (spec.label !== undefined) {
+        if (typeof spec.label !== 'string' || ctx.created.has(spec.label)) refuse(`intent: create label ${spec.label} is not a new name`)
+        ctx.created.set(spec.label, c.contract_id)
+      }
+      break
+    }
+    case 'fetch': {
+      const f = node.fetch
+      const where = `${at} (fetch ${templateName(f)})`
+      checkTemplate(where, f, spec.templateId, ctx)
+      checkInterface(where, f, spec.interfaceId, ctx)
+      if (!contractIdMatches(spec.contractId, f.contract_id, ctx.created)) refuse(`${where} is of contract ${shortCid(f.contract_id)}, expected ${cidText(spec.contractId)}`)
+      checkParties(where, 'acting parties', f.acting_parties, spec.actingParties)
+      break
+    }
+    default: // rollback
+      checkChildren(at, node.rollback.children, spec.children, ctx)
+  }
 }
 
 /**
- * Refuse unless the transaction does exactly what the wallet meant:
- *   intent = { actAs: [party],
- *              exercise: { templateId, contractId, choice, choiceArgument } }
- *         or { actAs: [party], create: { templateId, createArguments } }
- * The submitters must be exactly `actAs`, there must be one root node, and it
- * must be that exercise (on that contract, with every named argument equal) or
- * that create.
+ * Refuse unless the transaction is exactly the one the intent describes: the
+ * submitters are exactly `actAs`, and the tree from its roots down equals the
+ * intent's, node for node (see the format above).
  */
 export function checkIntent(tx, intent) {
+  if (!isObject(intent)) refuse('there is no intent')
+  for (const key of Object.keys(intent)) if (!['actAs', 'packages', 'roots'].includes(key)) refuse(`intent has unknown property ${key}`)
   const actAs = tx.metadata.submitter_info?.act_as ?? []
-  const want = intent?.actAs ?? []
-  if (want.length === 0) refuse('intent names no submitter')
+  const want = intent.actAs ?? []
+  if (!Array.isArray(want) || want.length === 0) refuse('intent names no submitter')
   if (actAs.length !== want.length || new Set(actAs).size !== actAs.length || !want.every((p) => actAs.includes(p))) {
     refuse(`submitters are [${actAs.map(shortParty).join(', ')}], expected [${want.map(shortParty).join(', ')}]`)
   }
+  if (!isObject(intent.packages)) refuse('intent pins no packages')
+  if (!Array.isArray(intent.roots) || intent.roots.length === 0) refuse('intent names no root action')
+  const { nodes } = indexTransaction(tx.transaction)
   const roots = tx.transaction.roots
-  if (roots.length !== 1) refuse(`the transaction has ${roots.length} root actions, expected 1`)
-  const root = tx.transaction.nodes.find((n) => n.node_id === roots[0]).v1
-  if (intent.exercise && intent.create) refuse('intent names both an exercise and a create')
-  if (intent.exercise) {
-    const { templateId, contractId, choice, choiceArgument = {} } = intent.exercise
-    if (root.node_type !== 'exercise') refuse(`the root action is ${root.node_type}, expected an exercise of ${choice}`)
-    const e = root.exercise
-    if (!sameTemplate(e, templateId)) refuse(`the root exercise is on ${templateName(e)}, expected ${templateId}`)
-    if (e.interface_id !== undefined) refuse('the root exercise goes through an interface')
-    if (e.choice_id !== choice) refuse(`the root choice is ${e.choice_id}, expected ${choice}`)
-    if (e.contract_id !== contractId) refuse(`the root exercise is on contract ${shortCid(e.contract_id)}, expected ${shortCid(contractId)}`)
-    if (!e.acting_parties.every((p) => want.includes(p))) refuse(`the root choice acts as [${e.acting_parties.map(shortParty).join(', ')}]`)
-    const bad = mismatchedFields(choiceArgument, e.chosen_value?.sum === 'record' ? e.chosen_value.record : undefined)
-    if (bad.length > 0) refuse(`choice argument ${bad.join(', ')} differs from the intent (${argText(e.chosen_value)})`)
-  } else if (intent.create) {
-    const { templateId, createArguments = {} } = intent.create
-    if (root.node_type !== 'create') refuse(`the root action is ${root.node_type}, expected a create of ${templateId}`)
-    const c = root.create
-    if (!sameTemplate(c, templateId)) refuse(`the root create is of ${templateName(c)}, expected ${templateId}`)
-    const bad = mismatchedFields(createArguments, c.argument?.sum === 'record' ? c.argument.record : undefined)
-    if (bad.length > 0) refuse(`create argument ${bad.join(', ')} differs from the intent (${argText(c.argument)})`)
-  } else {
-    refuse('intent names neither an exercise nor a create')
-  }
+  if (roots.length !== intent.roots.length) refuse(`the transaction has ${roots.length} root actions, expected ${intent.roots.length}`)
+  const ctx = { nodes, packages: intent.packages, created: new Map() }
+  roots.forEach((id, i) => checkNode(id, intent.roots[i], ctx))
 }
 
 // --- summary
