@@ -498,7 +498,11 @@ export function createKeeper(config, { now = () => Date.now(), emit = defaultEmi
   // ---------------------------------------------------- Canton Coin (V2) --
 
   const coinAccount = (party) => ({ owner: party, provider: null, id: '' })
-  const coinSettlement = (lender, id) => ({ executors: [lender], id, cid: null, meta: META })
+  const coinSettlement = (executors, id) => ({ executors, id, cid: null, meta: META })
+  // Recorded on loans opened since 0.10.0 (lender and borrower jointly);
+  // a 0.9.0 loan records none and its lock is executed by the lender alone.
+  const coinExecutors = (a) => (Array.isArray(a.settlementExecutors) && a.settlementExecutors.length > 0 ? a.settlementExecutors : [a.lender])
+  const sameParties = (x, y) => Array.isArray(x) && x.length === y.length && x.every((p, i) => p === y[i])
 
   /** A receiving allocation from an earlier, unfinished liquidation attempt. */
   async function existingReceipt(loan) {
@@ -513,6 +517,7 @@ export function createKeeper(config, { now = () => Date.now(), emit = defaultEmi
         const v = iv?.viewValue
         const legs = v?.allocation?.transferLegSides ?? []
         if (v?.settlement?.id === a.settlementRef
+          && sameParties(v?.settlement?.executors, coinExecutors(a))
           && v?.allocation?.authorizer?.owner === config.lender
           && legs.length === 1
           && legs[0].side === 'ReceiverSide'
@@ -537,7 +542,7 @@ export function createKeeper(config, { now = () => Date.now(), emit = defaultEmi
       emit({ event: 'receiptLookupFailed', level: 'warn', loanCid: loan.contractId, error: message(error) })
     }
     const a = loan.args
-    const settlement = coinSettlement(a.lender, a.settlementRef)
+    const settlement = coinSettlement(coinExecutors(a), a.settlementRef)
     const spec = {
       admin: a.coinAdmin,
       authorizer: coinAccount(a.lender),
@@ -572,11 +577,12 @@ export function createKeeper(config, { now = () => Date.now(), emit = defaultEmi
     }
     if (!config.registryUrl) throw new Error('Canton Coin liquidation needs the token registry: set VEIL_REGISTRY_URL')
     const receiptAllocationCid = await prepareReceipt(loan)
-    const settlement = coinSettlement(a.lender, a.settlementRef)
+    const executors = coinExecutors(a)
+    const settlement = coinSettlement(executors, a.settlementRef)
     const transferLegs = [{ transferLegId: 'collateral', sender: coinAccount(a.borrower), receiver: coinAccount(a.lender), amount: a.collateralQuantity, instrumentId: COIN_INSTRUMENT, meta: META }]
     const allocations = [a.allocationCid, receiptAllocationCid].map((allocationCid) => ({ allocationCid, extraTransferLegSides: [], nextIterationFunding: null }))
     const settle = await registry('/registry/allocation/v2/settlement-factory', {
-      choiceArguments: { settlement, transferLegs, allocations, actors: [a.lender], extraArgs: EMPTY_EXTRA },
+      choiceArguments: { settlement, transferLegs, allocations, actors: executors, extraArgs: EMPTY_EXTRA },
       excludeDebugFields: true,
     })
     const extraArgs = { context: settle.choiceContext.choiceContextData, meta: META }
@@ -591,6 +597,10 @@ export function createKeeper(config, { now = () => Date.now(), emit = defaultEmi
   }
 
   async function perform(loan, action, approved = false) {
+    if (action.kind === 'closeLapsed') {
+      // No registry call: the lapsed allocation is left for the borrower.
+      return submit({ kind: action.kind, loanCid: loan.contractId, template: loan.template, approved }, exercise('CoinLoan', loan.contractId, action.choice))
+    }
     if (loan.template === 'CoinLoan' && action.kind !== 'issueMarginCall') return liquidateCoin(loan, action, approved)
     // T-Bill LiquidateOverdue takes an Optional mark (0.9.0), the others a plain one.
     const choiceArgument = action.kind === 'liquidateOverdue' ? { valuationCid: action.valuationCid ?? null } : { valuationCid: action.valuationCid }

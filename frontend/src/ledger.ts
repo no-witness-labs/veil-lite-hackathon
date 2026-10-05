@@ -844,9 +844,14 @@ export const liquidateLoan = (loan: Contract, valuationCid: string, snapshot = c
 
 /** Close a loan after its exact ledger maturity instant, without a margin call.
  * The Daml choice enforces now > maturity. A T-Bill loan nets at the current
- * mark of its own stream so any surplus collateral returns to the borrower. */
+ * mark of its own stream so any surplus collateral returns to the borrower.
+ * A Canton Coin loan whose lock has lapsed (maturity + 1 day) can no longer be
+ * settled, so it is closed as CollateralLapsed with nothing seized. */
 export async function liquidateOverdueLoan(loan: Contract, snapshot = captureSession()): Promise<TxResult> {
-  if (isCoin(loan)) return liquidateCoinLoan(loan, null, snapshot)
+  if (isCoin(loan)) {
+    if (loan.args.maturity && coinLockLapsed(loan.args.maturity)) return closeLapsedCoinLoan(loan, snapshot)
+    return liquidateCoinLoan(loan, null, snapshot)
+  }
   const { contracts } = await listActive(cfg.parties.lender, snapshot)
   const marks = contracts.filter((c) => c.template === 'CollateralValuation' && c.args.streamId === loan.args.valuationStreamId)
   if (marks.length !== 1) {
@@ -921,7 +926,22 @@ function coinSpec(admin: string, authorizer: string, committed: boolean, side: '
   }
 }
 
-const coinSettlement = (lender: string, id: string) => ({ executors: [lender], id, cid: null, meta: META })
+const coinSettlement = (executors: string[], id: string) => ({ executors, id, cid: null, meta: META })
+
+/** Executors of a CoinLoan's lock: recorded since 0.10.0 (lender and borrower
+ * jointly); a loan opened by 0.9.0 has none recorded and a lender-only lock. */
+function coinLoanExecutors(args: DealArgs): string[] {
+  if (args.settlementExecutors && args.settlementExecutors.length > 0) return args.settlementExecutors
+  if (!args.lender) throw new Error('Loan has no lender; refresh before acting on it.')
+  return [args.lender]
+}
+
+/** Past this instant the registry refuses to settle the lock and the borrower
+ * may withdraw it; only CloseLapsedCoinLoan can close the loan. The margin
+ * keeps a browser clock slightly ahead of ledger time from choosing it early. */
+function coinLockLapsed(maturity: string, nowMs = Date.now()): boolean {
+  return nowMs > Date.parse(settlementDeadline(maturity)) + 60_000
+}
 
 async function allocationFactory(settlement: unknown, allocation: unknown, inputHoldingCids: string[], actor: string, snapshot: AuthSnapshot): Promise<FactoryWithContext> {
   return registry<FactoryWithContext>('/registry/allocation-instruction/v2/allocation-factory', {
@@ -963,16 +983,18 @@ async function createCoinOffer(draft: Draft, snapshot: AuthSnapshot): Promise<Tx
 }
 
 /** Borrower accepts: in one transaction the Canton Coin is locked in a
- * committed allocation executed only by the lender, and the loan opens. */
+ * committed allocation executed by lender and borrower jointly, and the loan
+ * opens. AcceptCoin builds the same settlement on-ledger and rejects any
+ * allocation that differs, so this request must match it exactly. */
 async function acceptCoinOffer(offer: Contract, valuationCid: string, snapshot: AuthSnapshot): Promise<TxResult> {
   const a = offer.args
-  if (!a.coinAdmin || !a.lender || !a.settlementRef || !a.collateralQuantity || !a.maturity) throw new Error('Canton Coin offer is incomplete; refresh before accepting.')
+  if (!a.coinAdmin || !a.lender || !a.borrower || !a.settlementRef || !a.collateralQuantity || !a.maturity) throw new Error('Canton Coin offer is incomplete; refresh before accepting.')
   const coins = parseHoldings((await listActive(cfg.parties.borrower, snapshot)).contracts).filter((h) => h.kind === 'coin')
   const available = coins.reduce((sum, h) => sum + h.amount, 0)
   if (available < Number(a.collateralQuantity)) {
     throw new Error(`The shared demo borrower has only ${available.toFixed(2)} Canton Coin unlocked and this offer locks ${a.collateralQuantity} CC. Every visitor's desk uses the same borrower, and other desks' open loans hold the rest. Try the T-Bill track, or press Start over to release your own desk's coin.`)
   }
-  const settlement = coinSettlement(a.lender, a.settlementRef)
+  const settlement = coinSettlement([a.lender, a.borrower], a.settlementRef)
   const spec = coinSpec(a.coinAdmin, cfg.parties.borrower, true, 'SenderSide', a.lender, a.collateralQuantity, a.maturity)
   const inputHoldingCids = coins.map((h) => h.contractId)
   const factory = await allocationFactory(settlement, spec, inputHoldingCids, cfg.parties.borrower, snapshot)
@@ -1006,11 +1028,14 @@ async function repayCoinLoan(loan: Contract, repayment: number, snapshot: AuthSn
 }
 
 /** Lender liquidates: prepare the receiving allocation, then settle the batch
- * so the locked Canton Coin moves to the lender. */
+ * so the locked Canton Coin moves to the lender. Both allocations carry the
+ * loan's executors, and the batch is settled with all of them as actors; the
+ * CoinLoan choice supplies their authority on-ledger. */
 async function liquidateCoinLoan(loan: Contract, valuationCid: string | null, snapshot: AuthSnapshot): Promise<TxResult> {
   const a = loan.args
   if (!a.coinAdmin || !a.lender || !a.borrower || !a.settlementRef || !a.collateralQuantity || !a.maturity || !a.allocationCid) throw new Error('Loan is incomplete; refresh before liquidating.')
-  const settlement = coinSettlement(a.lender, a.settlementRef)
+  const executors = coinLoanExecutors(a)
+  const settlement = coinSettlement(executors, a.settlementRef)
   const receiptSpec = coinSpec(a.coinAdmin, a.lender, false, 'ReceiverSide', a.borrower, a.collateralQuantity, a.maturity)
   const factory = await allocationFactory(settlement, receiptSpec, [], a.lender, snapshot)
   const prepared = await submitAs(
@@ -1026,7 +1051,7 @@ async function liquidateCoinLoan(loan: Contract, valuationCid: string | null, sn
   const legs = [{ transferLegId: 'collateral', sender: coinAccount(a.borrower), receiver: coinAccount(a.lender), amount: a.collateralQuantity, instrumentId: COIN_INSTRUMENT, meta: META }]
   const allocations = [a.allocationCid, receipt.contractId].map((allocationCid) => ({ allocationCid, extraTransferLegSides: [], nextIterationFunding: null }))
   const settle = await registry<FactoryWithContext>('/registry/allocation/v2/settlement-factory', {
-    choiceArguments: { settlement, transferLegs: legs, allocations, actors: [a.lender], extraArgs: EMPTY_EXTRA },
+    choiceArguments: { settlement, transferLegs: legs, allocations, actors: executors, extraArgs: EMPTY_EXTRA },
     excludeDebugFields: true,
   }, snapshot)
   const extraArgs = { context: settle.choiceContext.choiceContextData, meta: META }
@@ -1036,8 +1061,18 @@ async function liquidateCoinLoan(loan: Contract, valuationCid: string | null, sn
   return submitAs([cfg.parties.lender], choice, 'liquidate-coin', snapshot, settle.choiceContext.disclosedContracts)
 }
 
-/** Lender releases the Canton Coin and closes the loan (used by reset). */
+/** Lender records a lapsed Canton Coin lock: the loan closes with nothing
+ * seized and the allocation untouched (the borrower may withdraw it). */
+function closeLapsedCoinLoan(loan: Contract, snapshot: AuthSnapshot): Promise<TxResult> {
+  return submitAs([cfg.parties.lender], exercise(template('CoinLoan'), loan.contractId, 'CloseLapsedCoinLoan'), 'close-lapsed-coin', snapshot)
+}
+
+/** Lender releases the Canton Coin and closes the loan (used by reset). Once
+ * the lock has lapsed nothing can be released any more: the lender records
+ * the lapse instead. */
 async function writeOffCoinLoan(loan: Contract, snapshot: AuthSnapshot): Promise<TxResult> {
+  if (!loan.args.maturity) throw new Error('Loan has no maturity; refresh before closing it.')
+  if (coinLockLapsed(loan.args.maturity)) return closeLapsedCoinLoan(loan, snapshot)
   if (!loan.args.allocationCid) throw new Error('Loan has no recorded allocation.')
   const ctx = await cancelContext(loan.args.allocationCid, snapshot)
   return submitAs(

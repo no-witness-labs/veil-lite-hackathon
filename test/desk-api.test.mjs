@@ -169,6 +169,7 @@ function fakeLedger({ holdings = true } = {}) {
     if (choice === 'Withdraw' || choice === 'WithdrawCoinOffer') add('CashHolding', { issuer: P.issuer, owner: P.lender, amount: contract.args.principal })
     if (choice === 'CancelSubstitution') add('CollateralHolding', { issuer: P.issuer, owner: P.borrower, asset: contract.args.newAsset, quantity: contract.args.newQuantity })
     if (choice === 'WriteOffCoin') add('LoanClosed', { ...contract.args, collateralAsset: 'Canton Coin', reason: 'WrittenOff' })
+    if (choice === 'CloseLapsedCoinLoan') add('LoanClosed', { ...contract.args, collateralAsset: 'Canton Coin', reason: 'CollateralLapsed' })
     return null
   }
 
@@ -338,6 +339,24 @@ test('create reuses a live desk without touching the ledger, and repairs a janit
   // An unusable token (tampered) just means a new desk.
   const fresh = (await call({ action: 'create', deskToken: `${first.token}x` })).json()
   assert.notEqual(fresh.deskId, first.deskId)
+})
+
+test('close records a lapsed Canton Coin lock without the registry', async () => {
+  const ledger = fakeLedger()
+  globalThis.fetch = ledger.fetchImpl
+  const mine = (await call({ action: 'create' })).json()
+  const coin = mine.streams['Canton Coin']
+  const maturity = new Date(Date.now() - 2 * 86_400_000).toISOString()
+  const lapsed = ledger.deal('CoinLoan', coin, { collateralAsset: undefined, allocationCid: 'alloc-9', coinAdmin: 'DSO::1', settlementRef: 'veil-9', maturity, settlementExecutors: [P.lender, P.borrower] })
+  ledger.state.submissions = []
+
+  const res = await call({ action: 'close', deskToken: mine.token }, roleToken('veil-borrower'))
+  assert.equal(res.statusCode, 200, res.body)
+  const [close, batch] = ledger.state.submissions
+  assert.deepEqual(close.actAs, [P.lender])
+  assert.deepEqual(close.commands[0].ExerciseCommand, { templateId: '#veil-lite:Veil:CoinLoan', contractId: lapsed.contractId, choice: 'CloseLapsedCoinLoan', choiceArgument: {} })
+  assert.equal(ledger.state.registryCalls.length, 0)
+  assert.ok(batch.commands.some((c) => c.ExerciseCommand.choice === 'Dismiss'), 'the lapse record is dismissed with the desk')
 })
 
 test('close touches only its own desk\'s contracts, in reset order, and never burns holdings', async () => {
