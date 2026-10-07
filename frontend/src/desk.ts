@@ -52,6 +52,13 @@ export function onDesk(contract: Contract, streams: ReadonlySet<string>): boolea
   return stream !== null && streams.has(stream)
 }
 
+/** True unless the contract names a borrower other than the demo's own. The
+ * operator reset acts only for the demo's parties, so it must leave alone deals
+ * and marks of any other borrower (e.g. a self-custody wallet's external party,
+ * which signs only with its own key). */
+export const hasDemoBorrower = (contract: Contract, borrower: string): boolean =>
+  !contract.args.borrower || contract.args.borrower === borrower
+
 /** The visitor's view: this desk's deals and marks plus everything that is
  * not desk-scoped (holdings). Without a desk, no deal or mark is shown. */
 export function scopeToDesk(contracts: Contract[], streams: ReadonlySet<string>): Contract[] {

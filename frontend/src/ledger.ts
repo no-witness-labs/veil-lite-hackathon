@@ -11,7 +11,7 @@
 // any sandbox has run; the app shows a clear "run start-sandbox" message instead.
 import { assertSession, captureSession, clearSession, requireOperator, requireSession, type AuthSnapshot } from './auth'
 import type { ActiveState, Contract, DealArgs, Draft, Holding, Role, TemplateName, TxResult } from './types'
-import { deskExpired, parseDesk, type Desk } from './desk'
+import { deskExpired, hasDemoBorrower, parseDesk, type Desk } from './desk'
 import {
   classifyFailure,
   describeCompletionError,
@@ -1107,9 +1107,11 @@ async function submitReset(actAs: string[], command: unknown, prefix: string, sn
  * or refresh. Reset is an explicit cooperative demo cleanup. It archives active loans with
  * issuer, lender, and borrower rather than bypassing the margin-call deadline/Liquidate
  * choice, then burns known holdings and valuation records before seeding. */
+const demoBorrower = (c: Contract): boolean => hasDemoBorrower(c, cfg.parties.borrower)
+
 export async function resetDemo(snapshot = captureSession()): Promise<void> {
   requireOperator(snapshot)
-  let { contracts } = await listActive(cfg.parties.lender, snapshot)
+  let contracts = (await listActive(cfg.parties.lender, snapshot)).contracts.filter(demoBorrower)
   for (const c of contracts) {
     if (c.template === 'LoanOffer' || c.template === 'CoinLoanOffer') await withdrawOffer(c, snapshot)
     // Never strand a borrower's Canton Coin: the lender releases it first.
@@ -1123,7 +1125,7 @@ export async function resetDemo(snapshot = captureSession()): Promise<void> {
       )
     }
   }
-  ;({ contracts } = await listActive(cfg.parties.lender, snapshot))
+  contracts = (await listActive(cfg.parties.lender, snapshot)).contracts.filter(demoBorrower)
   for (const c of contracts) {
     if (c.template === 'SubstitutionRequest')
       await submitReset([cfg.issuer, cfg.parties.borrower], exercise(template('SubstitutionRequest'), c.contractId, 'Archive'), 'archive-substitution', snapshot)
@@ -1138,7 +1140,7 @@ export async function resetDemo(snapshot = captureSession()): Promise<void> {
   // Price and stream records have multiple signatories. Reset is an explicit
   // cooperative demo cleanup, so archive both templates with all authorized
   // parties. New streams come from the desks opened after the reset.
-  const { contracts: valuations } = await listActive(cfg.parties.valuer, snapshot)
+  const valuations = (await listActive(cfg.parties.valuer, snapshot)).contracts.filter(demoBorrower)
   const cleanupActors = [cfg.parties.lender, cfg.parties.borrower, cfg.parties.valuer]
   for (const c of valuations) {
     if (c.template === 'CollateralValuation') {
