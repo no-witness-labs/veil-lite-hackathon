@@ -140,3 +140,10 @@ alongside `fbdd86ab…` (0.9.0):
 
 Side effect: the refused attack left a lender-owned receive-side allocation holding no
 funds; it expires with its settlement deadline.
+
+## 0.9.0 removed from the node (Oct 7, 2026)
+
+After a demo reset left no active contracts on `fbdd86ab…`, the node operator removed the
+0.9.0 DAR from hackcanton-01; a package listing the same day shows only `17fcd804…`
+(0.10.0). No new contract can be created or exercised under 0.9.0, and no lender-only
+(`settlementExecutors = None`) Canton Coin loan remains on the node.
