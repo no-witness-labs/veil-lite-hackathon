@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { deskExpired, deskNeedsRepair, deskStreamIds, onDesk, parseDesk, scopeToDesk } from '../frontend/src/desk.ts'
+import { deskExpired, deskNeedsRepair, deskStreamIds, hasDemoBorrower, onDesk, parseDesk, scopeToDesk } from '../frontend/src/desk.ts'
 import { buildBookRows, selectDeal } from '../frontend/src/loanBook.ts'
 import { valuationCandidates } from '../frontend/src/state.ts'
 import { advance, currentStep, tourSteps } from '../frontend/src/tour.ts'
@@ -95,4 +95,15 @@ test('parseDesk validates stored desks; deskExpired keeps a safety margin', () =
   assert.equal(deskExpired(A, NOW), false)
   assert.equal(deskExpired(A, NOW + 3600_000 - 30_000), true)
   assert.equal(deskExpired(A, NOW + 3600_000 - 30_000, 0), false)
+})
+
+test('the operator reset leaves alone deals and marks of a non-demo borrower', () => {
+  const wallet = 'veil-wallet-1::1220ab'
+  const of = (template, args) => ({ contractId: `#${template}`, template, offset: 1, args })
+  assert.equal(hasDemoBorrower(of('LoanClosed', { borrower: parties.borrower }), parties.borrower), true)
+  assert.equal(hasDemoBorrower(of('CollateralValuation', { borrower: parties.borrower }), parties.borrower), true)
+  assert.equal(hasDemoBorrower(of('LoanClosed', { borrower: wallet }), parties.borrower), false)
+  assert.equal(hasDemoBorrower(of('CollateralValuation', { borrower: wallet }), parties.borrower), false)
+  // Contracts without a borrower (holdings) stay in scope.
+  assert.equal(hasDemoBorrower(of('CashHolding', { owner: parties.lender }), parties.borrower), true)
 })
