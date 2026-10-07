@@ -6,7 +6,7 @@ author: No Witness Labs
 theme: default
 paginate: true
 size: 16:9
-footer: 'NO WITNESS LABS  /  VEIL 0.9.0  /  HACKCANTON SEASON 3'
+footer: 'NO WITNESS LABS  /  VEIL 0.10.0  /  HACKCANTON SEASON 3'
 ---
 
 <style>
@@ -155,9 +155,10 @@ section.dark code { background: #22344a; }
 <tr><td>Liquidation seizes surplus collateral (Medium)</td><td>Fixed in 0.9.0: only the debt is covered, the rest returns (T-Bill loans)</td></tr>
 <tr><td>No offer reject / expiry · unbounded terms · lender-only record deletion · regulator choice</td><td>Fixed in 0.9.0 with a regression test each</td></tr>
 <tr><td>Canton Coin liquidation takes the whole locked leg</td><td>Documented limitation: needs iterated settlement</td></tr>
+<tr><td>Second round: lender could settle the coin lock alone; unauthenticated allocation factory (High)</td><td>Fixed in 0.10.0: joint executors, verified allocations. Verified live on DevNet</td></tr>
 </table>
 
-<p class="source">Full triage with evidence: docs/AUDIT-TRIAGE.md. 0.9.0 was checked as a compatible upgrade of the package already on DevNet before it was uploaded.</p>
+<p class="source">Full triage with evidence: docs/AUDIT-TRIAGE.md. Each release (0.9.0, 0.10.0) was checked as a compatible upgrade of the package already on DevNet before it was uploaded.</p>
 
 ---
 
@@ -203,10 +204,10 @@ section.dark code { background: #22344a; }
 
 <table>
 <tr><th>Layer</th><th>What it is</th></tr>
-<tr><td>Contracts</td><td>Daml package <code>veil-lite</code> 0.9.0 on hackcanton-01; Token Standard V2 interfaces (exact vetted packages); optional <code>veil-price-committee</code> for a 2-of-3 decentralized valuer (BitSafe DecMan, LocalNet)</td></tr>
+<tr><td>Contracts</td><td>Daml package <code>veil-lite</code> 0.10.0 on hackcanton-01; Token Standard V2 interfaces (exact vetted packages); optional <code>veil-price-committee</code> for a 2-of-3 decentralized valuer (BitSafe DecMan, LocalNet)</td></tr>
 <tr><td>Server</td><td>Vercel functions: per-party sessions, per-party read/act checks, read-only token-registry proxy; request IDs, sanitised ledger errors, timeouts, and lost-submission checks against the ledger</td></tr>
 <tr><td>App &amp; ops</td><td>React UI (role views, guided demo, loan book, disclosure matrix, raw ledger) · Node keeper</td></tr>
-<tr><td>Evidence</td><td>64 Daml scripts · 111 server, keeper and UI-logic tests · DevNet runs with real CC, including a maker-checker liquidation and a recovered lost submission</td></tr>
+<tr><td>Evidence</td><td>76 Daml scripts · 144 server, keeper, UI and wallet-verifier tests · DevNet runs with real CC, including a maker-checker liquidation and a recovered lost submission</td></tr>
 </table>
 
 <p class="source">Trust boundary, stated plainly: on the shared node one ledger user hosts all demo parties, so our server enforces role separation there; on DevNet valuations are manually attested (the decentralized price committee runs on LocalNet); T-Bill/MMF and USDC are simulated.</p>
@@ -231,5 +232,5 @@ section.dark code { background: #22344a; }
 ## From demo to pilot
 
 <div class="decision"><div class="index">01</div><h3>Validate the user</h3><p>Walk 3 lending / treasury operators through one real deal. No customer evidence yet.</p></div>
-<div class="decision"><div class="index">02</div><h3>Real signing</h3><p>A borrower whose key stays with the user now works as a LocalNet prototype (external party, 9 transactions signed by its key). Next: decode and verify each transaction before signing, and run it on a node that allows external parties.</p></div>
-<div class="decision"><div class="index">03</div><h3>Real assets and prices</h3><p>Stablecoin principal and tokenised T-Bills via the token standard; the decentralized price committee (built, on LocalNet) run by independent price providers on a live network.</p></div>
+<div class="decision"><div class="index">02</div><h3>Real signing</h3><p>A borrower whose key stays with the user works as a LocalNet prototype that verifies each transaction before signing. Next: run it on a node that allows external parties, and connect existing Canton wallets through PartyLayer (CIP-0103).</p></div>
+<div class="decision"><div class="index">03</div><h3>Real assets and prices</h3><p>Stablecoin principal (e.g. Brale) and tokenised T-Bills via the token standard; the decentralized price committee (built, on LocalNet) fed by market data such as Kaiko or Coin Metrics.</p></div>
