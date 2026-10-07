@@ -50,6 +50,33 @@ transaction against the one it expects and prints one line saying what is
 being signed (see below). At the end a plain submission as the wallet,
 without a signature, is refused.
 
+## Run it on DevNet
+
+On the HackCanton DevNet node (hackcanton-01) the wallet ran end to end on
+Oct 7, 2026: [`devnet/RUN-2026-10-07.log`](devnet/RUN-2026-10-07.log). Our
+ledger user cannot allocate external parties there, so:
+
+1. We generated each wallet key locally, asked the node for the onboarding
+   topology (`/v2/parties/external/generate-topology`), signed its multi-hash,
+   and wrote a ready `/v2/parties/external/allocate` request with `userId` set
+   to our ledger user. The keys never left our machine.
+2. The node operator submitted the requests with an admin token, creating
+   `veil-wallet-1` and `veil-wallet-2` with our user holding `CanActAs`.
+3. The `veil-wallet` DAR (built against the deployed `veil-lite` 0.10.0) was
+   uploaded through the node's UI.
+4. `demo.mjs` then ran against the node with the onboarded wallet and the live
+   demo's issuer, lender, valuer and regulator:
+
+```bash
+JSON_API=<participant JSON API> CANTON_TOKEN=<ledger token> LEDGER_USER=<our user> \
+WALLET_KEY=<wallet key PEM> WALLET_META=<{partyId, publicKeyFingerprint}> \
+PARTIES_JSON=<{issuer, parties}> SKIP_DAR_UPLOAD=1 node wallet/localnet/demo.mjs
+```
+
+All nine borrower transactions were verified and signed by the wallet's key,
+the loan closed as `Repaid` with the collateral returned, and a plain
+submission as the wallet without its signature was refused.
+
 ## What the wallet checks before it signs
 
 For each step the participant returns the prepared transaction (a protobuf
@@ -122,14 +149,17 @@ repeated key.
 
 ## Limits
 
-- **Not on the HackCanton DevNet node.** Allocating an external party needs
-  rights our DevNet ledger user does not have; on LocalNet we control the node.
+- **Onboarding on a shared node needs the node operator.** Our DevNet ledger user
+  cannot allocate external parties, so on hackcanton-01 the node operator
+  submitted our prepared requests (see "Run it on DevNet"). The wallet still
+  signs the onboarding topology hash as the participant returns it, without
+  decoding it.
 - **What the check does not cover.** The intent is only as right as the
   wallet that writes it: the demo's expected trees follow the current
   `veil-lite` and `veil-wallet` choices, and a change to what a choice does
   makes the wallet refuse until its expectation is updated. The tree check was
-  run against the DevNet vectors (which include a real `PartialRepay`), not
-  yet against the demo's own steps on LocalNet; a wrong expectation there
+  run against the DevNet vectors (which include a real `PartialRepay`) and,
+  end to end, against the demo's own nine steps on DevNet; a wrong expectation
   fails closed. Ledger times written `{ $any: 'timestamp' }` are checked to be
   timestamps, not bounded. Not compared with an expectation: exercise results
   (the values a choice returns), the signatories and stakeholders of exercised

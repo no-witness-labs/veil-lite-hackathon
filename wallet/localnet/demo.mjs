@@ -8,14 +8,19 @@
 // BitSafe DecMan's hackathon LocalNet) and the DARs built:
 //   dpm build && (cd wallet && dpm build)
 // Usage: CANTON_TOKEN=<localnet token> node wallet/localnet/demo.mjs
-import { generateKeyPairSync, sign as edSign, createHash, createPublicKey, randomUUID } from 'node:crypto'
+import { generateKeyPairSync, sign as edSign, createHash, createPrivateKey, createPublicKey, randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { inflateRawSync } from 'node:zlib'
 import { VerificationError, toBase64, verifyPrepared } from './verify.mjs'
 
 const J = process.env.JSON_API ?? 'http://localhost:3975'
 const TOKEN = process.env.CANTON_TOKEN
-if (!TOKEN) throw new Error('set CANTON_TOKEN to the LocalNet ledger API token')
+if (!TOKEN) throw new Error('set CANTON_TOKEN to the ledger API token')
+// On a shared node (e.g. DevNet) the demo cannot allocate parties itself. Then:
+//   WALLET_KEY / WALLET_META  an external party already onboarded by the node operator
+//                             (its Ed25519 PEM key and {partyId, publicKeyFingerprint})
+//   PARTIES_JSON              existing issuer/lender/valuer/regulator ({issuer, parties: {...}})
+//   SKIP_DAR_UPLOAD=1         the veil-wallet DAR was uploaded by the operator; only check it is vetted
 const USER = process.env.LEDGER_USER ?? 'ledger-api-user'
 const REPO = new URL('../..', import.meta.url).pathname
 const H = { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' }
@@ -49,13 +54,20 @@ async function submitLocal(actAs, command) {
 
 // --- the wallet: key pair, external party, and signing
 await step('The wallet makes its own key and becomes a Canton party')
-const { privateKey } = generateKeyPairSync('ed25519')
+const ONBOARDED = process.env.WALLET_KEY && process.env.WALLET_META ? JSON.parse(readFileSync(process.env.WALLET_META, 'utf8')) : null
+const privateKey = ONBOARDED ? createPrivateKey(readFileSync(process.env.WALLET_KEY, 'utf8')) : generateKeyPairSync('ed25519').privateKey
 const publicKey = Buffer.from(createPublicKey(privateKey).export({ format: 'jwk' }).x, 'base64url').toString('base64')
 const signature = (hashB64, signedBy) => ({ format: 'SIGNATURE_FORMAT_CONCAT', signature: edSign(null, Buffer.from(hashB64, 'base64'), privateKey).toString('base64'), signedBy, signingAlgorithmSpec: 'SIGNING_ALGORITHM_SPEC_ED25519' })
 const synchronizer = (await call('/v2/state/connected-synchronizers')).connectedSynchronizers[0].synchronizerId
-const topology = await call('/v2/parties/external/generate-topology', { synchronizer, partyHint: `veil-wallet-${RUN}`, publicKey: { format: 'CRYPTO_KEY_FORMAT_RAW', keyData: publicKey, keySpec: 'SIGNING_KEY_SPEC_EC_CURVE25519' } })
-const WALLET = (await call('/v2/parties/external/allocate', { synchronizer, onboardingTransactions: topology.topologyTransactions.map((transaction) => ({ transaction })), multiHashSignatures: [signature(topology.multiHash, topology.publicKeyFingerprint)], identityProviderId: '', userId: USER, waitForAllocation: true })).partyId
-const FINGERPRINT = topology.publicKeyFingerprint
+let WALLET, FINGERPRINT
+if (ONBOARDED) {
+  if (ONBOARDED.publicKey && ONBOARDED.publicKey !== publicKey) throw new Error('WALLET_KEY does not match WALLET_META')
+  ;({ partyId: WALLET, publicKeyFingerprint: FINGERPRINT } = ONBOARDED)
+} else {
+  const topology = await call('/v2/parties/external/generate-topology', { synchronizer, partyHint: `veil-wallet-${RUN}`, publicKey: { format: 'CRYPTO_KEY_FORMAT_RAW', keyData: publicKey, keySpec: 'SIGNING_KEY_SPEC_EC_CURVE25519' } })
+  WALLET = (await call('/v2/parties/external/allocate', { synchronizer, onboardingTransactions: topology.topologyTransactions.map((transaction) => ({ transaction })), multiHashSignatures: [signature(topology.multiHash, topology.publicKeyFingerprint)], identityProviderId: '', userId: USER, waitForAllocation: true })).partyId
+  FINGERPRINT = topology.publicKeyFingerprint
+}
 info(`wallet party ${short(WALLET)} (key fingerprint ${FINGERPRINT.slice(0, 16)}…); the private key never left this process`)
 let signed = 0
 // The wallet signs only after verify.mjs has decoded the prepared transaction,
@@ -193,14 +205,19 @@ await step('Installing veil-wallet on participant 1')
 const dar = readFileSync(`${REPO}wallet/.daml/dist/veil-wallet-0.1.0.dar`)
 const { main: walletPkg, lite: litePkg } = walletPackages(dar)
 PACKAGES = { 'veil-wallet': walletPkg.id, 'veil-lite': litePkg.id }
-const up = await fetch(`${J}/v2/packages`, { method: 'POST', headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/octet-stream' }, body: dar })
-if (!up.ok) throw new Error(`DAR upload → ${up.status} ${await up.text()}`)
+if (!process.env.SKIP_DAR_UPLOAD) {
+  const up = await fetch(`${J}/v2/packages`, { method: 'POST', headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/octet-stream' }, body: dar })
+  if (!up.ok) throw new Error(`DAR upload → ${up.status} ${await up.text()}`)
+}
 const listed = new Set((await call('/v2/packages')).packageIds)
 for (const [name, id] of Object.entries(PACKAGES)) if (!listed.has(id)) throw new Error(`${name} ${id} is not on the participant after the upload`)
-info(`uploaded and vetted; the wallet pins veil-wallet ${walletPkg.version} ${walletPkg.id.slice(0, 12)}… and veil-lite ${litePkg.version} ${litePkg.id.slice(0, 12)}…`)
+info(`${process.env.SKIP_DAR_UPLOAD ? 'already vetted' : 'uploaded and vetted'}; the wallet pins veil-wallet ${walletPkg.version} ${walletPkg.id.slice(0, 12)}… and veil-lite ${litePkg.version} ${litePkg.id.slice(0, 12)}…`)
 
 await step('Issuer, lender, valuer and regulator (ordinary parties on participant 1)')
-const [ISSUER, LENDER, VALUER, REGULATOR] = await Promise.all(['veil-issuer', 'veil-lender', 'veil-valuer', 'veil-regulator'].map(localParty))
+const existing = process.env.PARTIES_JSON ? JSON.parse(readFileSync(process.env.PARTIES_JSON, 'utf8')) : null
+const [ISSUER, LENDER, VALUER, REGULATOR] = existing
+  ? [existing.issuer, existing.parties.lender, existing.parties.valuer, existing.parties.regulator]
+  : await Promise.all(['veil-issuer', 'veil-lender', 'veil-valuer', 'veil-regulator'].map(localParty))
 info(`lender ${short(LENDER)} · valuer ${short(VALUER)}`)
 const cashOf = (owner, amount) => createOf('CashHolding', { issuer: ISSUER, owner, amount }, [ISSUER, owner])
 const collateralOf = (owner, quantity) => createOf('CollateralHolding', { issuer: ISSUER, owner, asset: TB, quantity }, [ISSUER, owner])

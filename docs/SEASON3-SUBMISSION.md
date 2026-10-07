@@ -33,7 +33,7 @@ acceptance, repayment and lender-priced liquidation. Built during Season 3:
 - **Production hardening:** a keeper command journal that resolves lost responses from the ledger, maker-checker approval for liquidations, and a hardened proxy (request IDs, sanitised errors, timeouts, lost-submission checks in the UI) (#70, #71)
 - **Private desks on the shared demo:** each visitor gets their own price streams, loans and guided-demo progress, with **Start over**; idle desks are cleaned up automatically (#74)
 - **Decentralized price committee (BitSafe DecMan):** a 2-of-3 decentralized party can act as the valuation agent, publishing prices only when two nodes agree; reproducible LocalNet demo in `committee/` (#75); a generic price-feed package contributed to DecMan ([DLC-link/decentralization-manager#504](https://github.com/DLC-link/decentralization-manager/pull/504))
-- **LocalNet prototype: self-custody borrower.** The borrower is an external party whose key stays with the user; nine borrower transactions are signed by that key, and the node cannot act for it without a signature. Before every signature it decodes the prepared transaction, recomputes the hash and checks the whole transaction tree against what the user asked for, with pinned package versions. It cannot run on the shared DevNet node (no rights to allocate external parties) (#79, #83, #87)
+- **Self-custody borrower, now on DevNet.** The borrower is an external party whose key stays with the user; nine borrower transactions are signed by that key, and the node cannot act for it without a signature. Before every signature it decodes the prepared transaction, recomputes the hash and checks the whole transaction tree against what the user asked for, with pinned package versions. It ran end to end on hackcanton-01 on Oct 7 with wallet parties the node operator onboarded from our signed requests (`wallet/devnet/RUN-2026-10-07.log`); it is a script, not yet part of the web app (#79, #83, #87)
 
 ## Try it (≈2 minutes)
 
@@ -59,7 +59,7 @@ its own desk (prices, loans, guided-demo progress); **Start over** clears only y
 
 ## Honest boundaries
 
-- **What is live and what is not:** the lending app runs on DevNet; the price committee and the self-custody wallet are LocalNet demonstrations with recorded videos (`docs/veil-bitsafe-committee-demo.mp4`, `docs/veil-wallet-localnet-demo.mp4`).
+- **What is live and what is not:** the lending app runs on DevNet. The self-custody wallet runs on DevNet as a script (onboarding needs the node operator), not in the web app. The price committee is a LocalNet demonstration, because it needs several participants we control. Both have recorded videos (`docs/veil-bitsafe-committee-demo.mp4`, `docs/veil-wallet-localnet-demo.mp4`).
 - On the shared node one ledger user hosts every demo party, so our server enforces
   role separation there (locally Canton enforces it as well).
 - Visitor desks separate visitors in the app, not on the ledger: all visitors share the same demo parties.
