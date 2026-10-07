@@ -232,5 +232,5 @@ section.dark code { background: #22344a; }
 ## From demo to pilot
 
 <div class="decision"><div class="index">01</div><h3>Validate the user</h3><p>Walk 3 lending / treasury operators through one real deal. No customer evidence yet.</p></div>
-<div class="decision"><div class="index">02</div><h3>Real signing</h3><p>A borrower whose key stays with the user works as a LocalNet prototype that verifies each transaction before signing. Next: run it on a node that allows external parties, and connect existing Canton wallets through PartyLayer (CIP-0103).</p></div>
+<div class="decision"><div class="index">02</div><h3>Real signing</h3><p>A borrower whose key stays with the user now runs on DevNet, verifying each transaction before signing (onboarded by the node operator). Next: bring it into the web app, and connect existing Canton wallets through PartyLayer (CIP-0103).</p></div>
 <div class="decision"><div class="index">03</div><h3>Real assets and prices</h3><p>Stablecoin principal (e.g. Brale) and tokenised T-Bills via the token standard; the decentralized price committee (built, on LocalNet) fed by market data such as Kaiko or Coin Metrics.</p></div>

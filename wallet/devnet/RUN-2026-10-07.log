@@ -1,0 +1,52 @@
+# Self-custody wallet demo on hackcanton-01 (HackCanton DevNet), 2026-10-07T11:00Z
+# veil-lite 0.10.0 (17fcd804…), veil-wallet 0.1.0 (e7484697…); wallet party onboarded by the node operator from our signed request
+# Command: .local/devnet/wallets/run-devnet.sh veil-wallet-1 (wallet/localnet/demo.mjs with WALLET_KEY, WALLET_META, PARTIES_JSON, SKIP_DAR_UPLOAD)
+
+
+==> The wallet makes its own key and becomes a Canton party
+    wallet party veil-wallet-1 (key fingerprint 12203b3579a66eaf…); the private key never left this process
+
+==> Installing veil-wallet on participant 1
+    already vetted; the wallet pins veil-wallet 0.1.0 e7484697dbc4… and veil-lite 0.10.0 17fcd80497e2…
+
+==> Issuer, lender, valuer and regulator (ordinary parties on participant 1)
+    lender 8e0db906-veil-lender · valuer 8e0db906-veil-valuer
+
+==> The issuer grants the wallet 150 T-Bill units and 105 cash; the wallet accepts
+    wallet verified: Veil.Wallet.Onboarding:CollateralGrant.CollateralGrant_Accept {} on 007d6ba3e8… as veil-wallet-1; archives CollateralGrant 007d6ba3e8…; creates CollateralHolding(owner veil-wallet-1, quantity 150)
+    wallet signed: accept 150 T-Bill units  (hash uKnUeSfoaAq0…, recomputed and matched, HASHING_SCHEME_VERSION_V2)
+    wallet verified: Veil.Wallet.Onboarding:CashGrant.CashGrant_Accept {} on 004dd0da29… as veil-wallet-1; archives CashGrant 004dd0da29…; creates CashHolding(owner veil-wallet-1, amount 105)
+    wallet signed: accept 105 cash  (hash 4eYetdankfmV…, recomputed and matched, HASHING_SCHEME_VERSION_V2)
+
+==> Lender and valuer invite the wallet to a T-Bill price stream at 1.00; the wallet accepts
+    wallet verified: Veil.Wallet.Onboarding:StreamInvite.StreamInvite_Accept {} on 00da0a7b22… as veil-wallet-1; archives StreamInvite 00da0a7b22…, ValuationStream 0034f86c3c…; creates ValuationStream, CollateralValuation(unitPrice 1)
+    wallet signed: join the price stream  (hash EeskI9zMDGpr…, recomputed and matched, HASHING_SCHEME_VERSION_V2)
+
+==> The lender funds an offer of 100; the wallet accepts, locking its 150 units
+    wallet verified: Veil:LoanOffer.Accept {collateralCid 00c557080c…, valuationCid 007fec684e…} on 00ca3a9196… as veil-wallet-1; archives LoanOffer 00ca3a9196…, CollateralHolding 00c557080c…; creates CashHolding(owner veil-wallet-1, amount 100), Loan(principal 100)
+    wallet signed: accept the loan (100 against 150 units)  (hash xBA7aZPISCzm…, recomputed and matched, HASHING_SCHEME_VERSION_V2)
+
+==> The valuer drops the price to 0.62 (LTV 107.5%); the lender issues a margin call
+    margin call open
+
+==> The wallet cures the call by paying down 30
+    wallet verified: Veil:CashHolding.Split {splitAmount 30} on 003e98ab3c… as veil-wallet-1; archives CashHolding 003e98ab3c…; creates CashHolding(owner veil-wallet-1, amount 30), CashHolding(owner veil-wallet-1, amount 70)
+    wallet signed: split 30 from the principal  (hash nbFDcMnYo9AG…, recomputed and matched, HASHING_SCHEME_VERSION_V2)
+    wallet verified: Veil:Loan.PartialRepay {paymentCid 00b98c7806…, valuationCid 0043b63ded…} on 00d373ae25… as veil-wallet-1; archives Loan 00d373ae25…, CashHolding 00b98c7806…; creates CashHolding(owner 8e0db906-veil-lender, amount 30), Loan(principal 100, amountRepaid 30)
+    wallet signed: pay down 30  (hash TXUUIOOsj3em…, recomputed and matched, HASHING_SCHEME_VERSION_V2)
+    margin call after pay-down: cleared
+
+==> The wallet repays the remaining 75 and gets its collateral back
+    wallet verified: Veil:Loan.PartialRepay {paymentCid 0066d077cd…, valuationCid 0043b63ded…} on 009846704a… as veil-wallet-1; archives Loan 009846704a…, CashHolding 0066d077cd…; creates CashHolding(owner 8e0db906-veil-lender, amount 70), Loan(principal 100, amountRepaid 100)
+    wallet signed: pay down 70  (hash OZqStwOVXnoK…, recomputed and matched, HASHING_SCHEME_VERSION_V2)
+    wallet verified: Veil:CashHolding.Split {splitAmount 5} on 009c406d8f… as veil-wallet-1; archives CashHolding 009c406d8f…; creates CashHolding(owner veil-wallet-1, amount 5), CashHolding(owner veil-wallet-1, amount 100)
+    wallet signed: split 5 from its own cash  (hash 9VeGT/JJmUY5…, recomputed and matched, HASHING_SCHEME_VERSION_V2)
+    wallet verified: Veil:Loan.Repay {repaymentCid 00bd0343b9…} on 003ba11443… as veil-wallet-1; archives Loan 003ba11443…, CashHolding 00bd0343b9…; creates CashHolding(owner 8e0db906-veil-lender, amount 5), CollateralHolding(owner veil-wallet-1, quantity 150), LoanClosed(principal 100, amountRepaid 105)
+    wallet signed: repay the last 5  (hash NUJfg/Hb6GPY…, recomputed and matched, HASHING_SCHEME_VERSION_V2)
+    loan closed: Repaid, collateral released: true
+
+==> Without the key, the participant cannot act for the wallet
+    plain submission as the wallet, on its live 100 cash, refused: cannot submit as the given submitter
+
+==> Summary
+    9 transactions signed by the wallet's own key; none by the participant on its behalf
