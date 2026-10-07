@@ -27,12 +27,13 @@ acceptance, repayment and lender-priced liquidation. Built during Season 3:
   user-chosen terms and amounts (#49)
 - **Real Canton Coin collateral via CIP-112 committed allocations** (#51, #52)
 - **External review addressed:** audit findings #53–#60 triaged in `docs/AUDIT-TRIAGE.md`; the valid ones fixed in contract release 0.9.0 (surplus returned on liquidation, offer reject/expiry, term bounds, joint record deletion, independent regulator) (#63)
+- **Second audit round, contract release 0.10.0:** a review of the Canton Coin path found that the lender, as sole executor of the coin lock, could settle it outside Veil, and that a borrower-chosen allocation factory was not authenticated. 0.10.0 makes lender and borrower joint executors, verifies every allocation, adds a close for lapsed locks and removes a division-by-zero. It was checked as a compatible upgrade and verified live on DevNet: a lender-alone settlement is refused by Canton Coin itself (#88, #89)
 - **Operations:** an off-ledger lender keeper (`scripts/keeper.mjs`) and a Loan book tab with CSV/JSON export (#63)
 - **Guided demo** that walks a first visit through the T-Bill or Canton Coin loan, and fixes so consecutive visitors can share the demo (#64–#66)
 - **Production hardening:** a keeper command journal that resolves lost responses from the ledger, maker-checker approval for liquidations, and a hardened proxy (request IDs, sanitised errors, timeouts, lost-submission checks in the UI) (#70, #71)
 - **Private desks on the shared demo:** each visitor gets their own price streams, loans and guided-demo progress, with **Start over**; idle desks are cleaned up automatically (#74)
 - **Decentralized price committee (BitSafe DecMan):** a 2-of-3 decentralized party can act as the valuation agent, publishing prices only when two nodes agree; reproducible LocalNet demo in `committee/` (#75); a generic price-feed package contributed to DecMan ([DLC-link/decentralization-manager#504](https://github.com/DLC-link/decentralization-manager/pull/504))
-- **LocalNet prototype: self-custody borrower.** The borrower is an external party whose key stays with the user; nine borrower transactions are signed by that key, and the node cannot act for it without a signature. It signs the hash the participant returns without decoding it yet, and it cannot run on the shared DevNet node (no rights to allocate external parties) (#79)
+- **LocalNet prototype: self-custody borrower.** The borrower is an external party whose key stays with the user; nine borrower transactions are signed by that key, and the node cannot act for it without a signature. Before every signature it decodes the prepared transaction, recomputes the hash and checks the whole transaction tree against what the user asked for, with pinned package versions. It cannot run on the shared DevNet node (no rights to allocate external parties) (#79, #83, #87)
 
 ## Try it (≈2 minutes)
 
@@ -49,6 +50,13 @@ A price is usable for five minutes; if *Create offer* or *Accept* reports a stal
 price, publish a fresh one as Valuer first. Visitors share the demo parties, but each browser gets
 its own desk (prices, loans, guided-demo progress); **Start over** clears only yours.
 
+## Next
+
+- **Wallet connection:** PartyLayer (`@partylayer/sdk`, CIP-0103) to connect Console, Loop, Nightly and other Canton wallets. Their parties live on nodes where Veil is not installed, so they can sign token-standard steps rather than co-sign Veil contracts until those nodes vet the package.
+- **Real prices:** Kaiko or Coin Metrics feeding the decentralized price committee instead of a manual valuer.
+- **Real assets:** Brale stablecoins for the principal; tokenised T-Bills via the token standard.
+- **Operations on MainNet:** Denex Gas Station to fund the keeper's traffic.
+
 ## Honest boundaries
 
 - **What is live and what is not:** the lending app runs on DevNet; the price committee and the self-custody wallet are LocalNet demonstrations with recorded videos (`docs/veil-bitsafe-committee-demo.mp4`, `docs/veil-wallet-localnet-demo.mp4`).
@@ -61,7 +69,7 @@ its own desk (prices, loans, guided-demo progress); **Start over** clears only y
 
 ## Evidence
 
-64 Daml scripts (58 core, 4 price committee, 2 wallet) and 111 server, keeper and UI-logic tests pass, as did 49 live auth checks
+76 Daml scripts (69 core including 11 audit regression tests, 5 price committee, 2 wallet) and 144 server, keeper, UI-logic and wallet-verifier tests pass, as did 49 live auth checks
 and 12 browser checks. On hackcanton-01 with real DevNet CC: Canton Coin repay,
 liquidation (by hand and by the keeper) and reset; T-Bill liquidation returning surplus
 collateral; and both guided-demo tracks completed by following the guide alone, including
