@@ -221,14 +221,15 @@ function checkPartySet(values, allowed, field) {
 
 function validateActiveContracts(body, auth, env = process.env) {
   const config = knownParties(env)
-  if (!exactKeys(body, ['filter', 'verbose', 'activeAtOffset'])) throw new AuthError(400, 'REQUEST_INVALID')
-  if (body.verbose !== undefined && body.verbose !== false) throw new AuthError(400, 'REQUEST_INVALID')
+  // Canton 3.6 disables the top-level filter/verbose fields; only eventFormat is accepted.
+  if (!exactKeys(body, ['eventFormat', 'activeAtOffset'])) throw new AuthError(400, 'REQUEST_INVALID')
+  const filter = body.eventFormat
+  if (!exactKeys(filter, ['filtersByParty', 'verbose']) || !record(filter.filtersByParty)) throw new AuthError(400, 'REQUEST_INVALID')
+  if (filter.verbose !== undefined && filter.verbose !== false) throw new AuthError(400, 'REQUEST_INVALID')
   if (body.activeAtOffset !== undefined && (!Number.isSafeInteger(body.activeAtOffset) || body.activeAtOffset < 0)) {
     throw new AuthError(400, 'REQUEST_INVALID')
   }
 
-  const filter = body.filter
-  if (!exactKeys(filter, ['filtersByParty']) || !record(filter.filtersByParty)) throw new AuthError(400, 'REQUEST_INVALID')
   const parties = Object.keys(filter.filtersByParty)
   if (parties.length !== 1) throw new AuthError(400, 'REQUEST_INVALID')
   const requested = parties[0]

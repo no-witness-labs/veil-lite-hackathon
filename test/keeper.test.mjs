@@ -279,7 +279,7 @@ function ledgerState(contracts) {
   routes.push(
     { match: (c) => c.url === `${LEDGER}/v2/state/ledger-end`, reply: { json: { offset: 42 } } },
     {
-      match: (c) => c.url === `${LEDGER}/v2/state/active-contracts` && c.body.filter.filtersByParty[P.lender].cumulative[0].identifierFilter.WildcardFilter,
+      match: (c) => c.url === `${LEDGER}/v2/state/active-contracts` && c.body.eventFormat.filtersByParty[P.lender].cumulative[0].identifierFilter.WildcardFilter,
       reply: { json: contracts },
     },
   )
@@ -363,7 +363,7 @@ describe('keeper I/O', () => {
       acsEntry('pkg:Veil:CollateralValuation', 'mark-stream-cc', mark('stream-cc', '0.12').args),
     ])
     // No reusable receipt from an earlier attempt.
-    routes.push({ match: (c) => c.url.endsWith('/v2/state/active-contracts') && c.body.filter.filtersByParty[P.lender].cumulative[0].identifierFilter.InterfaceFilter, reply: { json: [] } })
+    routes.push({ match: (c) => c.url.endsWith('/v2/state/active-contracts') && c.body.eventFormat.filtersByParty[P.lender].cumulative[0].identifierFilter.InterfaceFilter, reply: { json: [] } })
     const allocDisclosed = { templateId: 'splice:AllocationFactory', contractId: 'factory-1', createdEventBlob: 'blob-a', synchronizerId: 'sync::1', debugPayload: { x: 1 } }
     const settleDisclosed = { templateId: 'splice:AmuletRules', contractId: 'rules-1', createdEventBlob: 'blob-s', synchronizerId: 'sync::1' }
     routes.push(
@@ -424,7 +424,7 @@ describe('keeper I/O', () => {
       },
     }
     routes.push(
-      { match: (c) => c.url.endsWith('/v2/state/active-contracts') && c.body.filter.filtersByParty[P.lender].cumulative[0].identifierFilter.InterfaceFilter, reply: { json: [{ contractEntry: { JsActiveContract: { createdEvent: { templateId: 'splice:X:AmuletAllocation', contractId: 'receipt-old', interfaceViews: [{ viewValue: view }] } } } }] } },
+      { match: (c) => c.url.endsWith('/v2/state/active-contracts') && c.body.eventFormat.filtersByParty[P.lender].cumulative[0].identifierFilter.InterfaceFilter, reply: { json: [{ contractEntry: { JsActiveContract: { createdEvent: { templateId: 'splice:X:AmuletAllocation', contractId: 'receipt-old', interfaceViews: [{ viewValue: view }] } } } }] } },
       { match: (c) => c.url.endsWith('/settlement-factory'), reply: { json: { factoryId: 'settle-1', choiceContext: { choiceContextData: {}, disclosedContracts: [] } } } },
       { match: (c) => c.url.endsWith('/v2/commands/submit-and-wait-for-transaction'), reply: { json: { transaction: { updateId: 'u', events: [] } } } },
     )
@@ -448,7 +448,7 @@ describe('keeper I/O', () => {
       },
     }
     routes.push(
-      { match: (c) => c.url.endsWith('/v2/state/active-contracts') && c.body.filter.filtersByParty[P.lender].cumulative[0].identifierFilter.InterfaceFilter, reply: { json: [{ contractEntry: { JsActiveContract: { createdEvent: { templateId: 'splice:X:AmuletAllocation', contractId: 'receipt-old', interfaceViews: [{ viewValue: legacyReceipt }] } } } }] } },
+      { match: (c) => c.url.endsWith('/v2/state/active-contracts') && c.body.eventFormat.filtersByParty[P.lender].cumulative[0].identifierFilter.InterfaceFilter, reply: { json: [{ contractEntry: { JsActiveContract: { createdEvent: { templateId: 'splice:X:AmuletAllocation', contractId: 'receipt-old', interfaceViews: [{ viewValue: legacyReceipt }] } } } }] } },
       { match: (c) => c.url.endsWith('/allocation-factory'), reply: { json: { factoryId: 'factory-1', choiceContext: { choiceContextData: {}, disclosedContracts: [] } } } },
       { match: (c) => c.url.endsWith('/settlement-factory'), reply: { json: { factoryId: 'settle-1', choiceContext: { choiceContextData: {}, disclosedContracts: [] } } } },
       {

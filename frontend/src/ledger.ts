@@ -254,7 +254,7 @@ export async function listActive(party: string, snapshot = captureSession()): Pr
   assertSession(snapshot)
   const offset = await ledgerEnd(snapshot)
   const entries = await api<any[]>('/v2/state/active-contracts', {
-    filter: {
+    eventFormat: {
       filtersByParty: {
         [party]: {
           cumulative: [
@@ -262,8 +262,8 @@ export async function listActive(party: string, snapshot = captureSession()): Pr
           ],
         },
       },
+      verbose: false,
     },
-    verbose: false,
     activeAtOffset: offset,
   }, snapshot)
   assertSession(snapshot)

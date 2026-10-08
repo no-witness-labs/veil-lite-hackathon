@@ -62,8 +62,7 @@ async function ok(base, path, role, body) {
 }
 
 const filter = (p, offset) => ({
-  filter: { filtersByParty: { [p]: { cumulative: [{ identifierFilter: { WildcardFilter: { value: { includeCreatedEventBlob: false } } } }] } } },
-  verbose: false,
+  eventFormat: { filtersByParty: { [p]: { cumulative: [{ identifierFilter: { WildcardFilter: { value: { includeCreatedEventBlob: false } } } }] } }, verbose: false },
   activeAtOffset: offset,
 })
 
@@ -126,8 +125,8 @@ for (const base of [web, canton]) {
     await denied(`${boundary}: ${role} cannot read another party`, base, '/v2/state/active-contracts', tokens[role], filter(foreign, end.offset))
   }
   await denied(`${boundary}: lender cannot read all parties`, base, '/v2/state/active-contracts', tokens.lender, {
-    filter: { filtersByParty: {}, filtersForAnyParty: { cumulative: [{ identifierFilter: { WildcardFilter: { value: { includeCreatedEventBlob: false } } } }] } },
-    verbose: false, activeAtOffset: end.offset,
+    eventFormat: { filtersByParty: {}, filtersForAnyParty: { cumulative: [{ identifierFilter: { WildcardFilter: { value: { includeCreatedEventBlob: false } } } }] }, verbose: false },
+    activeAtOffset: end.offset,
   }, [400, 401, 403])
 
   const cashCreate = { CreateCommand: { templateId: template('CashHolding'), createArguments: {
