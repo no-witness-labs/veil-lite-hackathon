@@ -211,7 +211,7 @@ ledger_end="$(curl --fail-with-body -sS -H "@$OPERATOR_HEADER" "$BASE/v2/state/l
   | python3 -c 'import sys,json;print(json.load(sys.stdin)["offset"])')"
 already_seeded="$(curl --fail-with-body -sS -X POST "$BASE/v2/state/active-contracts" \
   -H "@$OPERATOR_HEADER" -H "Content-Type: application/json" \
-  -d "{\"filter\":{\"filtersByParty\":{\"$BORROWER\":{\"cumulative\":[{\"identifierFilter\":{\"WildcardFilter\":{\"value\":{\"includeCreatedEventBlob\":false}}}}]}}},\"verbose\":false,\"activeAtOffset\":$ledger_end}" \
+  -d "{\"eventFormat\":{\"filtersByParty\":{\"$BORROWER\":{\"cumulative\":[{\"identifierFilter\":{\"WildcardFilter\":{\"value\":{\"includeCreatedEventBlob\":false}}}}]}},\"verbose\":false},\"activeAtOffset\":$ledger_end}" \
   | python3 -c 'import sys,json
 d=json.load(sys.stdin)
 events=[e.get("contractEntry",{}).get("JsActiveContract",{}).get("createdEvent",{}) or {} for e in d]
@@ -237,7 +237,7 @@ ledger_end="$(curl --fail-with-body -sS -H "@$OPERATOR_HEADER" "$BASE/v2/state/l
   | python3 -c 'import sys,json;print(json.load(sys.stdin)["offset"])')"
 mark_count="$(curl --fail-with-body -sS -X POST "$BASE/v2/state/active-contracts" \
   -H "@$OPERATOR_HEADER" -H "Content-Type: application/json" \
-  -d "{\"filter\":{\"filtersByParty\":{\"$VALUER\":{\"cumulative\":[{\"identifierFilter\":{\"WildcardFilter\":{\"value\":{\"includeCreatedEventBlob\":false}}}}]}}},\"verbose\":false,\"activeAtOffset\":$ledger_end}" \
+  -d "{\"eventFormat\":{\"filtersByParty\":{\"$VALUER\":{\"cumulative\":[{\"identifierFilter\":{\"WildcardFilter\":{\"value\":{\"includeCreatedEventBlob\":false}}}}]}},\"verbose\":false},\"activeAtOffset\":$ledger_end}" \
   | python3 -c 'import sys,json
 events=[e.get("contractEntry",{}).get("JsActiveContract",{}).get("createdEvent",{}) for e in json.load(sys.stdin)]
 marks=[e for e in events if e.get("templateId", "").endswith(":Veil:CollateralValuation")]

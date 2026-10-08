@@ -153,16 +153,16 @@ def ledger_end(token):
 
 def active_events(token, party):
     body = {
-        "filter": {
+        "eventFormat": {
             "filtersByParty": {
                 party: {
                     "cumulative": [
                         {"identifierFilter": {"WildcardFilter": {"value": {"includeCreatedEventBlob": False}}}}
                     ]
                 }
-            }
+            },
+            "verbose": False,
         },
-        "verbose": False,
         "activeAtOffset": ledger_end(token),
     }
     code, resp = api(token, "POST", "/v2/state/active-contracts", json.dumps(body).encode())

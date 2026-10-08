@@ -82,14 +82,14 @@ function assertAuthError(fn, status, code) {
 
 function activeBody(party) {
   return {
-    filter: {
+    eventFormat: {
       filtersByParty: {
         [party]: {
           cumulative: [{ identifierFilter: { WildcardFilter: { value: { includeCreatedEventBlob: false } } } }],
         },
       },
+      verbose: false,
     },
-    verbose: false,
     activeAtOffset: 0,
   }
 }
@@ -143,6 +143,23 @@ test('authentication fails closed for missing, malformed, expired, not-yet-valid
   delete process.env.VEIL_AUTH_PUBLIC_KEY
   process.env.VEIL_AUTH_PUBLIC_KEY_FILE = '/definitely/missing/public.pem'
   assertAuthError(() => authenticate(req(jwt())), 503, 'AUTH_UNAVAILABLE')
+})
+
+test('active-contracts accepts only the eventFormat shape (Canton 3.6 disables filter/verbose)', () => {
+  const lender = jwt({ sub: 'veil-lender' })
+  const { eventFormat, activeAtOffset } = activeBody(partyEnv.VEIL_PARTY_LENDER)
+  const legacy = { filter: { filtersByParty: eventFormat.filtersByParty }, verbose: false, activeAtOffset }
+  assertAuthError(
+    () => authorizeLedgerRequest(req(lender, 'POST', '/v2/state/active-contracts', legacy), '/v2/state/active-contracts', legacy),
+    400,
+    'REQUEST_INVALID',
+  )
+  const verbose = { eventFormat: { ...eventFormat, verbose: true }, activeAtOffset }
+  assertAuthError(
+    () => authorizeLedgerRequest(req(lender, 'POST', '/v2/state/active-contracts', verbose), '/v2/state/active-contracts', verbose),
+    400,
+    'REQUEST_INVALID',
+  )
 })
 
 test('ordinary role queries are scoped to own party and command identity', () => {

@@ -191,7 +191,7 @@ function fakeLedger({ holdings = true } = {}) {
     if (path === '/v2/state/active-contracts') {
       state.acsReads += 1
       const body = JSON.parse(init.body)
-      const party = Object.keys(body.filter.filtersByParty)[0]
+      const party = Object.keys(body.eventFormat.filtersByParty)[0]
       state.acsReadsByParty[party] = (state.acsReadsByParty[party] ?? 0) + 1
       return json(state.contracts
         .filter((c) => (STAKEHOLDERS[c.template]?.(c.args) ?? []).includes(party))

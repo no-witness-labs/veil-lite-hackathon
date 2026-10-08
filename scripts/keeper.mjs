@@ -315,8 +315,7 @@ export function createKeeper(config, { now = () => Date.now(), emit = defaultEmi
   async function activeContracts(cumulative) {
     const end = await ledger('GET', '/v2/state/ledger-end')
     const entries = await ledger('POST', '/v2/state/active-contracts', {
-      filter: { filtersByParty: { [config.lender]: { cumulative } } },
-      verbose: false,
+      eventFormat: { filtersByParty: { [config.lender]: { cumulative } }, verbose: false },
       activeAtOffset: end.offset,
     })
     return entries.map((e) => e?.contractEntry?.JsActiveContract?.createdEvent).filter(Boolean)

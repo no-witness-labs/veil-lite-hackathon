@@ -126,7 +126,7 @@ current_mark() {
     local end
     end=$(ledger_get "$P1" /v2/state/ledger-end | jq -r '.offset')
     canton_post "$P1" /v2/state/active-contracts "$(jq -n --arg p "$LENDER" --argjson end "$end" \
-        '{filter: {filtersByParty: {($p): {cumulative: [{identifierFilter: {TemplateFilter: {value: {templateId: "#veil-lite:Veil:CollateralValuation", includeCreatedEventBlob: false}}}}]}}}, verbose: false, activeAtOffset: $end}')" \
+        '{eventFormat: {filtersByParty: {($p): {cumulative: [{identifierFilter: {TemplateFilter: {value: {templateId: "#veil-lite:Veil:CollateralValuation", includeCreatedEventBlob: false}}}}]}}, verbose: false}, activeAtOffset: $end}')" \
         | jq -c --arg dec "$DEC_PARTY_ID" '[.[].contractEntry.JsActiveContract.createdEvent | select(.createArgument.valuationAgent == $dec) | {cid: .contractId, price: .createArgument.unitPrice}] | last'
 }
 

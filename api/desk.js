@@ -254,8 +254,7 @@ function ledgerClient(env, access, ctx) {
   async function active(party) {
     const end = await call('GET', '/v2/state/ledger-end')
     const entries = await call('POST', '/v2/state/active-contracts', {
-      filter: { filtersByParty: { [party]: { cumulative: [{ identifierFilter: { WildcardFilter: { value: { includeCreatedEventBlob: false } } } }] } } },
-      verbose: false,
+      eventFormat: { filtersByParty: { [party]: { cumulative: [{ identifierFilter: { WildcardFilter: { value: { includeCreatedEventBlob: false } } } }] } }, verbose: false },
       activeAtOffset: end.offset,
     })
     return normalizeActive(entries)
