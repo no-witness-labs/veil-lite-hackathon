@@ -33,12 +33,21 @@ and a committee price drop lets the lender issue a margin call on a live loan.
 
 The DecMan DARs in `vendor/decman/` are copied unchanged; see `vendor/decman/SOURCE`.
 
-## Contributed upstream
+## Proposed upstream
 
-A generic version of this pattern, not tied to Veil, is proposed to DecMan as
+A generic version of this pattern, not tied to Veil, was proposed to DecMan as
 `governance-price-feed-v1`: a price feed run by a decentralized party, where a
-publish names the exact round and price it moves from. See
-[DLC-link/decentralization-manager#504](https://github.com/DLC-link/decentralization-manager/pull/504).
+publish names the exact round and price it moves from
+([DLC-link/decentralization-manager#504](https://github.com/DLC-link/decentralization-manager/pull/504)).
+
+BitSafe reviewed it over two rounds; every finding was fixed and they called the
+final package solid. They closed it without merging on Oct 8, 2026: the
+`hackathon` branch holds only the LocalNet sandbox and does not merge into
+`main`, and DecMan has no product need for a generic price feed today. The
+package stays in our fork
+([`hadelive/decentralization-manager@feat/daml/price-feed`](https://github.com/hadelive/decentralization-manager/tree/feat/daml/price-feed)).
+Veil does not depend on it: the demo uses this directory's own committee
+templates.
 
 ## Run it on DecMan LocalNet
 
