@@ -207,7 +207,7 @@ section.dark code { background: #22344a; }
 <tr><td>Contracts</td><td>Daml package <code>veil-lite</code> 0.10.0 on hackcanton-01; Token Standard V2 interfaces (exact vetted packages); optional <code>veil-price-committee</code> for a 2-of-3 decentralized valuer (BitSafe DecMan, LocalNet)</td></tr>
 <tr><td>Server</td><td>Vercel functions: per-party sessions, per-party read/act checks, read-only token-registry proxy; request IDs, sanitised ledger errors, timeouts, and lost-submission checks against the ledger</td></tr>
 <tr><td>App &amp; ops</td><td>React UI (role views, guided demo, loan book, disclosure matrix, raw ledger) · Node keeper</td></tr>
-<tr><td>Evidence</td><td>76 Daml scripts · 144 server, keeper, UI and wallet-verifier tests · DevNet runs with real CC, including a maker-checker liquidation and a recovered lost submission</td></tr>
+<tr><td>Evidence</td><td>76 Daml scripts · 146 server, keeper, UI and wallet-verifier tests · DevNet runs with real CC, including a maker-checker liquidation and a recovered lost submission</td></tr>
 </table>
 
 <p class="source">Trust boundary, stated plainly: on the shared node one ledger user hosts all demo parties, so our server enforces role separation there; on DevNet valuations are manually attested (the decentralized price committee runs on LocalNet); T-Bill/MMF and USDC are simulated.</p>
