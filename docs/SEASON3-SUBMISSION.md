@@ -69,7 +69,7 @@ its own desk (prices, loans, guided-demo progress); **Start over** clears only y
 
 ## Evidence
 
-76 Daml scripts (69 core including 11 audit regression tests, 5 price committee, 2 wallet) and 144 server, keeper, UI-logic and wallet-verifier tests pass, as did 49 live auth checks
+76 Daml scripts (69 core including 11 audit regression tests, 5 price committee, 2 wallet) and 146 server, keeper, UI-logic and wallet-verifier tests pass, as did 49 live auth checks
 and 12 browser checks. On hackcanton-01 with real DevNet CC: Canton Coin repay,
 liquidation (by hand and by the keeper) and reset; T-Bill liquidation returning surplus
 collateral; and both guided-demo tracks completed by following the guide alone, including
