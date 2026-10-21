@@ -762,6 +762,16 @@
   color: var(--ink-900);
 }
 
+.v-hero__brief {
+  display: grid;
+  gap: var(--space-2);
+  max-width: 620px;
+}
+
+.v-hero__row p.v-hero__mission {
+  color: var(--ink-900);
+}
+
 /* Claim list in the hero — the three properties the demo proves. */
 .v-claims {
   list-style: none;
