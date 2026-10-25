@@ -12,6 +12,7 @@ data-dependencies:
   - ../vendor/splice-token-standard/splice-api-token-holding-v2-1.0.0.dar
   - ../vendor/splice-token-standard/splice-api-token-allocation-v2-1.0.0.dar
   - ../vendor/splice-token-standard/splice-api-token-allocation-instruction-v2-1.0.0.dalf
+  - ../vendor/splice-test-token-v2/splice-test-token-v2-1.0.0.dar
 build-options:
   - --target=2.2
   - --package=splice-api-token-allocation-instruction-v2-1.0.0

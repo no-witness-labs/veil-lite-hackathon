@@ -1,0 +1,249 @@
+-- | Token Standard loans against a real registry implementation: Splice's
+-- reference V2 token (splice-test-token-v2, vendored unchanged), standing in
+-- for USDCx and CBTC. Unlike the mocks in Veil.TokenMocks it keeps balances,
+-- locks the input holdings of committed allocations, and needs its own
+-- choice context and disclosures, so these tests check what the parties end up
+-- holding rather than which allocations exist.
+module Veil.RegistryTest where
+
+import Daml.Script
+import DA.Assert ((===))
+import DA.Optional (isNone, isSome)
+import DA.TextMap qualified as TextMap
+import DA.Time (seconds)
+import Veil
+import Veil.Test (createStream, maturityTime, publishInitial, publishPrice, testStart)
+import Splice.Api.Token.AllocationV2 qualified as Token
+import Splice.Api.Token.HoldingV2 qualified as Holding
+import Splice.Api.Token.MetadataV1 (AnyValue(..), ChoiceContext(..), ExtraArgs(..), emptyMetadata)
+import Splice.Testing.Tokens.TestTokenV2 qualified as TT
+
+data Fixture = Fixture with
+    lender : Party
+    borrower : Party
+    regulator : Party
+    valuer : Party
+    usdc : Registry
+    cbtc : Registry
+    usdcArgs : ExtraArgs
+    cbtcArgs : ExtraArgs
+    rules : [Disclosure]
+    mark : ContractId CollateralValuation
+
+-- 100 principal + 5 interest against 150 CBTC at 1.0 (LTV 66.7%).
+principalAmount, interestAmount, collateralAmount : Decimal
+principalAmount = 100.0
+interestAmount = 5.0
+collateralAmount = 150.0
+
+-- One registry: its admin's TokenRules, which is both factories. Its only
+-- stakeholder is the admin, so every use discloses it, and every call carries
+-- the context the registry's API would serve: the rules contract, and no
+-- account configurations because every account here is self-custodial.
+registry : Party -> Text -> Script (Registry, ExtraArgs, Disclosure)
+registry admin instrumentId = do
+  rulesCid <- submit admin do createCmd TT.TokenRules with admin
+  Some rules <- queryDisclosure admin rulesCid
+  let context = ChoiceContext with
+        values = TextMap.fromList
+          [ ("testTokenV2/accountConfigs", AV_List [])
+          , ("testTokenV2/tokenRules", AV_ContractId (coerceContractId rulesCid)) ]
+  pure
+    ( Registry with
+        instrument = Instrument with admin; id = instrumentId
+        allocationFactory = toInterfaceContractId rulesCid
+        settlementFactory = toInterfaceContractId rulesCid
+    , ExtraArgs with context; meta = emptyMetadata
+    , rules )
+
+account : Party -> Holding.Account
+account owner = Holding.Account with owner = Some owner; provider = None; id = ""
+
+-- Minting needs the admin and the owner, the token's signatories.
+mint : Registry -> Party -> Decimal -> Script (ContractId Holding.Holding)
+mint reg owner amount = do
+  let i = reg.instrument
+  cid <- submit (actAs i.admin <> actAs owner) do
+    createCmd TT.Token with
+      holding = Holding.HoldingView with
+        account = account owner
+        instrumentId = Holding.InstrumentId with admin = i.admin; id = i.id
+        amount; lock = None; meta = emptyMetadata
+  pure (toInterfaceContractId cid)
+
+-- (unlocked, locked) amounts of one instrument held by one party.
+balance : Party -> Registry -> Script (Decimal, Decimal)
+balance owner reg = do
+  holdings <- queryInterface @Holding.Holding owner
+  let i = reg.instrument
+      mine = [ v | (_, Some v) <- holdings, v.account == account owner
+                 , v.instrumentId == Holding.InstrumentId with admin = i.admin; id = i.id ]
+  pure (sum [ v.amount | v <- mine, isNone v.lock ], sum [ v.amount | v <- mine, isSome v.lock ])
+
+-- A party's unlocked holdings of one instrument, to spend.
+unlocked : Party -> Registry -> Script [ContractId Holding.Holding]
+unlocked owner reg = do
+  holdings <- queryInterface @Holding.Holding owner
+  pure [ cid | (cid, Some v) <- holdings, v.account == account owner
+             , v.instrumentId.admin == reg.instrument.admin, v.instrumentId.id == reg.instrument.id, isNone v.lock ]
+
+-- The holdings an allocation locked, disclosed by the registry admin, as the
+-- registry's API serves them to an executor who is not their owner.
+lockedBy : Registry -> ContractId Token.Allocation -> Script [Disclosure]
+lockedBy reg allocationCid = do
+  let admin = reg.instrument.admin
+  Some v <- queryInterfaceContractId admin allocationCid
+  forA v.holdingCids \cid -> do
+    Some d <- queryDisclosure admin (coerceContractId cid : ContractId TT.Token)
+    pure d
+
+fixture : Script Fixture
+fixture = do
+  setTime testStart
+  lender <- allocateParty "Lender"
+  borrower <- allocateParty "Borrower"
+  regulator <- allocateParty "Regulator"
+  valuer <- allocateParty "Valuer"
+  usdcAdmin <- allocateParty "USDCxAdmin"
+  cbtcAdmin <- allocateParty "CBTCAdmin"
+  (usdc, usdcArgs, r1) <- registry usdcAdmin "USDCx"
+  (cbtc, cbtcArgs, r2) <- registry cbtcAdmin "CBTC"
+  _ <- mint usdc lender 1000.0
+  _ <- mint cbtc borrower 200.0
+  stream <- createStream lender borrower regulator valuer "CBTC"
+  mark <- publishInitial valuer stream 1.0
+  pure Fixture with rules = [r1, r2]; ..
+
+submitWith : Fixture -> Party -> [Disclosure] -> Commands a -> Script a
+submitWith f p extra = submit (actAs p <> discloseMany (f.rules <> extra))
+
+transferArgs : ExtraArgs -> TransferArgs
+transferArgs args = TransferArgs with sendArgs = args; receiveArgs = args; settleArgs = args
+
+-- Funds the offer from the lender's unlocked USDCx.
+offer : Fixture -> Text -> Script (ContractId TokenLoanOffer)
+offer f ref = do
+  inputs <- unlocked f.lender f.usdc
+  submitWith f f.lender [] do
+    createAndExerciseCmd
+      TokenOfferRequest with
+        lender = f.lender; borrower = f.borrower; regulator = f.regulator; valuationAgent = f.valuer
+        principalRegistry = f.usdc; collateralRegistry = f.cbtc
+        principal = principalAmount; interest = interestAmount; collateralQuantity = collateralAmount
+        maturity = maturityTime; liquidationThresholdLtv = 90.0; marginCallWindowSeconds = 60
+        settlementRef = ref; expiresAt = maturityTime
+      FundTokenOffer with valuationCid = f.mark; inputHoldingCids = inputs; extraArgs = f.usdcArgs
+
+-- Locks the borrower's CBTC and settles the principal; the lender's locked
+-- USDCx behind the funding is disclosed to the borrower.
+accept : Fixture -> ContractId TokenLoanOffer -> Script (ContractId TokenLoan)
+accept f offerCid = do
+  Some o <- queryContractId f.borrower offerCid
+  funding <- lockedBy f.usdc o.fundingAllocationCid
+  inputs <- unlocked f.borrower f.cbtc
+  submitWith f f.borrower funding do
+    exerciseCmd offerCid AcceptTokenOffer with
+      valuationCid = f.mark; collateralHoldingCids = inputs
+      lockArgs = f.cbtcArgs; receiveArgs = f.usdcArgs; settleArgs = f.usdcArgs
+
+-- ---------------------------------------------------------------------------
+
+-- The whole loan moves real balances: the offer locks the lender's principal,
+-- acceptance pays it to the borrower and locks the collateral, the payments
+-- reach the lender, and repayment unlocks the collateral.
+testRegistryLifecycle : Script ()
+testRegistryLifecycle = script do
+  f <- fixture
+  offerCid <- offer f "real-1"
+  balance f.lender f.usdc >>= (=== (900.0, 100.0))
+
+  loanCid <- accept f offerCid
+  balance f.lender f.usdc >>= (=== (900.0, 0.0))
+  balance f.borrower f.usdc >>= (=== (100.0, 0.0))
+  balance f.borrower f.cbtc >>= (=== (50.0, 150.0))
+
+  -- The borrower can neither take the locked collateral back nor settle it
+  -- alone at the registry: the lock is committed and settles only with both
+  -- executors, through the factory.
+  Some loan <- queryContractId f.borrower loanCid
+  submitMustFail f.borrower do
+    exerciseCmd loan.lockCid Token.Allocation_Withdraw with actors = [f.borrower]; extraArgs = f.cbtcArgs
+  submitMustFail f.borrower do
+    exerciseCmd loan.lockCid Token.Allocation_Cancel with actors = [f.borrower]; extraArgs = f.cbtcArgs
+
+  inputs <- unlocked f.borrower f.usdc
+  paidCid <- submitWith f f.borrower [] do
+    exerciseCmd loanCid PayDownToken with
+      amount = 30.0; paymentHoldingCids = inputs; args = transferArgs f.usdcArgs; valuationCid = None
+  balance f.lender f.usdc >>= (=== (930.0, 0.0))
+  balance f.borrower f.usdc >>= (=== (70.0, 0.0))
+
+  -- The borrower holds 70 and owes 75: repayment fails until it has enough.
+  inputs <- unlocked f.borrower f.usdc
+  submitWithMustFail f f.borrower [] do
+    exerciseCmd paidCid RepayToken with paymentHoldingCids = inputs; args = transferArgs f.usdcArgs; cancelArgs = f.cbtcArgs
+  _ <- mint f.usdc f.borrower 5.0
+  inputs <- unlocked f.borrower f.usdc
+  closedCid <- submitWith f f.borrower [] do
+    exerciseCmd paidCid RepayToken with paymentHoldingCids = inputs; args = transferArgs f.usdcArgs; cancelArgs = f.cbtcArgs
+  balance f.lender f.usdc >>= (=== (1005.0, 0.0))
+  balance f.borrower f.usdc >>= (=== (0.0, 0.0))
+  balance f.borrower f.cbtc >>= (=== (200.0, 0.0))
+  balance f.lender f.cbtc >>= (=== (0.0, 0.0))
+  Some closed <- queryContractId f.regulator closedCid
+  (closed.reason, closed.amountRepaid, closed.collateralReturned) === ("Repaid", 105.0, collateralAmount)
+
+-- After an expired margin call, the whole lock settles to the lender.
+testRegistryLiquidation : Script ()
+testRegistryLiquidation = script do
+  f <- fixture
+  loanCid <- offer f "real-2" >>= accept f
+  stressed <- publishPrice f.valuer f.mark 0.62
+  calledCid <- submit f.lender do exerciseCmd loanCid IssueTokenMarginCall with valuationCid = stressed
+  passTime (seconds 60)
+  fresh <- publishPrice f.valuer stressed 0.62
+  Some loan <- queryContractId f.lender calledCid
+  -- The lender sees the lock but not the borrower's locked CBTC behind it.
+  collateral <- lockedBy f.cbtc loan.lockCid
+  let liquidate = exerciseCmd calledCid LiquidateToken with valuationCid = fresh; receiveArgs = f.cbtcArgs; settleArgs = f.cbtcArgs
+  submitWithMustFail f f.lender [] liquidate
+  closedCid <- submitWith f f.lender collateral liquidate
+  balance f.lender f.cbtc >>= (=== (150.0, 0.0))
+  balance f.borrower f.cbtc >>= (=== (50.0, 0.0))
+  balance f.borrower f.usdc >>= (=== (100.0, 0.0))
+  Some closed <- queryContractId f.borrower closedCid
+  (closed.reason, closed.collateralSeized, closed.collateralReturned) === ("Liquidated", collateralAmount, 0.0)
+
+-- A rejected offer unlocks the lender's principal; nothing else moved.
+testRegistryReject : Script ()
+testRegistryReject = script do
+  f <- fixture
+  offerCid <- offer f "real-3"
+  Some o <- queryContractId f.borrower offerCid
+  funding <- lockedBy f.usdc o.fundingAllocationCid
+  submitWith f f.borrower funding do exerciseCmd offerCid RejectTokenOffer with cancelArgs = f.usdcArgs
+  balance f.lender f.usdc >>= (=== (1000.0, 0.0))
+  balance f.borrower f.cbtc >>= (=== (200.0, 0.0))
+
+-- The registry refuses a collateral lock larger than the borrower holds, so
+-- acceptance fails as a whole and the principal stays committed to the offer.
+testRegistryShortCollateral : Script ()
+testRegistryShortCollateral = script do
+  f <- fixture
+  offerCid <- offer f "real-4"
+  [cbtcCid] <- unlocked f.borrower f.cbtc
+  Some o <- queryContractId f.borrower offerCid
+  funding <- lockedBy f.usdc o.fundingAllocationCid
+  -- Spend 100 of the borrower's 200 CBTC elsewhere: 100 remains, 150 is due.
+  submit (actAs f.cbtc.instrument.admin <> actAs f.borrower) do archiveCmd (coerceContractId cbtcCid : ContractId TT.Token)
+  _ <- mint f.cbtc f.borrower 100.0
+  inputs <- unlocked f.borrower f.cbtc
+  submitWithMustFail f f.borrower funding do
+    exerciseCmd offerCid AcceptTokenOffer with
+      valuationCid = f.mark; collateralHoldingCids = inputs
+      lockArgs = f.cbtcArgs; receiveArgs = f.usdcArgs; settleArgs = f.usdcArgs
+  balance f.lender f.usdc >>= (=== (900.0, 100.0))
+  balance f.borrower f.usdc >>= (=== (0.0, 0.0))
+
+submitWithMustFail : Fixture -> Party -> [Disclosure] -> Commands a -> Script ()
+submitWithMustFail f p extra = submitMustFail (actAs p <> discloseMany (f.rules <> extra))
