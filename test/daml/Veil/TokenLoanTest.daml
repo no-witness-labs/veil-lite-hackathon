@@ -1,0 +1,398 @@
+-- | Token Standard loans: USDCx-style principal lent against CBTC-style
+-- collateral, both held at mock registries (Veil.TokenMocks).
+module Veil.TokenLoanTest where
+
+import Daml.Script
+import DA.Assert ((===))
+import DA.Map qualified as Map
+import DA.Time (addRelTime, days, seconds)
+import Veil
+import Veil.TokenMocks
+import Veil.Test (createStream, maturityTime, noExtra, publishInitial, publishPrice, testStart)
+import Splice.Api.Token.AllocationV2 qualified as Token
+import Splice.Api.Token.MetadataV1 (emptyMetadata)
+
+data Fixture = Fixture with
+    lender : Party
+    borrower : Party
+    regulator : Party
+    valuer : Party
+    outsider : Party
+    usdcAdmin : Party
+    cbtcAdmin : Party
+    usdc : Registry
+    cbtc : Registry
+    disclosures : [Disclosure]
+    mark : ContractId CollateralValuation
+
+-- Fixed terms: 100 principal + 5 interest against 150 collateral units, 90%
+-- liquidation threshold, priced at 1.0 (LTV 66.7%).
+principalAmount : Decimal
+principalAmount = 100.0
+
+interestAmount : Decimal
+interestAmount = 5.0
+
+collateralAmount : Decimal
+collateralAmount = 150.0
+
+offerExpiry : Time
+offerExpiry = addRelTime testStart (days 1)
+
+-- Each registry is one admin with an allocation factory and a settlement
+-- factory. Neither has observers, so every use passes them as disclosed
+-- contracts, as real registries require.
+registry : Party -> Text -> Script (Registry, [Disclosure])
+registry admin instrumentId = do
+  allocationFactory <- submit admin do createCmd MockAllocationFactory with admin
+  settlementFactory <- submit admin do createCmd MockSettlementFactory with admin
+  Some a <- queryDisclosure admin allocationFactory
+  Some s <- queryDisclosure admin settlementFactory
+  pure
+    ( Registry with
+        instrument = Instrument with admin; id = instrumentId
+        allocationFactory = toInterfaceContractId allocationFactory
+        settlementFactory = toInterfaceContractId settlementFactory
+    , [a, s] )
+
+fixture : Script Fixture
+fixture = do
+  setTime testStart
+  lender <- allocateParty "Lender"
+  borrower <- allocateParty "Borrower"
+  regulator <- allocateParty "Regulator"
+  valuer <- allocateParty "Valuer"
+  outsider <- allocateParty "Outsider"
+  usdcAdmin <- allocateParty "USDCxAdmin"
+  cbtcAdmin <- allocateParty "CBTCAdmin"
+  (usdc, d1) <- registry usdcAdmin "USDCx"
+  (cbtc, d2) <- registry cbtcAdmin "CBTC"
+  stream <- createStream lender borrower regulator valuer "CBTC"
+  mark <- publishInitial valuer stream 1.0
+  pure Fixture with disclosures = d1 <> d2; ..
+
+withRegs : Fixture -> Party -> SubmitOptions
+withRegs f p = actAs p <> mconcat (map disclose f.disclosures)
+
+request : Fixture -> Text -> TokenOfferRequest
+request f ref = TokenOfferRequest with
+  lender = f.lender; borrower = f.borrower; regulator = f.regulator; valuationAgent = f.valuer
+  principalRegistry = f.usdc; collateralRegistry = f.cbtc
+  principal = principalAmount; interest = interestAmount; collateralQuantity = collateralAmount
+  maturity = maturityTime; liquidationThresholdLtv = 90.0; marginCallWindowSeconds = 60
+  settlementRef = ref; expiresAt = offerExpiry
+
+fundWith : Fixture -> TokenOfferRequest -> ContractId CollateralValuation -> Commands (ContractId TokenLoanOffer)
+fundWith _ req markCid = createAndExerciseCmd req FundTokenOffer with valuationCid = markCid; inputHoldingCids = []; extraArgs = noExtra
+
+offer : Fixture -> Text -> Script (ContractId TokenLoanOffer)
+offer f ref = withRegs f f.lender `submit` fundWith f (request f ref) f.mark
+
+acceptCmd : ContractId TokenLoanOffer -> ContractId CollateralValuation -> Commands (ContractId TokenLoan)
+acceptCmd offerCid markCid = exerciseCmd offerCid AcceptTokenOffer with
+  valuationCid = markCid; collateralHoldingCids = []
+  lockArgs = noExtra; receiveArgs = noExtra; settleArgs = noExtra
+
+accept : Fixture -> ContractId TokenLoanOffer -> ContractId CollateralValuation -> Script (ContractId TokenLoan)
+accept f offerCid markCid = withRegs f f.borrower `submit` acceptCmd offerCid markCid
+
+openLoan : Fixture -> Text -> Script (ContractId TokenLoan)
+openLoan f ref = do
+  offerCid <- offer f ref
+  accept f offerCid f.mark
+
+noTransferArgs : TransferArgs
+noTransferArgs = TransferArgs with sendArgs = noExtra; receiveArgs = noExtra; settleArgs = noExtra
+
+payDown : ContractId TokenLoan -> Decimal -> Optional (ContractId CollateralValuation) -> Commands (ContractId TokenLoan)
+payDown loanCid amount valuationCid = exerciseCmd loanCid PayDownToken with
+  amount; paymentHoldingCids = []; args = noTransferArgs; valuationCid
+
+repay : ContractId TokenLoan -> Commands (ContractId TokenLoanClosed)
+repay loanCid = exerciseCmd loanCid RepayToken with paymentHoldingCids = []; args = noTransferArgs; cancelArgs = noExtra
+
+liquidate : ContractId TokenLoan -> ContractId CollateralValuation -> Commands (ContractId TokenLoanClosed)
+liquidate loanCid markCid = exerciseCmd loanCid LiquidateToken with valuationCid = markCid; receiveArgs = noExtra; settleArgs = noExtra
+
+liquidateOverdue : ContractId TokenLoan -> Commands (ContractId TokenLoanClosed)
+liquidateOverdue loanCid = exerciseCmd loanCid LiquidateTokenOverdue with receiveArgs = noExtra; settleArgs = noExtra
+
+-- Open allocations at one registry, as its admin sees them.
+allocations : Party -> Script [MockAllocation]
+allocations admin = map snd <$> query @MockAllocation admin
+
+-- ---------------------------------------------------------------------------
+-- Lifecycle
+
+-- The offer commits the principal; acceptance locks the collateral and
+-- settles the principal in one transaction; payments and repayment settle
+-- borrower -> lender, and repayment releases the lock.
+testTokenLoanLifecycle : Script ()
+testTokenLoanLifecycle = script do
+  f <- fixture
+  offerCid <- offer f "loan-1"
+  [funding] <- allocations f.usdcAdmin
+  funding.settlement.id === "loan-1/funding"
+  funding.settlement.executors === [f.lender, f.borrower]
+  (funding.allocation.authorizer.owner, funding.allocation.committed, funding.allocation.settlementDeadline)
+    === (Some f.lender, True, Some offerExpiry)
+  map (.amount) funding.allocation.transferLegSides === [principalAmount]
+
+  loanCid <- accept f offerCid f.mark
+  -- The funding and the borrower's receipt settled; only the lock remains.
+  allocations f.usdcAdmin >>= \xs -> length xs === 0
+  [lock] <- allocations f.cbtcAdmin
+  lock.settlement.id === "loan-1/collateral"
+  lock.settlement.executors === [f.lender, f.borrower]
+  (lock.allocation.authorizer.owner, lock.allocation.committed, lock.allocation.settlementDeadline)
+    === (Some f.borrower, True, Some (addRelTime maturityTime (days 1)))
+  map (\s -> (s.side, s.amount, s.instrumentId)) lock.allocation.transferLegSides === [(Token.SenderSide, collateralAmount, "CBTC")]
+  Some loan <- queryContractId f.regulator loanCid
+  (loan.amountRepaid, loan.payments, loan.marginCall) === (0.0, 0, None)
+
+  -- Need-to-know: the valuer and an outsider see no loan.
+  query @TokenLoan f.valuer >>= \ls -> length ls === 0
+  query @TokenLoan f.outsider >>= \ls -> length ls === 0
+  query @TokenLoanOffer f.outsider >>= \os -> length os === 0
+
+  paidCid <- withRegs f f.borrower `submit` payDown loanCid 30.0 None
+  Some paid <- queryContractId f.lender paidCid
+  (paid.amountRepaid, paid.payments) === (30.0, 1)
+  allocations f.usdcAdmin >>= \xs -> length xs === 0
+  -- A payment may not settle the whole balance; that is Repay.
+  withRegs f f.borrower `submitMustFail` payDown paidCid 75.0 None
+  withRegs f f.borrower `submitMustFail` payDown paidCid 0.0 None
+
+  closedCid <- withRegs f f.borrower `submit` repay paidCid
+  allocations f.cbtcAdmin >>= \xs -> length xs === 0
+  Some closed <- queryContractId f.regulator closedCid
+  (closed.reason, closed.collateralReleased, closed.amountRepaid, closed.collateralSeized, closed.collateralReturned)
+    === ("Repaid", True, principalAmount + interestAmount, 0.0, collateralAmount)
+  (closed.principalInstrument, closed.collateralInstrument) === (f.usdc.instrument, f.cbtc.instrument)
+  query @TokenLoanClosed f.outsider >>= \cs -> length cs === 0
+  submitMustFail f.lender do exerciseCmd closedCid DismissTokenLoanClosed
+  submit (actAs f.lender <> actAs f.borrower) do exerciseCmd closedCid DismissTokenLoanClosed
+
+testTokenMarginCallAndLiquidation : Script ()
+testTokenMarginCallAndLiquidation = script do
+  f <- fixture
+  loanCid <- openLoan f "loan-2"
+  -- 105 owed on 150 units at 0.62 is a 112.9% LTV.
+  stressed <- publishPrice f.valuer f.mark 0.62
+  withRegs f f.lender `submitMustFail` liquidate loanCid stressed
+  submitMustFail f.borrower do exerciseCmd loanCid IssueTokenMarginCall with valuationCid = stressed
+  calledCid <- submit f.lender do exerciseCmd loanCid IssueTokenMarginCall with valuationCid = stressed
+  submitMustFail f.lender do exerciseCmd calledCid IssueTokenMarginCall with valuationCid = stressed
+  withRegs f f.lender `submitMustFail` liquidate calledCid stressed
+  passTime (seconds 60)
+  fresh <- publishPrice f.valuer stressed 0.62
+  withRegs f f.borrower `submitMustFail` liquidate calledCid fresh
+  closedCid <- withRegs f f.lender `submit` liquidate calledCid fresh
+  allocations f.cbtcAdmin >>= \xs -> length xs === 0
+  Some closed <- queryContractId f.borrower closedCid
+  (closed.reason, closed.collateralReleased, closed.liquidationUnitPrice, closed.collateralSeized, closed.collateralReturned)
+    === ("Liquidated", False, Some 0.62, collateralAmount, 0.0)
+
+testTokenLiquidationNeedsBreach : Script ()
+testTokenLiquidationNeedsBreach = script do
+  f <- fixture
+  loanCid <- openLoan f "loan-3"
+  stressed <- publishPrice f.valuer f.mark 0.62
+  calledCid <- submit f.lender do exerciseCmd loanCid IssueTokenMarginCall with valuationCid = stressed
+  passTime (seconds 60)
+  recovered <- publishPrice f.valuer stressed 1.0
+  withRegs f f.lender `submitMustFail` liquidate calledCid recovered
+  resolvedCid <- submit f.borrower do exerciseCmd calledCid ResolveTokenMarginCall with valuationCid = recovered
+  Some resolved <- queryContractId f.lender resolvedCid
+  resolved.marginCall === None
+
+-- During a call a payment must restore LTV, needs a fresh mark, and clears it.
+testTokenCureByPayDown : Script ()
+testTokenCureByPayDown = script do
+  f <- fixture
+  loanCid <- openLoan f "loan-4"
+  stressed <- publishPrice f.valuer f.mark 0.62
+  calledCid <- submit f.lender do exerciseCmd loanCid IssueTokenMarginCall with valuationCid = stressed
+  withRegs f f.borrower `submitMustFail` payDown calledCid 30.0 None
+  -- At 0.62 the collateral is worth 93. Paying 10 leaves 95 of principal
+  -- owed (interest is paid first), still a breach; paying 30 leaves 75 (80.6%).
+  withRegs f f.borrower `submitMustFail` payDown calledCid 10.0 (Some stressed)
+  curedCid <- withRegs f f.borrower `submit` payDown calledCid 30.0 (Some stressed)
+  Some cured <- queryContractId f.lender curedCid
+  (cured.marginCall, cured.amountRepaid, cured.payments) === (None, 30.0, 1)
+  -- The next payment uses a new settlement id, so it settles too.
+  againCid <- withRegs f f.borrower `submit` payDown curedCid 10.0 None
+  Some again <- queryContractId f.lender againCid
+  (again.amountRepaid, again.payments) === (40.0, 2)
+  closedCid <- withRegs f f.borrower `submit` repay againCid
+  Some closed <- queryContractId f.lender closedCid
+  closed.amountRepaid === principalAmount + interestAmount
+
+testTokenOverdueAndLapse : Script ()
+testTokenOverdueAndLapse = script do
+  f <- fixture
+  overdueCid <- openLoan f "loan-5"
+  lapsedCid <- openLoan f "loan-6"
+  withRegs f f.lender `submitMustFail` liquidateOverdue overdueCid
+  submitMustFail f.lender do exerciseCmd lapsedCid CloseLapsedTokenLoan
+  setTime (addRelTime maturityTime (seconds 1))
+  withRegs f f.borrower `submitMustFail` payDown overdueCid 10.0 None
+  closedCid <- withRegs f f.lender `submit` liquidateOverdue overdueCid
+  Some closed <- queryContractId f.regulator closedCid
+  (closed.reason, closed.collateralSeized) === ("LiquidatedAtMaturity", collateralAmount)
+  -- After the lock deadline the registry refuses to settle; the loan closes
+  -- without touching the lock, which the borrower may now withdraw.
+  setTime (addRelTime maturityTime (days 2))
+  withRegs f f.lender `submitMustFail` liquidateOverdue lapsedCid
+  lapsed <- submit f.lender do exerciseCmd lapsedCid CloseLapsedTokenLoan
+  Some record <- queryContractId f.borrower lapsed
+  (record.reason, record.collateralReleased, record.amountRepaid) === ("CollateralLapsed", True, 0.0)
+  [(lockCid, _)] <- query @MockAllocation f.cbtcAdmin
+  submit f.borrower do exerciseCmd (toInterfaceContractId @Token.Allocation lockCid) Token.Allocation_Withdraw with actors = [f.borrower]; extraArgs = noExtra
+  allocations f.cbtcAdmin >>= \xs -> length xs === 0
+
+testTokenWriteOff : Script ()
+testTokenWriteOff = script do
+  f <- fixture
+  loanCid <- openLoan f "loan-7"
+  submitMustFail f.borrower do exerciseCmd loanCid WriteOffToken with cancelArgs = noExtra
+  closedCid <- submit f.lender do exerciseCmd loanCid WriteOffToken with cancelArgs = noExtra
+  Some closed <- queryContractId f.borrower closedCid
+  (closed.reason, closed.collateralReleased, closed.collateralReturned) === ("WrittenOff", True, collateralAmount)
+  allocations f.cbtcAdmin >>= \xs -> length xs === 0
+
+-- ---------------------------------------------------------------------------
+-- Offers
+
+-- A funded offer is firm: the borrower may reject it (the executors cancel
+-- the funding), the lender may only withdraw it after it expires, and an
+-- expired offer cannot be accepted.
+testTokenOfferRejectWithdrawExpiry : Script ()
+testTokenOfferRejectWithdrawExpiry = script do
+  f <- fixture
+  first <- offer f "offer-1"
+  submitMustFail f.lender do exerciseCmd first RejectTokenOffer with cancelArgs = noExtra
+  submit f.borrower do exerciseCmd first RejectTokenOffer with cancelArgs = noExtra
+  allocations f.usdcAdmin >>= \xs -> length xs === 0
+
+  second <- offer f "offer-2"
+  submitMustFail f.lender do exerciseCmd second WithdrawTokenOffer with withdrawArgs = noExtra
+  [(fundingCid, _)] <- query @MockAllocation f.usdcAdmin
+  let funding = toInterfaceContractId @Token.Allocation fundingCid
+  -- Neither the lender alone nor the registry route frees it early.
+  submitMustFail f.lender do exerciseCmd funding Token.Allocation_Withdraw with actors = [f.lender]; extraArgs = noExtra
+  submitMustFail f.lender do exerciseCmd funding Token.Allocation_Cancel with actors = [f.lender]; extraArgs = noExtra
+  setTime (addRelTime offerExpiry (seconds 1))
+  fresh <- publishPrice f.valuer f.mark 1.0
+  withRegs f f.borrower `submitMustFail` acceptCmd second fresh
+  submit f.lender do exerciseCmd second WithdrawTokenOffer with withdrawArgs = noExtra
+  allocations f.usdcAdmin >>= \xs -> length xs === 0
+
+testTokenOfferGuards : Script ()
+testTokenOfferGuards = script do
+  f <- fixture
+  let base = request f "guards"
+  -- Expiry after maturity, LTV at or over the threshold, a stale mark.
+  withRegs f f.lender `submitMustFail` fundWith f (base with expiresAt = addRelTime maturityTime (seconds 1)) f.mark
+  withRegs f f.lender `submitMustFail` fundWith f (base with collateralQuantity = 110.0) f.mark
+  -- A registry admin cannot be a counterparty.
+  withRegs f f.lender `submitMustFail` fundWith f (base with principalRegistry = f.usdc with instrument = f.usdc.instrument with admin = f.lender) f.mark
+  -- A factory of another registry fails the public-fetch admin check.
+  withRegs f f.lender `submitMustFail` fundWith f (base with principalRegistry = f.usdc with allocationFactory = f.cbtc.allocationFactory) f.mark
+  passTime (seconds 301)
+  withRegs f f.lender `submitMustFail` fundWith f base f.mark
+  allocations f.usdcAdmin >>= \xs -> length xs === 0
+
+-- Acceptance rechecks LTV on a fresh mark.
+testTokenAcceptRechecksLtv : Script ()
+testTokenAcceptRechecksLtv = script do
+  f <- fixture
+  offerCid <- offer f "ltv"
+  stressed <- publishPrice f.valuer f.mark 0.7
+  withRegs f f.borrower `submitMustFail` acceptCmd offerCid stressed
+  allocations f.cbtcAdmin >>= \xs -> length xs === 0
+
+-- ---------------------------------------------------------------------------
+-- Forged registry contracts
+
+-- An allocation the lender signs alone, claiming to commit principal.
+template FakeAllocation
+  with
+    owner : Party
+    settlement : Token.SettlementInfo
+    allocation : Token.AllocationSpecification
+  where
+    signatory owner
+    observer settlement.executors
+
+    interface instance Token.Allocation for FakeAllocation where
+      view = Token.AllocationView with
+        originalAllocationCid = None
+        settlement
+        allocation
+        holdingCids = []
+        createdAt = testStart
+        numIterations = 0
+        expiresAt = allocation.settlementDeadline
+        availableActions = Map.empty
+        meta = emptyMetadata
+      allocation_settleImpl self _ = do
+        archive (fromInterfaceContractId @FakeAllocation self)
+        pure Token.AllocationResult with
+          output = Token.AllocationResult_Settled with nextIterationAllocationCid = None
+          authorizerHoldingCids = mempty
+          meta = emptyMetadata
+      allocation_cancelImpl self _ = do
+        archive (fromInterfaceContractId @FakeAllocation self)
+        pure Token.AllocationResult with output = Token.AllocationResult_Cancelled; authorizerHoldingCids = mempty; meta = emptyMetadata
+      allocation_withdrawImpl self _ = do
+        archive (fromInterfaceContractId @FakeAllocation self)
+        pure Token.AllocationResult with output = Token.AllocationResult_Withdrawn; authorizerHoldingCids = mempty; meta = emptyMetadata
+      allocation_settleExtraObservers _ = []
+      allocation_cancelExtraObservers _ = []
+      allocation_withdrawExtraObservers _ = []
+
+-- An offer written directly, skipping FundTokenOffer, around a given funding.
+directOffer : Fixture -> ContractId Token.Allocation -> Script (ContractId TokenLoanOffer)
+directOffer f fundingAllocationCid = do
+  Some mark <- queryContractId f.lender f.mark
+  submit f.lender do
+    createCmd TokenLoanOffer with
+      lender = f.lender; borrower = f.borrower; regulator = f.regulator; valuationAgent = f.valuer
+      valuationStreamId = mark.streamId
+      principalRegistry = f.usdc; collateralRegistry = f.cbtc
+      principal = principalAmount; interest = interestAmount; collateralQuantity = collateralAmount
+      maturity = maturityTime; liquidationThresholdLtv = 90.0; marginCallWindowSeconds = 60
+      settlementRef = "direct"; expiresAt = offerExpiry
+      fundingAllocationCid
+
+-- Acceptance pays out only a registry-signed funding for exactly the terms.
+testTokenForgedFundingRejected : Script ()
+testTokenForgedFundingRejected = script do
+  f <- fixture
+  let settlement = loanSettlement f.lender f.borrower "direct/funding"
+      spec = fundingSpec f.usdc.instrument f.lender f.borrower principalAmount offerExpiry
+  fake <- submit f.lender do createCmd FakeAllocation with owner = f.lender; settlement; allocation = spec
+  forged <- directOffer f (toInterfaceContractId fake)
+  withRegs f f.borrower `submitMustFail` acceptCmd forged f.mark
+  -- A real registry allocation, but for less than the offer's principal.
+  short <- (actAs f.usdcAdmin <> actAs f.lender) `submit` do
+    createCmd MockAllocation with settlement; allocation = fundingSpec f.usdc.instrument f.lender f.borrower 1.0 offerExpiry
+  shortOffer <- directOffer f (toInterfaceContractId short)
+  withRegs f f.borrower `submitMustFail` acceptCmd shortOffer f.mark
+  allocations f.cbtcAdmin >>= \xs -> length xs === 0
+
+-- The collateral lock can only move through Veil: neither counterparty can
+-- settle, cancel or withdraw it at the registry alone.
+testTokenLockNeedsBothExecutors : Script ()
+testTokenLockNeedsBothExecutors = script do
+  f <- fixture
+  _ <- openLoan f "lock"
+  [(lockCid, _)] <- query @MockAllocation f.cbtcAdmin
+  let lock = toInterfaceContractId @Token.Allocation lockCid
+  submitMustFail f.lender do exerciseCmd lock Token.Allocation_Cancel with actors = [f.lender]; extraArgs = noExtra
+  submitMustFail f.lender do
+    exerciseCmd lock Token.Allocation_Settle with actors = [f.lender]; extraTransferLegSides = []; nextIterationFunding = None; extraArgs = noExtra
+  submitMustFail f.borrower do exerciseCmd lock Token.Allocation_Cancel with actors = [f.borrower]; extraArgs = noExtra
+  submitMustFail f.borrower do exerciseCmd lock Token.Allocation_Withdraw with actors = [f.borrower]; extraArgs = noExtra
+  allocations f.cbtcAdmin >>= \xs -> length xs === 1

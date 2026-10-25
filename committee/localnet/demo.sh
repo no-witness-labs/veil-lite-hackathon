@@ -16,8 +16,8 @@ VEIL_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 DECMAN_DIR="${DECMAN_DIR:?set DECMAN_DIR to your decentralization-manager checkout}"
 . "$DECMAN_DIR/hackathon/lib.sh"
 
-VEIL_DARS="$VEIL_DIR/.daml/dist/veil-lite-0.10.0.dar
-$VEIL_DIR/committee/.daml/dist/veil-price-committee-0.1.0.dar"
+VEIL_DARS="$VEIL_DIR/.daml/dist/veil-lite-1.0.0.dar
+$VEIL_DIR/committee/.daml/dist/veil-price-committee-0.2.0.dar"
 TBILL="Tokenized T-Bill / MMF"
 USER_ID=ledger-api-user
 P1=3975 # JSON Ledger API of participant 1 (app-provider); the Veil app parties live here

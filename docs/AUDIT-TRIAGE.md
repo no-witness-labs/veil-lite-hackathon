@@ -147,3 +147,45 @@ After a demo reset left no active contracts on `fbdd86ab…`, the node operator 
 0.9.0 DAR from hackcanton-01; a package listing the same day shows only `17fcd804…`
 (0.10.0). No new contract can be created or exercised under 0.9.0, and no lender-only
 (`settlementExecutors = None`) Canton Coin loan remains on the node.
+
+# 1.0.0: Token Standard loans (LocalNet; not upgrade-compatible)
+
+1.0.0 is a clean package for LocalNet. It drops the upgrade check against
+0.9.0/0.10.0 and replaces `CoinLoanOffer`/`CoinLoan` with
+`TokenOfferRequest`/`TokenLoanOffer`/`TokenLoan`/`TokenLoanClosed`. Principal
+and collateral are both registry instruments (for example USDCx against CBTC),
+and every movement is an allocation executed by lender and borrower together:
+
+| Step | What settles | Allocations |
+|---|---|---|
+| `FundTokenOffer` | nothing yet | lender's committed principal allocation, deadline = offer expiry (`<ref>/funding`) |
+| `AcceptTokenOffer` | principal lender → borrower | funding + borrower's receipt; the borrower's committed collateral lock is created (`<ref>/collateral`, deadline maturity + 1 day) |
+| `PayDownToken`, `RepayToken` | payment borrower → lender | borrower's payment + lender's receipt (`<ref>/payment/<n>`); repay also cancels the lock |
+| `LiquidateToken*` | whole lock borrower → lender | lock + lender's receipt |
+
+How the 0.10.0 residual items change:
+
+- **R-1 Settlement factory authenticity: narrowed, not closed.** Both registries'
+  allocation and settlement factories are pinned on the offer
+  (`principalRegistry`, `collateralRegistry`) and every use checks
+  `PublicFetch` against the instrument admin. No later choice takes a factory
+  argument, so the executors' authority only reaches factories the borrower
+  accepted together with the offer. `PublicFetch` still cannot tell a forged
+  factory from a real one, so the borrower's client must check the pinned
+  contract ids against the registry's published factories before accepting.
+- **Duplicate `settlementRef`: no longer applies.** The lock is created inside
+  `AcceptTokenOffer` and recorded on the loan, so no factory can present an
+  existing lock; each payment has its own settlement id.
+- **Firm offers.** The funding allocation is committed until the offer expires,
+  and only both executors can cancel it, so the lender cannot pull the principal
+  from a live offer (only the borrower's `RejectTokenOffer` cancels it early).
+  After expiry `WithdrawTokenOffer` withdraws it.
+- **Unchanged:** a liquidation transfers the whole lock (no surplus, as for
+  0.10.0 coin loans); registry semantics are those of the mocks in
+  `test/daml/Veil/TokenMocks.daml`, which now also require every allocation of a
+  batch to match one of its legs exactly. Real registries (Amulet, the DA
+  Registry Utility for USDCx and CBTC) are not yet exercised.
+
+Tests: `test/daml/Veil/TokenLoanTest.daml` (lifecycle, margin call and
+liquidation, cure by pay-down, overdue and lapse, write-off, firm offers,
+offer guards, forged funding, lock needs both executors).
