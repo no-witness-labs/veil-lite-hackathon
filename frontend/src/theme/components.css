@@ -303,7 +303,7 @@
   transition: background-color var(--duration-fast) var(--ease), color var(--duration-fast) var(--ease);
 }
 
-.v-segmented__item:active:not(:disabled) { background: var(--surface-sunken); }
+.v-segmented__item:active:not(:disabled):not([aria-pressed='true']) { background: var(--surface-sunken); }
 
 .v-segmented__item:last-child { border-right: none; }
 
