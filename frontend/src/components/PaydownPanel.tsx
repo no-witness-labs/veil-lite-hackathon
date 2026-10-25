@@ -55,7 +55,7 @@ export function PaydownPanel({
               : null
 
   return (
-    <Panel title="Pay down" kicker={`Outstanding · ${fmtAmount(outstandingDue)} ${UNIT_CASH}`}>
+    <Panel title="Pay down" kicker={`Outstanding: ${fmtAmount(outstandingDue)} ${UNIT_CASH}`}>
       <div style={{ padding: 'var(--space-5)', display: 'grid', gap: 'var(--space-4)' }}>
         <p style={{ color: 'var(--ink-500)', lineHeight: 'var(--leading-relaxed)' }}>
           Pay part of the balance in cash. It settles interest first, then principal.
@@ -63,7 +63,7 @@ export function PaydownPanel({
         </p>
         <div className="v-row" style={{ gap: 'var(--space-3)', alignItems: 'flex-end', flexWrap: 'wrap' }}>
           <div className="v-grow" style={{ minWidth: 200 }}>
-            <Field label={`Amount · ${UNIT_CASH}`}>
+            <Field label={`Amount (${UNIT_CASH})`}>
               <input
                 className="v-input"
                 type="number"

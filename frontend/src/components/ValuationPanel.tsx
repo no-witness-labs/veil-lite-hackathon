@@ -42,8 +42,8 @@ export function ValuationPanel({
   return (
     <Panel
       title="Publish collateral mark"
-      kicker={streamReady ? `stream · ${shortId(streamId ?? '', 10, 6)}` : `current mark unavailable · ${marks.length} found`}
-      actions={<Tag tone={streamReady ? 'ok' : 'danger'} dot>{streamReady ? 'Stream ready' : 'No single stream'}</Tag>}
+      kicker={streamReady ? `Stream ${shortId(streamId ?? '', 10, 6)}` : `Current mark unavailable (${marks.length} found)`}
+      actions={<Tag tone={streamReady ? 'ok' : 'danger'}>{streamReady ? 'Stream ready' : 'No single stream'}</Tag>}
       flush
     >
       <div style={{ padding: 'var(--space-5)', display: 'grid', gap: 'var(--space-5)' }}>
@@ -80,7 +80,7 @@ export function ValuationPanel({
 
         <div className="v-row" style={{ gap: 'var(--space-3)', alignItems: 'flex-end', flexWrap: 'wrap' }}>
           <div className="v-grow" style={{ minWidth: 200 }}>
-            <Field label={`Unit price · ${UNIT_CASH}`}>
+            <Field label={`Unit price (${UNIT_CASH})`}>
               <input
                 className="v-input"
                 type="number"
@@ -98,7 +98,7 @@ export function ValuationPanel({
         </div>
       </div>
 
-      <Section label={`Latest visible mark · ${asset}`}>
+      <Section label={`Latest visible mark: ${asset}`}>
         {latest ? (
           <div className="v-row" style={{ justifyContent: 'space-between', gap: 'var(--space-4)', flexWrap: 'wrap', alignItems: 'baseline' }}>
             <Metric label="" value={Number(latest.args.unitPrice).toFixed(2)} unit={`${UNIT_CASH} / unit`} size="lg" />
@@ -109,7 +109,7 @@ export function ValuationPanel({
         )}
       </Section>
 
-      <Section label={`Current marks · ${allMarks.length}`}>
+      <Section label={`Current marks (${allMarks.length})`}>
         {allMarks.length === 0 ? (
           <p className="v-dim">Your signed marks will appear here.</p>
         ) : (
@@ -117,7 +117,7 @@ export function ValuationPanel({
             {allMarks.map((mark) => (
               <div key={mark.contractId} className="v-row" style={{ justifyContent: 'space-between', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
                 <span className="v-mono" style={{ fontWeight: 600, color: 'var(--ink-900)' }}>
-                  {mark.args.collateralAsset} · {Number(mark.args.unitPrice).toFixed(2)} {UNIT_CASH} / unit
+                  {mark.args.collateralAsset}: {Number(mark.args.unitPrice).toFixed(2)} {UNIT_CASH} per unit
                 </span>
                 <span className="v-id">{fmtTimestamp(mark.args.observedAt ?? '')}</span>
               </div>

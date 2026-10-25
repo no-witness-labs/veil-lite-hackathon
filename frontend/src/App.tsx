@@ -697,7 +697,7 @@ export default function App() {
                             return issueMarginCall(deal, valuation.contractId, snapshot)
                           }),
                         onTopUp: (quantity) =>
-                          act(`Top up collateral · ${quantity} units`, PARTY_NAMES.borrower, (snapshot) => {
+                          act(`Top up collateral: ${quantity} units`, PARTY_NAMES.borrower, (snapshot) => {
                             if (!valuation) throw new Error('No ledger valuation is visible. Publish a fresh mark before topping up.')
                             return topUpCollateral(deal.contractId, dealAsset, quantity, valuation.contractId, snapshot)
                           }),
@@ -731,7 +731,7 @@ export default function App() {
                       busy={busy}
                       actions={{
                         onPropose: (asset, quantity) =>
-                          act(`Propose substitution · ${quantity} ${asset}`, PARTY_NAMES.borrower, (snapshot) => proposeSubstitution(deal, asset, quantity, snapshot)),
+                          act(`Propose substitution: ${quantity} ${asset}`, PARTY_NAMES.borrower, (snapshot) => proposeSubstitution(deal, asset, quantity, snapshot)),
                         onApply: () =>
                           act('Approve collateral substitution', PARTY_NAMES.lender, (snapshot) => {
                             if (!substitution || replacementMarks.length !== 1) throw new Error('Publish a fresh mark for the replacement asset first.')

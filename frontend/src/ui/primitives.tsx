@@ -12,7 +12,7 @@ const cx = (...parts: (string | false | null | undefined)[]) => parts.filter(Boo
 
 /* ------------------------------------------------------------------ Text -- */
 
-/** The uppercase mono caption used to title every field, column and block. */
+/** The caption used to title every field, column and block. */
 export function Label({ children, className }: { children: ReactNode; className?: string }) {
   return <div className={cx('v-label', className)}>{children}</div>
 }
@@ -100,20 +100,12 @@ export function Section({
 
 export function Tag({
   tone = 'neutral',
-  dot,
   children,
 }: {
   tone?: Tone
-  /** Render a leading status dot. */
-  dot?: boolean
   children: ReactNode
 }) {
-  return (
-    <span className={`v-tag v-tag--${tone}`}>
-      {dot && <span className="v-tag__dot" />}
-      {children}
-    </span>
-  )
+  return <span className={`v-tag v-tag--${tone}`}>{children}</span>
 }
 
 /* ---------------------------------------------------------------- Metric -- */
@@ -183,7 +175,7 @@ export function Meter({
         aria-valuemin={0}
         aria-valuemax={max}
       >
-        <div className={`v-meter__fill v-meter__fill--${tone}`} style={{ width: `${pct}%` }} />
+        <div className={`v-meter__fill v-meter__fill--${tone}`} style={{ transform: `scaleX(${pct / 100})` }} />
         {threshold !== undefined && (
           <div className="v-meter__tick" style={{ left: `${Math.min(100, (threshold / max) * 100)}%` }} />
         )}
@@ -339,7 +331,6 @@ export function Banner({
 }) {
   return (
     <div className={`v-banner v-banner--${tone}`} role={tone === 'danger' ? 'alert' : 'status'}>
-      <span className="v-tag__dot" style={{ marginTop: 7 }} />
       <div className="v-banner__body">
         <strong>{title}</strong> {children}
       </div>

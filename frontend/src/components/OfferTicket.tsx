@@ -64,7 +64,7 @@ export function OfferTicket({
   return (
     <Panel
       title="Originate facility"
-      kicker={`counterparty · ${PARTY_NAMES.borrower}`}
+      kicker={`Counterparty: ${PARTY_NAMES.borrower}`}
       flush
       actions={band ? <Tag tone={band.tone}>{band.label}</Tag> : <Tag>No mark</Tag>}
     >
@@ -76,10 +76,10 @@ export function OfferTicket({
             gap: 'var(--space-4)',
           }}
         >
-          <Field label="Principal · simulated USDC" hint={`${fmtAmount(availableCash)} available`}>
+          <Field label="Principal (simulated USDC)" hint={`${fmtAmount(availableCash)} available`}>
             <NumberInput value={draft.principal} onChange={(v) => onChange('principal', v)} />
           </Field>
-          <Field label="Interest · simulated USDC" hint={`${fmtPct(coupon)} coupon`}>
+          <Field label="Interest (simulated USDC)" hint={`${fmtPct(coupon)} coupon`}>
             <NumberInput value={draft.interest} onChange={(v) => onChange('interest', v)} />
           </Field>
           <Field label="Collateral asset" hint={coinCollateral ? 'Real DevNet Canton Coin, locked in a CIP-112 committed allocation' : 'Simulated tokenised T-Bill'}>
@@ -105,16 +105,16 @@ export function OfferTicket({
               ))}
             </div>
           </Field>
-          <Field label={coinCollateral ? 'Collateral · CC' : 'Collateral · units'} hint={coinCollateral ? 'Canton Coin locked from the borrower on acceptance' : 'Simulated tokenised T-Bill'}>
+          <Field label={coinCollateral ? 'Collateral (CC)' : 'Collateral (units)'} hint={coinCollateral ? 'Canton Coin locked from the borrower on acceptance' : 'Simulated tokenised T-Bill'}>
             <NumberInput value={draft.collateral} onChange={(v) => onChange('collateral', v)} />
           </Field>
-          <Field label="Liquidation threshold · LTV %" hint="Margin calls and liquidation start at this LTV.">
+          <Field label="Liquidation threshold (LTV %)" hint="Margin calls and liquidation start at this LTV.">
             <NumberInput value={draft.thresholdLtv} onChange={(v) => onChange('thresholdLtv', v)} />
           </Field>
-          <Field label="Margin-call window · seconds" hint="Time the borrower has to cure a call (60–86,400).">
+          <Field label="Margin-call window (seconds)" hint="Time the borrower has to cure a call (60–86,400).">
             <NumberInput value={draft.marginCallWindowSeconds} onChange={(v) => onChange('marginCallWindowSeconds', v)} />
           </Field>
-          <Field label="Maturity · UTC start of day" hint="Acceptance and collateral cures must complete before this.">
+          <Field label="Maturity (UTC start of day)" hint="Acceptance and collateral cures must complete before this.">
             <DateInput value={draft.maturity} onChange={(v) => onChange('maturity', v)} />
           </Field>
         </div>
@@ -148,7 +148,7 @@ export function OfferTicket({
 
       <Section
         label="Ledger-attested mark"
-        actions={<Tag tone={markOk ? 'ok' : 'danger'} dot>{markOk ? 'Fresh' : assessment.status.replace('-', ' ')}</Tag>}
+        actions={<Tag tone={markOk ? 'ok' : 'danger'}>{markOk ? 'Fresh' : assessment.status.replace('-', ' ')}</Tag>}
       >
         {assessment.mark ? (
           <div className="v-row" style={{ gap: 'var(--space-5)', flexWrap: 'wrap', alignItems: 'baseline' }}>

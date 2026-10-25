@@ -50,7 +50,7 @@ export function TopBar({
               options={ROLES.map((r) => ({ value: r, label: ROLE_LABELS[r], dot: ROLE_SWATCH[r] }))}
             />
           ) : (
-            <Tag tone={ROLE_TONE[role]} dot>
+            <Tag tone={ROLE_TONE[role]}>
               Signed in as {ROLE_LABELS[role]}
             </Tag>
           )}

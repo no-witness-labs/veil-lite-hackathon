@@ -7,6 +7,11 @@
   box-sizing: border-box;
 }
 
+html,
+body {
+  overflow-x: clip;
+}
+
 body {
   margin: 0;
   background: var(--surface-page);
@@ -25,6 +30,16 @@ h1, h2, h3, h4, p, figure {
   margin: 0;
 }
 
+h1, h2, h3 {
+  overflow-wrap: break-word;
+  min-width: 0;
+  text-wrap: balance;
+}
+
+p {
+  text-wrap: pretty;
+}
+
 button,
 input,
 select,
@@ -39,6 +54,10 @@ button {
 
 button:disabled {
   cursor: not-allowed;
+}
+
+button:not(:disabled):active {
+  transform: translateY(1px);
 }
 
 a {

@@ -11,7 +11,7 @@ import { Label, Panel, Tag } from '../ui/primitives'
  * even though it is never a viewpoint the UI queries as. */
 export function DisclosureMatrix({ role }: { role: Role }) {
   return (
-    <Panel title="Disclosure matrix" kicker="structural visibility · per Daml template" flush>
+    <Panel title="Disclosure matrix" kicker="Structural visibility, per Daml template" flush>
       <div style={{ overflowX: 'auto' }} className="veil-scroll">
         <table className="v-table">
           <thead>
