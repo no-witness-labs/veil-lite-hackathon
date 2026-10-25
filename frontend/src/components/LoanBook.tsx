@@ -43,7 +43,7 @@ function LtvCell({ row }: { row: BookRow }) {
     const band = ltvBand(row.ltv, row.threshold ?? undefined)
     return <Tag tone={band.tone}>{fmtPct(row.ltv)}</Tag>
   }
-  if (row.ltvState === 'n/a') return <span className="v-muted">—</span>
+  if (row.ltvState === 'n/a') return <span className="v-muted">n/a</span>
   return <span className="v-muted" title={`No fresh mark for this loan's valuation stream (${row.ltvState}).`}>{row.ltvState}</span>
 }
 
@@ -94,13 +94,13 @@ export function LoanBook({
   }
 
   const deadlineNote = summary.nextDeadline
-    ? `${fmtCountdown(summary.nextDeadline, now)} · ${fmtTimestamp(summary.nextDeadline)}`
+    ? `${fmtCountdown(summary.nextDeadline, now)} (${fmtTimestamp(summary.nextDeadline)})`
     : undefined
 
   return (
     <Panel
       title="Loan book"
-      kicker={`${PARTY_NAMES[role]} · ledger view at offset ${offset}`}
+      kicker={`${PARTY_NAMES[role]}, ledger view at offset ${offset}`}
       flush
       actions={
         <>
@@ -110,10 +110,10 @@ export function LoanBook({
       }
       footer={
         <>
-          <span className="v-id">
-            {rows.length} deal contract{rows.length === 1 ? '' : 's'} visible to {ROLE_LABELS[role].toLowerCase()} · {mineCount} on your desk
+          <span className="v-field__hint">
+            {rows.length} deal contract{rows.length === 1 ? '' : 's'} visible to {ROLE_LABELS[role].toLowerCase()}, {mineCount} on your desk
           </span>
-          <span className="v-id">LTV on outstanding principal at the stream’s fresh mark (≤ 5 min)</span>
+          <span className="v-field__hint">LTV on outstanding principal at the stream’s fresh mark (≤ 5 min)</span>
         </>
       }
     >
@@ -187,7 +187,7 @@ export function LoanBook({
                       {row.mine ? <Tag tone="accent">Your desk</Tag> : <div className="v-muted" style={{ fontSize: 'var(--text-xs)' }}>other visitor</div>}
                     </th>
                     <td>
-                      <Tag tone={STATUS_TONE[row.status]} dot={row.status === 'margin-call' || row.breached}>
+                      <Tag tone={STATUS_TONE[row.status]}>
                         {BOOK_STATUS_LABEL[row.status]}
                       </Tag>
                       {row.breached && <div style={{ fontSize: 'var(--text-xs)', color: 'var(--danger)' }}>breach</div>}
@@ -205,13 +205,13 @@ export function LoanBook({
                         <span title={fmtTimestamp(row.marginCallDeadline)} style={{ color: 'var(--danger)' }}>
                           {fmtCountdown(row.marginCallDeadline, now)}
                         </span>
-                      ) : <span className="v-muted">—</span>}
+                      ) : <span className="v-muted">None</span>}
                     </td>
                     <td style={{ whiteSpace: 'nowrap' }}>{row.maturity ? fmtUtcTime(row.maturity) : '—'}</td>
                     <td>
                       {row.allocationCid
                         ? <span className="v-id" title={row.allocationCid}>{shortId(row.allocationCid, 8, 4)}</span>
-                        : <span className="v-muted">—</span>}
+                        : <span className="v-muted">None</span>}
                     </td>
                   </tr>
                 )

@@ -136,7 +136,7 @@ export function PositionPanel({
           ? 'Past maturity — repay or await lender liquidation'
           : 'Past maturity — facility is closed'
   } else if (beforeMaturity) {
-    maturityNote = Number.isFinite(tenor) ? `${fmtUtcTime(maturity)} · ${tenor} days` : fmtUtcTime(maturity)
+    maturityNote = Number.isFinite(tenor) ? `${fmtUtcTime(maturity)} (${tenor} days)` : fmtUtcTime(maturity)
   } else {
     maturityNote = 'Maturity reached — ledger actions are boundary-checked'
   }
@@ -170,7 +170,7 @@ export function PositionPanel({
           note={repaid > 0 ? `${fmtAmount(repaid)} ${UNIT_CASH} paid down` : undefined}
         />
         <Metric
-          label="Maturity · ledger UTC"
+          label="Maturity (ledger UTC)"
           value={fmtDate(maturity)}
           note={<span style={{ color: pastMaturity ? 'var(--danger)' : undefined }}>{maturityNote}</span>}
         />
@@ -184,7 +184,7 @@ export function PositionPanel({
             style={{ justifyContent: 'space-between', gap: 'var(--space-3)', marginBottom: 'var(--space-3)' }}
           >
             <Label>Collateral</Label>
-            <Tag tone={escrow.tone} dot>
+            <Tag tone={escrow.tone}>
               {escrow.label}
             </Tag>
           </div>
@@ -228,7 +228,7 @@ export function PositionPanel({
             </div>
             <div className="v-metric__note" style={{ color: valuation && !markFresh ? 'var(--danger)' : undefined }}>
               {valuation
-                ? `${valuation.unitPrice.toFixed(2)} ${UNIT_CASH}/unit · observed ${fmtTimestamp(valuation.observedAt)} · ${markFresh ? 'fresh for margin actions' : markIssue}`
+                ? `${valuation.unitPrice.toFixed(2)} ${UNIT_CASH}/unit, observed ${fmtTimestamp(valuation.observedAt)}: ${markFresh ? 'fresh for margin actions' : markIssue}`
                 : 'No valuation has been published for this facility.'}
             </div>
             {(deal.args.valuationStreamId || valuation?.streamId) && (
@@ -271,7 +271,7 @@ export function PositionPanel({
             <div style={{ marginTop: 'var(--space-5)' }}>
               <Banner tone="warn" title="Margin call open.">
                 Issued {fmtTimestamp(marginCall.issuedAt)} at a {Number(marginCall.unitPrice).toFixed(2)} mark. Deadline{' '}
-                {fmtTimestamp(marginCall.deadline)} — {beforeDeadline ? 'window open' : 'deadline passed'}.
+                {fmtTimestamp(marginCall.deadline)}: {beforeDeadline ? 'window open' : 'deadline passed'}.
               </Banner>
             </div>
           )}
@@ -313,19 +313,19 @@ function Header({ deal, status, marginCall }: { deal: Contract; status: Status; 
             Secured Credit Facility
           </h2>
           {marginCall ? (
-            <Tag tone="warn" dot>
+            <Tag tone="warn">
               Margin call
             </Tag>
           ) : (
-            <Tag tone={STATUS_TONE[status]} dot>
+            <Tag tone={STATUS_TONE[status]}>
               {STATUS_LABEL[status]}
             </Tag>
           )}
         </div>
         <div className="v-row" style={{ gap: 'var(--space-3)', marginTop: 2, flexWrap: 'wrap' }}>
-          <Label>VEIL-0001 · Repo-style · {UNIT_CASH}</Label>
+          <Label>VEIL-0001, repo-style, in {UNIT_CASH}</Label>
           <span className="v-id" title={deal.contractId}>
-            {deal.template} · {shortId(deal.contractId, 10, 6)} · offset {deal.offset}
+            {deal.template} {shortId(deal.contractId, 10, 6)}, offset {deal.offset}
           </span>
         </div>
       </div>
@@ -492,7 +492,7 @@ function ActionBar({
       </span>
       <div className="v-row" style={{ gap: 'var(--space-2)', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
         {gates.observer && (
-          <Tag tone="info" dot>
+          <Tag tone="info">
             Observer
           </Tag>
         )}
@@ -561,7 +561,7 @@ function ActionBar({
           </Button>
         )}
         {gates.closed && (
-          <Tag tone={status === 'liquidated' ? 'danger' : 'ok'} dot>
+          <Tag tone={status === 'liquidated' ? 'danger' : 'ok'}>
             {status === 'liquidated' ? 'Liquidated' : 'Settled'}
           </Tag>
         )}

@@ -16,12 +16,12 @@ export function PositionsTable({ role, holdings }: { role: Role; holdings: Holdi
   return (
     <Panel
       title="Holdings"
-      kicker={`${PARTY_NAMES[role]} · issuer + owner only`}
+      kicker={`${PARTY_NAMES[role]}: issuer and owner only`}
       flush
       footer={
         <>
           <span className="v-id">
-            {fmtAmount(cash)} {UNIT_CASH} · {fmtAmount(units, 0)} units{coin > 0 ? ` · ${fmtAmount(coin)} CC` : ''}
+            {fmtAmount(cash)} {UNIT_CASH}, {fmtAmount(units, 0)} units{coin > 0 ? `, ${fmtAmount(coin)} CC` : ''}
           </span>
           <span className="v-id">{rows.length} contract{rows.length === 1 ? '' : 's'}</span>
         </>

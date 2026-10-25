@@ -457,7 +457,7 @@ export const EXPLAINER: Record<Role, { sees: string; can: string }> = {
   },
   regulator: {
     sees: 'The full contract and ledger-attested valuations, via observer rights explicitly granted by the parties. The configured demo issuer is a stakeholder on holdings and loans.',
-    can: 'Nothing — a regulator observes but cannot transact. Disclosure is opt-in and fully auditable.',
+    can: 'Nothing: a regulator observes but cannot transact. Disclosure is opt-in and fully auditable.',
   },
   valuer: {
     sees: 'Only valuation records you signed. The loan terms, amounts, and margin-call state remain outside your view. The demo issuer can see holdings and loans, but the valuer cannot.',

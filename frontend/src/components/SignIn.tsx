@@ -58,7 +58,7 @@ export function SignIn({
             </svg>
             <span className="v-wordmark" style={{ fontSize: 'var(--display-md)' }}>Veil</span>
           </div>
-          <Label className="v-muted">Canton · role sign-in</Label>
+          <Label className="v-muted">Canton role sign-in</Label>
         </div>
 
         {passcodeMode ? (
@@ -103,8 +103,7 @@ export function SignIn({
 
             {error && (
               <div className="v-banner v-banner--danger" role="alert">
-                <span className="v-tag__dot" style={{ marginTop: 7 }} />
-                <div className="v-banner__body">{error}</div>
+                    <div className="v-banner__body">{error}</div>
               </div>
             )}
 
@@ -207,7 +206,6 @@ function PasscodeForm({
 
         {error && (
           <div className="v-banner v-banner--danger" role="alert">
-            <span className="v-tag__dot" style={{ marginTop: 7 }} />
             <div className="v-banner__body">{error}</div>
           </div>
         )}

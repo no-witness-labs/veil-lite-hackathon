@@ -75,7 +75,7 @@ export function GuideTour({
         {current ? (
           <div style={{ display: 'grid', gap: 'var(--space-3)' }}>
             <div className="v-row" style={{ gap: 'var(--space-2)', flexWrap: 'wrap' }}>
-              <Tag tone={ROLE_TONE[current.role]} dot>
+              <Tag tone={ROLE_TONE[current.role]}>
                 {ROLE_LABELS[current.role]}
               </Tag>
               <strong>{current.title}</strong>
@@ -100,7 +100,6 @@ export function GuideTour({
 
         {hints.map((hint) => (
           <div key={hint} className="v-banner v-banner--warn" role="status">
-            <span className="v-tag__dot" style={{ marginTop: 7 }} />
             <div className="v-banner__body">{hint}</div>
           </div>
         ))}

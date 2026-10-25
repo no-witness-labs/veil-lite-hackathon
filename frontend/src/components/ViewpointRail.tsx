@@ -2,6 +2,9 @@ import type { Role } from '../types'
 import { EXPLAINER, PARTY_NAMES, ROLE_INITIALS, ROLE_LABELS, ROLE_TONE } from '../state'
 import { Avatar, Label, Panel } from '../ui/primitives'
 
+/** The three properties the demo exists to prove. */
+const CLAIMS = ['Need-to-know privacy', 'Structural authorisation', 'Selective disclosure']
+
 const note: React.CSSProperties = {
   fontSize: 'var(--text-base)',
   color: 'var(--ink-700)',
@@ -54,6 +57,11 @@ export function ViewpointRail({ role, guide }: { role: Role; guide?: React.React
       </Panel>
 
       <Panel title="Why Canton">
+        <ul className="v-claims" aria-label="What the demo proves" style={{ margin: '0 0 var(--space-4)' }}>
+          {CLAIMS.map((c) => (
+            <li key={c}>{c}</li>
+          ))}
+        </ul>
         <p style={note}>
           Every Veil contract lives only on its stakeholders’ sub-ledgers. There is no public mempool or global
           state to scan, so no competitor, bot or onlooker can observe the position. Visibility is a property of

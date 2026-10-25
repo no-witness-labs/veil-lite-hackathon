@@ -1,12 +1,20 @@
+/* Hallmark · shape: app screen · genre: modern-minimal · theme: brand · redesign: full
+ * paper: #131313 charcoal · accent: #6fe7a5 mint · display: Anton (headings only) · body: IBM Plex Sans · figures: IBM Plex Mono
+ * nav: kept (top bar, section tabs, guide rail) · signature: the role brief, who you act as and the one next step · states: loading, empty, error, full (as the app has them)
+ * axes: charcoal/condensed caps/mint · posture: working desk · contrast: pass · v2.0.0 */
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 · weakest: V, the brand fixes palette and display face; variety comes from the brief strip and the sans interface voice */
+/* Hallmark · dismissed 40 · the three remaining pairs are disabled controls and inputs, which WCAG exempts; they also change fill and cursor */
+/* Hallmark · dismissed 49 · Raw ledger view and Just look around are full-width block buttons with room to wrap; nowrap would clip them at 375 */
 /* Veil design tokens.
  *
  * Single source of truth for every colour, dimension and type ramp. Components
  * reference these variables only — no literal hex value appears anywhere in the
  * component tree, so the light theme is a pure token swap.
  *
- * The register is dark-first crypto-native: a charcoal ground, heavy condensed
- * uppercase display type, monospace interface text, square edges and hairline
- * rules, with a single mint accent carrying emphasis.
+ * The register is dark-first: a charcoal ground, condensed uppercase display
+ * type for headings only, a plain sans for every label, control and sentence,
+ * mono for figures and ledger identifiers, square edges and hairline rules,
+ * with a single mint accent marking the primary action, selection and state.
  *
  * Colour discipline: mint is the only decorative accent. Every other hue is
  * SEMANTIC — status (offered / active / settled / liquidated), LTV bands, and
@@ -19,31 +27,32 @@
   color-scheme: dark;
 
   /* ---- Type ------------------------------------------------------------ */
-  /* Anton carries headings and every figure; its condensed caps are the
-     signature. Mono handles all interface text, which keeps data and prose on
-     one grid and suits a ledger product. */
+  /* Anton carries headings only; its condensed caps are the brand. Plex Sans
+     is the interface voice, and Plex Mono sets figures and ledger ids so they
+     line up in columns. */
   --font-display: 'Anton', 'Haettenschweiler', Impact, sans-serif;
-  --font-sans: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-sans: 'IBM Plex Sans', ui-sans-serif, system-ui, sans-serif;
   --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 
-  --text-2xs: 10px;
-  --text-xs: 11px;
-  --text-sm: 12px;
-  --text-base: 13px;
-  --text-md: 14px;
-  --text-lg: 15px;
-  --text-xl: 17px;
+  /* App scale, about 1.125 between steps. */
+  --text-2xs: 12px;
+  --text-xs: 13px;
+  --text-sm: 14px;
+  --text-base: 15px;
+  --text-md: 16px;
+  --text-lg: 18px;
+  --text-xl: 20px;
   --display-sm: 22px;
-  --display-md: 30px;
-  --display-lg: 46px;
-  --display-xl: 82px;
+  --display-md: 26px;
+  --display-lg: 32px;
+  --display-xl: 40px;
 
-  --leading-tight: 0.92;
-  --leading-normal: 1.6;
-  --leading-relaxed: 1.7;
+  --leading-tight: 1.05;
+  --leading-normal: 1.55;
+  --leading-relaxed: 1.65;
 
-  --tracking-caption: 0.17em;
-  --tracking-display: 0.005em;
+  --tracking-caption: 0;
+  --tracking-display: 0.01em;
 
   /* ---- Space (4px base grid) ------------------------------------------- */
   --space-1: 4px;
@@ -69,7 +78,7 @@
   --shell-max: 1680px;
   --shell-gutter: var(--space-8);
   --rail-width: 340px;
-  --topbar-height: 74px;
+  --topbar-height: 64px;
   --tabbar-height: 52px;
 
   /* ---- Ground and ink --------------------------------------------------- */
@@ -95,6 +104,8 @@
   --accent-soft: #10291d;
   --accent-line: #1f5138;
   --accent-contrast: #0d0d0d;
+  /* Text on a tinted ground; the light theme darkens these to hold 4.5:1. */
+  --accent-ink: var(--accent);
 
   /* ---- Semantic ---------------------------------------------------------- */
   --ok: #6fe7a5;
@@ -121,13 +132,19 @@
   --neutral-soft: #232323;
   --neutral-line: #333333;
 
+  --ok-ink: var(--ok);
+  --warn-ink: var(--warn);
+  --danger-ink: var(--danger);
+  --info-ink: var(--info);
+  --sky-ink: var(--sky);
+
   /* ---- Effects ---------------------------------------------------------- */
   --shadow-panel: none;
   --shadow-pop: 0 10px 34px -12px rgba(0, 0, 0, 0.85);
   --ring: 0 0 0 2px var(--accent);
 
-  --duration-fast: 90ms;
-  --duration: 170ms;
+  --duration-fast: 120ms;
+  --duration: 220ms;
   --ease: cubic-bezier(0.2, 0, 0.2, 1);
 }
 
@@ -156,13 +173,13 @@
   --line: #dededa;
   --line-soft: #ebebe7;
 
-  --accent: #0f9d63;
-  --accent-strong: #0b7c4d;
+  --accent: #0b7c4d;
+  --accent-strong: #096640;
   --accent-soft: #e4f7ee;
   --accent-line: #a8e0c6;
   --accent-contrast: #ffffff;
 
-  --ok: #0f9d63;
+  --ok: #0b7c4d;
   --ok-soft: #e4f7ee;
   --ok-line: #a8e0c6;
 
@@ -184,6 +201,13 @@
 
   --neutral-soft: #eeeeea;
   --neutral-line: #dcdcd7;
+
+  --accent-ink: #0a6a42;
+  --ok-ink: #0a6a42;
+  --warn-ink: #7a520a;
+  --danger-ink: #a5301f;
+  --info-ink: #4b37b3;
+  --sky-ink: #0b6283;
 
   --shadow-pop: 0 10px 30px -14px rgba(0, 0, 0, 0.3);
 }

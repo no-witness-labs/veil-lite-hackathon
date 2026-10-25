@@ -12,7 +12,7 @@ export function ActivityLog({ entries }: { entries: ActivityEntry[] }) {
   return (
     <Panel
       title="Ledger activity"
-      kicker={`this session · ${entries.length} transaction${entries.length === 1 ? '' : 's'}`}
+      kicker={`This session: ${entries.length} transaction${entries.length === 1 ? '' : 's'}`}
       flush
     >
       {entries.length === 0 ? (

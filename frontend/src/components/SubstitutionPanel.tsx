@@ -61,7 +61,7 @@ export function SubstitutionPanel({
             ? `At most ${fmtAmount(replacement.amount, 0)} units are available in one holding.`
             : null
     return (
-      <Panel title="Substitute collateral" kicker={`Locked · ${fmtAmount(lockedQuantity, 0)} ${lockedAsset}`}>
+      <Panel title="Substitute collateral" kicker={`Locked: ${fmtAmount(lockedQuantity, 0)} ${lockedAsset}`}>
         <div style={{ padding: 'var(--space-5)', display: 'grid', gap: 'var(--space-4)' }}>
           <p style={{ color: 'var(--ink-500)', lineHeight: 'var(--leading-relaxed)' }}>
             Offer {replacementAsset} ({fmtAmount(replacement.amount, 0)} units available) in place of the locked {lockedAsset}.

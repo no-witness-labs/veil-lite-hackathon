@@ -21,7 +21,7 @@ export function LedgerInspector({ role, raw, offset }: { role: Role; raw: unknow
         <div className="v-panel__title">
           <h2>Raw ledger view</h2>
           <Label>
-            active-contracts as {PARTY_NAMES[role]} · offset {offset} · includes all issuers
+            active-contracts as {PARTY_NAMES[role]}, offset {offset}, all issuers
           </Label>
         </div>
         <div className="v-row" style={{ gap: 'var(--space-3)' }}>
@@ -46,7 +46,7 @@ export function LedgerInspector({ role, raw, offset }: { role: Role; raw: unknow
                 color: 'var(--ink-700)',
               }}
             >
-              This party is not a stakeholder on any contract, so the response is empty. Nothing leaks — there is
+              This party is not a stakeholder on any contract, so the response is empty. Nothing leaks: there is
               no filtered-out data to reveal.
             </div>
           )}

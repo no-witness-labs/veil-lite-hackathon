@@ -33,7 +33,7 @@ export function DeskBar({
   return (
     <Panel
       title="Your desk"
-      kicker={desk ? `desk ${shortId(desk.deskId, 8, 4)} · until ${fmtTimestamp(new Date(desk.expiresAt * 1000).toISOString())}` : preparing ? 'opening…' : 'not ready'}
+      kicker={desk ? `Desk ${shortId(desk.deskId, 8, 4)}, until ${fmtTimestamp(new Date(desk.expiresAt * 1000).toISOString())}` : preparing ? 'opening…' : 'not ready'}
       actions={actions}
     >
       <div style={{ display: 'grid', gap: 'var(--space-3)' }} data-testid="desk-bar">
