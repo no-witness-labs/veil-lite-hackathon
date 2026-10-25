@@ -588,7 +588,7 @@ export default function App() {
         onToggleTheme={toggleTheme}
       />
 
-      {configOk === true && <Hero />}
+      {configOk === true && <Hero role={role} next={tourCurrent} />}
 
       {configOk === true && <SectionTabs active={activeSection} onSelect={selectSection} sections={sections} />}
 

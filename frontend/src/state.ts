@@ -437,6 +437,15 @@ export const VISIBILITY_META: Record<
   },
 }
 
+/** What a visitor acting as this party is here to do, in one line. */
+export const MISSION: Record<Role, string> = {
+  lender: 'Lend to a borrower you know: set the terms, watch the collateral, call margin if it drops, and get repaid.',
+  borrower: 'Borrow against collateral you lock: accept the lender’s offer, keep the loan healthy, and repay to unlock it.',
+  regulator: 'Audit the loans the parties shared with you: terms, valuations and settlement. You cannot transact.',
+  valuer: 'Publish the collateral price both sides rely on. You never see the loan itself.',
+  outsider: 'You are not a party to the loan. Check what you can see of it: nothing.',
+}
+
 export const EXPLAINER: Record<Role, { sees: string; can: string }> = {
   lender: {
     sees: 'The complete contract, its ledger-attested collateral mark, and any open margin-call deadline. The configured demo issuer also sees the holding and loan lifecycle.',
