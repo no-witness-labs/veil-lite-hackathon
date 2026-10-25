@@ -1,12 +1,13 @@
 module Veil where
 
+import DA.Foldable (forA_)
 import DA.Numeric (cast, mul)
 import DA.Optional (fromOptional)
 import DA.Time (RelTime, addRelTime, days, hours, seconds)
 import Splice.Api.Token.AllocationInstructionV2 qualified as Instr
 import Splice.Api.Token.AllocationV2 qualified as Token
 import Splice.Api.Token.HoldingV2 qualified as Holding
-import Splice.Api.Token.MetadataV1 (ExtraArgs, emptyMetadata)
+import Splice.Api.Token.MetadataV1 (AnyContractId, ExtraArgs, emptyMetadata)
 
 data MarginCallDetails = MarginCallDetails
   with
@@ -645,7 +646,8 @@ closeOut loan reason unitPrice = do
 -- delivery-versus-payment batch inside a Veil choice:
 --
 --   * the lender funds an offer with a committed principal allocation, which
---     cannot be withdrawn before the offer expires (a firm offer);
+--     cannot be withdrawn before the offer expires (the lender can still
+--     archive the offer itself, which stops acceptance);
 --   * acceptance locks the borrower's collateral in a committed allocation and
 --     settles the principal to the borrower in the same transaction;
 --   * every payment settles borrower -> lender in its own batch; full
@@ -657,7 +659,8 @@ closeOut loan reason unitPrice = do
 -- through the registry alone. The registry factories are pinned on the offer
 -- and checked against the instrument admin on every use, so the executors'
 -- authority only ever reaches factories that both counterparties accepted at
--- origination (see docs/AUDIT-TRIAGE.md, R-1).
+-- origination, or that both later replace together (RegistryChange; see
+-- docs/AUDIT-TRIAGE.md, R-1).
 
 -- | A registry instrument: its admin and the instrument id it issues.
 data Instrument = Instrument
@@ -682,12 +685,14 @@ loanExecutors : Party -> Party -> [Party]
 loanExecutors lender borrower = [lender, borrower]
 
 -- | Each batch of a loan has its own settlement id: the funding, the
--- collateral lock and every payment.
-loanSettlement : Party -> Party -> Text -> Token.SettlementInfo
-loanSettlement lender borrower settlementId = Token.SettlementInfo with
+-- collateral lock and every payment. The anchor is the archived request the
+-- offer was funded from, so two loans never share a settlement even when a
+-- lender reuses a reference.
+loanSettlement : Party -> Party -> AnyContractId -> Text -> Token.SettlementInfo
+loanSettlement lender borrower anchor settlementId = Token.SettlementInfo with
   executors = loanExecutors lender borrower
   id = settlementId
-  cid = None
+  cid = Some anchor
   meta = emptyMetadata
 
 fundingRef : Text -> Text
@@ -757,6 +762,13 @@ checkAllocation : ContractId Token.Allocation -> Instrument -> Token.SettlementI
 checkAllocation allocationCid instrument settlement spec = do
   v <- checkSettlement allocationCid instrument settlement
   assertMsg "allocation terms mismatch" ((v.allocation with meta = spec.meta) == spec)
+  -- A registry may expire an allocation before its settlement deadline (Amulet
+  -- caps it by a TTL), after which the authorizer can take the holdings back
+  -- alone. Refuse one that would not last as long as Veil relies on it.
+  assertMsg "allocation expires before its settlement deadline"
+    (case (spec.settlementDeadline, v.expiresAt) of
+      (Some deadline, Some expiry) -> expiry >= deadline
+      _ -> True)
 
 -- | The signature and settlement part of checkAllocation, for an allocation
 -- whose terms were verified when the loan was opened.
@@ -868,20 +880,23 @@ template TokenOfferRequest
         unitPrice <- checkedPrice valuationAgent lender borrower regulator collateralRegistry.instrument.id mark.streamId valuationCid
         assertMsg "offer LTV must be below the liquidation threshold"
           (ltvBelow liquidationThresholdLtv principal collateralQuantity unitPrice)
-        fundingAllocationCid <- allocate principalRegistry (loanSettlement lender borrower (fundingRef settlementRef))
+        let settlementAnchor = coerceContractId self
+        fundingAllocationCid <- allocate principalRegistry (loanSettlement lender borrower settlementAnchor (fundingRef settlementRef))
           (fundingSpec principalRegistry.instrument lender borrower principal expiresAt) inputHoldingCids extraArgs
         create TokenLoanOffer with
           lender; borrower; regulator; valuationAgent
           valuationStreamId = mark.streamId
           principalRegistry; collateralRegistry
           principal; interest; collateralQuantity; maturity
-          liquidationThresholdLtv; marginCallWindowSeconds; settlementRef; expiresAt
+          liquidationThresholdLtv; marginCallWindowSeconds; settlementRef; settlementAnchor; expiresAt
           fundingAllocationCid
 
 fundingSpec : Instrument -> Party -> Party -> Decimal -> Time -> Token.AllocationSpecification
 fundingSpec instrument lender borrower principal expiresAt = sendSpec instrument "principal" lender borrower principal expiresAt
 
--- | A firm, funded offer to one borrower.
+-- | A funded offer to one borrower. The principal stays committed until the
+-- offer expires; the lender, its only signatory, can archive the offer to stop
+-- acceptance, but recovers the principal only after expiry.
 template TokenLoanOffer
   with
     lender : Party
@@ -898,6 +913,7 @@ template TokenLoanOffer
     liquidationThresholdLtv : Decimal
     marginCallWindowSeconds : Int
     settlementRef : Text
+    settlementAnchor : AnyContractId
     expiresAt : Time
     fundingAllocationCid : ContractId Token.Allocation
   where
@@ -927,11 +943,11 @@ template TokenLoanOffer
         unitPrice <- checkedPrice valuationAgent lender borrower regulator collateralRegistry.instrument.id valuationStreamId valuationCid
         assertMsg "acceptance LTV must be below the liquidation threshold"
           (ltvBelow liquidationThresholdLtv principal collateralQuantity unitPrice)
-        let funding = loanSettlement lender borrower (fundingRef settlementRef)
+        let funding = loanSettlement lender borrower settlementAnchor (fundingRef settlementRef)
             principalInstrument = principalRegistry.instrument
         checkAllocation fundingAllocationCid principalInstrument funding
           (fundingSpec principalInstrument lender borrower principal expiresAt)
-        lockCid <- allocate collateralRegistry (loanSettlement lender borrower (collateralRef settlementRef))
+        lockCid <- allocate collateralRegistry (loanSettlement lender borrower settlementAnchor (collateralRef settlementRef))
           (lockSpec collateralRegistry.instrument lender borrower collateralQuantity maturity)
           collateralHoldingCids lockArgs
         receiptCid <- allocate principalRegistry funding
@@ -942,7 +958,7 @@ template TokenLoanOffer
           lender; borrower; regulator; valuationAgent; valuationStreamId
           principalRegistry; collateralRegistry
           principal; interest; collateralQuantity; maturity
-          liquidationThresholdLtv; marginCallWindowSeconds; settlementRef; lockCid
+          liquidationThresholdLtv; marginCallWindowSeconds; settlementRef; settlementAnchor; lockCid
           marginCall = None
           amountRepaid = 0.0
           payments = 0
@@ -955,9 +971,10 @@ template TokenLoanOffer
       controller borrower
       do
         cancelAllocation fundingAllocationCid principalRegistry.instrument
-          (loanSettlement lender borrower (fundingRef settlementRef)) cancelArgs
+          (loanSettlement lender borrower settlementAnchor (fundingRef settlementRef)) cancelArgs
 
-    -- | The offer is firm until it expires; after that the lender withdraws
+    -- | The principal is committed until the offer expires; after that the
+    -- lender withdraws
     -- the funding, which the registry now allows its authorizer alone.
     choice WithdrawTokenOffer : ()
       with
@@ -965,9 +982,9 @@ template TokenLoanOffer
       controller lender
       do
         now <- getTime
-        assertMsg "a funded offer is firm until it expires" (now > expiresAt)
+        assertMsg "the funding is committed until the offer expires" (now > expiresAt)
         _ <- checkSettlement fundingAllocationCid principalRegistry.instrument
-          (loanSettlement lender borrower (fundingRef settlementRef))
+          (loanSettlement lender borrower settlementAnchor (fundingRef settlementRef))
         result <- exercise fundingAllocationCid Token.Allocation_Withdraw with
           actors = [lender]
           extraArgs = withdrawArgs
@@ -1018,6 +1035,7 @@ template TokenLoan
     liquidationThresholdLtv : Decimal
     marginCallWindowSeconds : Int
     settlementRef : Text
+    settlementAnchor : AnyContractId
     lockCid : ContractId Token.Allocation
     marginCall : Optional MarginCallDetails
     amountRepaid : Decimal
@@ -1161,6 +1179,58 @@ template TokenLoan
         assertMsg "the collateral lock has not lapsed: lock deadline not passed" (now > lockDeadline maturity)
         closeTokenLoan this "CollateralLapsed" True amountRepaid None
 
+    -- | Swap in new factories for the same instruments, for example after
+    -- registry maintenance archived the pinned ones, which would otherwise
+    -- block repayment. Both counterparties authorize it (RegistryChange).
+    choice ReplaceRegistries : ContractId TokenLoan
+      with
+        newPrincipalRegistry : Registry
+        newCollateralRegistry : Registry
+      controller lender, borrower
+      do
+        assertMsg "a registry change cannot change the instruments"
+          (newPrincipalRegistry.instrument == principalRegistry.instrument
+            && newCollateralRegistry.instrument == collateralRegistry.instrument)
+        forA_ [newPrincipalRegistry, newCollateralRegistry] (checkFactories lender)
+        create this with principalRegistry = newPrincipalRegistry; collateralRegistry = newCollateralRegistry
+
+-- | One counterparty's proposal to replace a loan's pinned factories; the
+-- other accepts it, which supplies both authorities to ReplaceRegistries.
+template RegistryChange
+  with
+    proposer : Party
+    counterparty : Party
+    loanCid : ContractId TokenLoan
+    newPrincipalRegistry : Registry
+    newCollateralRegistry : Registry
+  where
+    signatory proposer
+    observer counterparty
+    ensure proposer /= counterparty
+
+    choice AcceptRegistryChange : ContractId TokenLoan
+      controller counterparty
+      do
+        exercise loanCid ReplaceRegistries with newPrincipalRegistry; newCollateralRegistry
+
+    choice RejectRegistryChange : ()
+      controller counterparty
+      do
+        pure ()
+
+    choice WithdrawRegistryChange : ()
+      controller proposer
+      do
+        pure ()
+
+-- | Both factories of a registry must answer for its instrument admin.
+checkFactories : Party -> Registry -> Update ()
+checkFactories actor registry = do
+  allocationView <- exercise registry.allocationFactory Instr.AllocationFactory_PublicFetch with actors = [actor]
+  settlementView <- exercise registry.settlementFactory Token.SettlementFactory_PublicFetch with actors = [actor]
+  assertMsg "registry factories must answer for the instrument admin"
+    (allocationView.admin == registry.instrument.admin && settlementView.admin == registry.instrument.admin)
+
 markOf : TokenLoan -> ContractId CollateralValuation -> Update Decimal
 markOf loan = checkedPrice loan.valuationAgent loan.lender loan.borrower loan.regulator
   loan.collateralRegistry.instrument.id loan.valuationStreamId
@@ -1168,11 +1238,11 @@ markOf loan = checkedPrice loan.valuationAgent loan.lender loan.borrower loan.re
 payLender : TokenLoan -> Decimal -> [ContractId Holding.Holding] -> TransferArgs -> Update ()
 payLender loan amount paymentHoldingCids args = do
   now <- getTime
-  transfer loan.principalRegistry (loanSettlement loan.lender loan.borrower (paymentRef loan.settlementRef (loan.payments + 1)))
+  transfer loan.principalRegistry (loanSettlement loan.lender loan.borrower loan.settlementAnchor (paymentRef loan.settlementRef (loan.payments + 1)))
     "payment" loan.borrower loan.lender amount (addRelTime now paymentWindow) paymentHoldingCids args
 
 lockSettlement : TokenLoan -> Token.SettlementInfo
-lockSettlement loan = loanSettlement loan.lender loan.borrower (collateralRef loan.settlementRef)
+lockSettlement loan = loanSettlement loan.lender loan.borrower loan.settlementAnchor (collateralRef loan.settlementRef)
 
 releaseCollateral : TokenLoan -> ExtraArgs -> Update ()
 releaseCollateral loan = cancelAllocation loan.lockCid loan.collateralRegistry.instrument (lockSettlement loan)

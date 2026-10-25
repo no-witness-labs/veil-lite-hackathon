@@ -1,12 +1,14 @@
 -- | Stand-ins for a Token Standard registry (Canton Coin, USDCx, CBTC) that
 -- implement the V2 interfaces with the same authorization and committed-lock
 -- rules: only executors settle or cancel, a committed allocation cannot be
--- withdrawn before its settlement deadline, and a batch settles only legs that
--- its allocations describe exactly.
+-- withdrawn before its settlement deadline, and a batch settles only when every
+-- leg has exactly one sending and one receiving allocation that describe it.
+-- A factory may cap an allocation's expiry with a TTL, as Amulet does.
 module Veil.TokenMocks where
 
 import DA.Action (when)
 import DA.Foldable (forA_)
+import DA.Time (RelTime, addRelTime)
 import DA.Map qualified as Map
 import DA.Optional (fromSome)
 import Splice.Api.Token.AllocationInstructionV2 qualified as Instr
@@ -17,6 +19,7 @@ import Splice.Api.Token.MetadataV1
 template MockAllocationFactory
   with
     admin : Party
+    ttl : Optional RelTime
   where
     signatory admin
 
@@ -27,7 +30,12 @@ template MockAllocationFactory
       allocationFactory_allocateImpl _ arg = do
         assertMsg "only the authorizer may allocate" (arg.actors == [fromSome arg.allocation.authorizer.owner])
         assertMsg "allocation admin must be this registry" (arg.allocation.admin == admin)
-        cid <- create MockAllocation with settlement = arg.settlement; allocation = arg.allocation
+        let capped = fmap (addRelTime arg.requestedAt) ttl
+            expiresAt = case (arg.allocation.settlementDeadline, capped) of
+              (Some deadline, Some cap) -> Some (min deadline cap)
+              (deadline, None) -> deadline
+              (None, cap) -> cap
+        cid <- create MockAllocation with settlement = arg.settlement; allocation = arg.allocation; expiresAt
         pure Instr.AllocationInstructionResult with
           output = Instr.AllocationInstructionResult_Completed with allocationCid = toInterfaceContractId cid
           authorizerChangeCids = mempty
@@ -37,6 +45,7 @@ template MockAllocation
   with
     settlement : Token.SettlementInfo
     allocation : Token.AllocationSpecification
+    expiresAt : Optional Time
   where
     signatory allocation.admin, fromSome allocation.authorizer.owner
     observer settlement.executors
@@ -49,7 +58,7 @@ template MockAllocation
         holdingCids = []
         createdAt = fromSome allocation.settlementDeadline
         numIterations = 0
-        expiresAt = allocation.settlementDeadline
+        expiresAt
         availableActions = Map.empty
         meta = emptyMetadata
       allocation_settleImpl self arg = do
@@ -89,19 +98,22 @@ template MockSettlementFactory
       settlementFactory_publicFetchImpl _ _ = pure Token.SettlementFactoryView with admin; meta = emptyMetadata
       settlementFactory_settleBatchExtraObservers _ = []
       settlementFactory_settleBatchImpl _ arg = do
-        -- Every leg side of every allocation must match a leg of the batch.
-        forA_ arg.allocations $ \a -> do
-          v <- view <$> fetch a.allocationCid
+        views <- forA arg.allocations $ \a -> view <$> fetch a.allocationCid
+        forA_ views $ \v -> do
           assertMsg "allocation belongs to another settlement" (v.settlement == arg.settlement)
           assertMsg "allocation belongs to another registry" (v.allocation.admin == admin)
-          let authorizer = v.allocation.authorizer
-          forA_ v.allocation.transferLegSides $ \s ->
-            assertMsg "allocation does not match a leg of the batch" $ any (\leg ->
+        let sides = [(v.allocation.authorizer, s) | v <- views, s <- v.allocation.transferLegSides]
+            describes leg (authorizer, s) =
               leg.transferLegId == s.transferLegId && leg.amount == s.amount && leg.instrumentId == s.instrumentId
                 && case s.side of
                      Token.SenderSide -> leg.sender == authorizer && leg.receiver == s.otherside
-                     Token.ReceiverSide -> leg.receiver == authorizer && leg.sender == s.otherside)
-              arg.transferLegs
+                     Token.ReceiverSide -> leg.receiver == authorizer && leg.sender == s.otherside
+            count side leg = length (filter (\(a, s) -> s.side == side && describes leg (a, s)) sides)
+        forA_ sides $ \side ->
+          assertMsg "allocation does not match a leg of the batch" (any (\leg -> describes leg side) arg.transferLegs)
+        forA_ arg.transferLegs $ \leg ->
+          assertMsg "every leg needs exactly one sending and one receiving allocation"
+            (count Token.SenderSide leg == 1 && count Token.ReceiverSide leg == 1)
         results <- forA arg.allocations $ \a -> exercise a.allocationCid Token.Allocation_Settle with
           actors = arg.actors
           extraTransferLegSides = a.extraTransferLegSides

@@ -5,12 +5,13 @@ module Veil.TokenLoanTest where
 import Daml.Script
 import DA.Assert ((===))
 import DA.Map qualified as Map
-import DA.Time (addRelTime, days, seconds)
+import DA.Time (RelTime, addRelTime, days, seconds)
 import Veil
 import Veil.TokenMocks
 import Veil.Test (createStream, maturityTime, noExtra, publishInitial, publishPrice, testStart)
 import Splice.Api.Token.AllocationV2 qualified as Token
 import Splice.Api.Token.MetadataV1 (emptyMetadata)
+import Splice.Api.Token.MetadataV1 qualified as Meta
 
 data Fixture = Fixture with
     lender : Party
@@ -43,8 +44,12 @@ offerExpiry = addRelTime testStart (days 1)
 -- factory. Neither has observers, so every use passes them as disclosed
 -- contracts, as real registries require.
 registry : Party -> Text -> Script (Registry, [Disclosure])
-registry admin instrumentId = do
-  allocationFactory <- submit admin do createCmd MockAllocationFactory with admin
+registry admin instrumentId = registryWithTtl admin instrumentId None
+
+-- A registry whose allocations expire after a TTL, as Amulet's do.
+registryWithTtl : Party -> Text -> Optional RelTime -> Script (Registry, [Disclosure])
+registryWithTtl admin instrumentId ttl = do
+  allocationFactory <- submit admin do createCmd MockAllocationFactory with admin; ttl
   settlementFactory <- submit admin do createCmd MockSettlementFactory with admin
   Some a <- queryDisclosure admin allocationFactory
   Some s <- queryDisclosure admin settlementFactory
@@ -133,6 +138,8 @@ testTokenLoanLifecycle = script do
   offerCid <- offer f "loan-1"
   [funding] <- allocations f.usdcAdmin
   funding.settlement.id === "loan-1/funding"
+  Some fundedOffer <- queryContractId f.borrower offerCid
+  funding.settlement.cid === Some fundedOffer.settlementAnchor
   funding.settlement.executors === [f.lender, f.borrower]
   (funding.allocation.authorizer.owner, funding.allocation.committed, funding.allocation.settlementDeadline)
     === (Some f.lender, True, Some offerExpiry)
@@ -295,13 +302,20 @@ testTokenOfferGuards = script do
   -- Expiry after maturity, LTV at or over the threshold, a stale mark.
   withRegs f f.lender `submitMustFail` fundWith f (base with expiresAt = addRelTime maturityTime (seconds 1)) f.mark
   withRegs f f.lender `submitMustFail` fundWith f (base with collateralQuantity = 110.0) f.mark
-  -- A registry admin cannot be a counterparty.
-  withRegs f f.lender `submitMustFail` fundWith f (base with principalRegistry = f.usdc with instrument = f.usdc.instrument with admin = f.lender) f.mark
+  -- A registry admin cannot be a counterparty, even with genuine factories.
+  (ownRegistry, own) <- registry f.lender "LenderCoin"
+  (actAs f.lender <> mconcat (map disclose (own <> f.disclosures))) `submitMustFail`
+    fundWith f (base with principalRegistry = ownRegistry) f.mark
+  -- The same request with an independent admin is accepted (a positive control).
+  (otherRegistry, other) <- registry f.outsider "OtherCoin"
+  _ <- (actAs f.lender <> mconcat (map disclose (other <> f.disclosures))) `submit`
+    fundWith f (base with principalRegistry = otherRegistry; settlementRef = "control") f.mark
   -- A factory of another registry fails the public-fetch admin check.
   withRegs f f.lender `submitMustFail` fundWith f (base with principalRegistry = f.usdc with allocationFactory = f.cbtc.allocationFactory) f.mark
   passTime (seconds 301)
   withRegs f f.lender `submitMustFail` fundWith f base f.mark
   allocations f.usdcAdmin >>= \xs -> length xs === 0
+  allocations f.outsider >>= \xs -> length xs === 1
 
 -- Acceptance rechecks LTV on a fresh mark.
 testTokenAcceptRechecksLtv : Script ()
@@ -353,6 +367,9 @@ template FakeAllocation
       allocation_withdrawExtraObservers _ = []
 
 -- An offer written directly, skipping FundTokenOffer, around a given funding.
+directAnchor : Fixture -> Meta.AnyContractId
+directAnchor f = coerceContractId f.mark
+
 directOffer : Fixture -> ContractId Token.Allocation -> Script (ContractId TokenLoanOffer)
 directOffer f fundingAllocationCid = do
   Some mark <- queryContractId f.lender f.mark
@@ -363,21 +380,21 @@ directOffer f fundingAllocationCid = do
       principalRegistry = f.usdc; collateralRegistry = f.cbtc
       principal = principalAmount; interest = interestAmount; collateralQuantity = collateralAmount
       maturity = maturityTime; liquidationThresholdLtv = 90.0; marginCallWindowSeconds = 60
-      settlementRef = "direct"; expiresAt = offerExpiry
+      settlementRef = "direct"; settlementAnchor = directAnchor f; expiresAt = offerExpiry
       fundingAllocationCid
 
 -- Acceptance pays out only a registry-signed funding for exactly the terms.
 testTokenForgedFundingRejected : Script ()
 testTokenForgedFundingRejected = script do
   f <- fixture
-  let settlement = loanSettlement f.lender f.borrower "direct/funding"
+  let settlement = loanSettlement f.lender f.borrower (directAnchor f) "direct/funding"
       spec = fundingSpec f.usdc.instrument f.lender f.borrower principalAmount offerExpiry
   fake <- submit f.lender do createCmd FakeAllocation with owner = f.lender; settlement; allocation = spec
   forged <- directOffer f (toInterfaceContractId fake)
   withRegs f f.borrower `submitMustFail` acceptCmd forged f.mark
   -- A real registry allocation, but for less than the offer's principal.
   short <- (actAs f.usdcAdmin <> actAs f.lender) `submit` do
-    createCmd MockAllocation with settlement; allocation = fundingSpec f.usdc.instrument f.lender f.borrower 1.0 offerExpiry
+    createCmd MockAllocation with settlement; allocation = fundingSpec f.usdc.instrument f.lender f.borrower 1.0 offerExpiry; expiresAt = Some offerExpiry
   shortOffer <- directOffer f (toInterfaceContractId short)
   withRegs f f.borrower `submitMustFail` acceptCmd shortOffer f.mark
   allocations f.cbtcAdmin >>= \xs -> length xs === 0
@@ -395,4 +412,105 @@ testTokenLockNeedsBothExecutors = script do
     exerciseCmd lock Token.Allocation_Settle with actors = [f.lender]; extraTransferLegSides = []; nextIterationFunding = None; extraArgs = noExtra
   submitMustFail f.borrower do exerciseCmd lock Token.Allocation_Cancel with actors = [f.borrower]; extraArgs = noExtra
   submitMustFail f.borrower do exerciseCmd lock Token.Allocation_Withdraw with actors = [f.borrower]; extraArgs = noExtra
+  -- Even both executors cannot settle the lock in a batch without a receiving side.
+  [(_, lockData)] <- query @MockAllocation f.cbtcAdmin
+  (actAs f.lender <> actAs f.borrower <> mconcat (map disclose f.disclosures)) `submitMustFail`
+    exerciseCmd f.cbtc.settlementFactory Token.SettlementFactory_SettleBatch with
+      settlement = lockData.settlement
+      transferLegs = [transferLeg f.cbtc.instrument "collateral" f.borrower f.lender collateralAmount]
+      allocations = [Token.FinalizedAllocation with allocationCid = lock; extraTransferLegSides = []; nextIterationFunding = None]
+      actors = [f.lender, f.borrower]
+      extraArgs = noExtra
   allocations f.cbtcAdmin >>= \xs -> length xs === 1
+
+-- ---------------------------------------------------------------------------
+-- Review fixes (Codex review of 9ce901b)
+
+-- An allocation that a registry expires before its settlement deadline is
+-- refused: the funding of an offer, and the collateral lock of a loan.
+testTokenAllocationExpiryCovered : Script ()
+testTokenAllocationExpiryCovered = script do
+  f <- fixture
+  shortAdmin <- allocateParty "ShortTtlAdmin"
+  (shortUsdc, d1) <- registryWithTtl shortAdmin "USDCx" (Some (seconds 3600))
+  (shortCbtc, d2) <- registryWithTtl f.cbtcAdmin "CBTC" (Some (days 7))
+  let regs p ds = actAs p <> mconcat (map disclose (ds <> f.disclosures))
+  -- The funding would expire after an hour, the offer only after a day.
+  regs f.lender d1 `submitMustFail` fundWith f ((request f "short-funding") with principalRegistry = shortUsdc) f.mark
+  -- The lock would expire after a week, a month before maturity.
+  offerCid <- regs f.lender d2 `submit` fundWith f ((request f "short-lock") with collateralRegistry = shortCbtc) f.mark
+  regs f.borrower d2 `submitMustFail` acceptCmd offerCid f.mark
+  allocations f.cbtcAdmin >>= \xs -> length xs === 0
+  -- A TTL that covers the period is accepted.
+  (longCbtc, d3) <- registryWithTtl f.cbtcAdmin "CBTC" (Some (days 60))
+  longOffer <- regs f.lender d3 `submit` fundWith f ((request f "long-lock") with collateralRegistry = longCbtc) f.mark
+  _ <- regs f.borrower d3 `submit` acceptCmd longOffer f.mark
+  pure ()
+
+-- Registry maintenance archives the pinned principal factories, which blocks
+-- repayment; both counterparties replace them and the borrower repays.
+testTokenRegistryReplacement : Script ()
+testTokenRegistryReplacement = script do
+  f <- fixture
+  loanCid <- openLoan f "replace"
+  submit f.usdcAdmin do
+    archiveCmd (fromInterfaceContractId @MockAllocationFactory f.usdc.allocationFactory)
+  withRegs f f.borrower `submitMustFail` repay loanCid
+  (newUsdc, fresh) <- registry f.usdcAdmin "USDCx"
+  -- The archived factories can no longer be disclosed; keep the CBTC ones.
+  let regs p = actAs p <> mconcat (map disclose (fresh <> drop 2 f.disclosures))
+  -- One side alone cannot replace them, nor change an instrument.
+  submitMustFail f.borrower do
+    exerciseCmd loanCid ReplaceRegistries with newPrincipalRegistry = newUsdc; newCollateralRegistry = f.cbtc
+  wrong <- submit f.lender do
+    createCmd RegistryChange with
+      proposer = f.lender; counterparty = f.borrower; loanCid
+      newPrincipalRegistry = newUsdc with instrument = newUsdc.instrument with id = "USDT"
+      newCollateralRegistry = f.cbtc
+  regs f.borrower `submitMustFail` exerciseCmd wrong AcceptRegistryChange
+  submit f.borrower do exerciseCmd wrong RejectRegistryChange
+  -- An outsider's proposal cannot borrow the counterparties' authority.
+  stray <- submit f.outsider do
+    createCmd RegistryChange with
+      proposer = f.outsider; counterparty = f.borrower; loanCid
+      newPrincipalRegistry = newUsdc; newCollateralRegistry = f.cbtc
+  regs f.borrower `submitMustFail` exerciseCmd stray AcceptRegistryChange
+  proposal <- submit f.lender do
+    createCmd RegistryChange with
+      proposer = f.lender; counterparty = f.borrower; loanCid
+      newPrincipalRegistry = newUsdc; newCollateralRegistry = f.cbtc
+  replacedCid <- regs f.borrower `submit` exerciseCmd proposal AcceptRegistryChange
+  closedCid <- regs f.borrower `submit` repay replacedCid
+  Some closed <- queryContractId f.lender closedCid
+  closed.reason === "Repaid"
+
+-- Two offers funded with the same reference still settle separately: each is
+-- anchored to its own request.
+testTokenSettlementAnchorsAreUnique : Script ()
+testTokenSettlementAnchorsAreUnique = script do
+  f <- fixture
+  first <- offer f "same-ref"
+  second <- offer f "same-ref"
+  Some a <- queryContractId f.lender first
+  Some b <- queryContractId f.lender second
+  assertMsg "anchors differ" (a.settlementAnchor /= b.settlementAnchor)
+  -- An offer cannot pay out another offer's funding.
+  swapped <- submit f.lender do createCmd a with fundingAllocationCid = b.fundingAllocationCid
+  submit f.lender do archiveCmd first
+  withRegs f f.borrower `submitMustFail` acceptCmd swapped f.mark
+  _ <- accept f second f.mark
+  pure ()
+
+-- The lender, the offer's only signatory, can archive it before expiry; the
+-- principal stays committed and returns only after the offer would have expired.
+testTokenLenderArchivesOffer : Script ()
+testTokenLenderArchivesOffer = script do
+  f <- fixture
+  offerCid <- offer f "archived"
+  submit f.lender do archiveCmd offerCid
+  [(fundingCid, _)] <- query @MockAllocation f.usdcAdmin
+  let funding = toInterfaceContractId @Token.Allocation fundingCid
+  submitMustFail f.lender do exerciseCmd funding Token.Allocation_Withdraw with actors = [f.lender]; extraArgs = noExtra
+  setTime (addRelTime offerExpiry (seconds 1))
+  submit f.lender do exerciseCmd funding Token.Allocation_Withdraw with actors = [f.lender]; extraArgs = noExtra
+  allocations f.usdcAdmin >>= \xs -> length xs === 0

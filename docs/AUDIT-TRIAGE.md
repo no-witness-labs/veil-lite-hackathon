@@ -163,29 +163,43 @@ and every movement is an allocation executed by lender and borrower together:
 | `PayDownToken`, `RepayToken` | payment borrower → lender | borrower's payment + lender's receipt (`<ref>/payment/<n>`); repay also cancels the lock |
 | `LiquidateToken*` | whole lock borrower → lender | lock + lender's receipt |
 
-How the 0.10.0 residual items change:
+How the 0.10.0 residual items change, after a review of `9ce901b`:
 
 - **R-1 Settlement factory authenticity: narrowed, not closed.** Both registries'
   allocation and settlement factories are pinned on the offer
   (`principalRegistry`, `collateralRegistry`) and every use checks
-  `PublicFetch` against the instrument admin. No later choice takes a factory
-  argument, so the executors' authority only reaches factories the borrower
-  accepted together with the offer. `PublicFetch` still cannot tell a forged
-  factory from a real one, so the borrower's client must check the pinned
-  contract ids against the registry's published factories before accepting.
-- **Duplicate `settlementRef`: no longer applies.** The lock is created inside
-  `AcceptTokenOffer` and recorded on the loan, so no factory can present an
-  existing lock; each payment has its own settlement id.
-- **Firm offers.** The funding allocation is committed until the offer expires,
-  and only both executors can cancel it, so the lender cannot pull the principal
-  from a live offer (only the borrower's `RejectTokenOffer` cancels it early).
-  After expiry `WithdrawTokenOffer` withdraws it.
+  `PublicFetch` against the instrument admin. Only `ReplaceRegistries`, which
+  needs both counterparties (one proposes a `RegistryChange`, the other
+  accepts), can swap them, and never the instruments. `PublicFetch` still
+  cannot tell a forged factory from a real one, so each side's client must check
+  the contract ids against the registry's published factories before accepting
+  an offer or a change.
+- **Pinned factories archived by the registry.** Without a replacement the
+  borrower could not repay while the lender could still liquidate at maturity.
+  `RegistryChange` restores repayment when both agree; a lender who refuses can
+  still liquidate at maturity. That remains a trust assumption.
+- **Duplicate `settlementRef`: closed.** Every settlement carries
+  `cid = Some settlementAnchor`, the archived `TokenOfferRequest` the offer was
+  funded from, so two loans never share a settlement identity even with the
+  same reference, and an offer cannot pay out another offer's funding.
+- **Allocation expiry.** A registry may expire an allocation before its
+  settlement deadline (Amulet caps it with a TTL), after which the authorizer
+  can take the holdings back alone. `checkAllocation` refuses a funding or lock
+  whose `expiresAt` is earlier than its deadline, so a loan longer than the
+  registry's TTL cannot be opened. Renewing a lock is future work.
+- **Offers are committed, not firm.** The funding cannot be withdrawn before the
+  offer expires and only both executors can cancel it, but the lender, the
+  offer's only signatory, can archive the offer and so stop acceptance; the
+  principal then returns only after expiry.
 - **Unchanged:** a liquidation transfers the whole lock (no surplus, as for
-  0.10.0 coin loans); registry semantics are those of the mocks in
-  `test/daml/Veil/TokenMocks.daml`, which now also require every allocation of a
-  batch to match one of its legs exactly. Real registries (Amulet, the DA
-  Registry Utility for USDCx and CBTC) are not yet exercised.
+  0.10.0 coin loans). The mocks in `test/daml/Veil/TokenMocks.daml` now require
+  every leg of a batch to have exactly one sending and one receiving allocation,
+  and can cap expiry with a TTL, but they carry no balances: tests check which
+  allocations exist and settle, not debits and credits. Real registries
+  (Amulet, the DA Registry Utility for USDCx and CBTC) are not yet exercised.
 
 Tests: `test/daml/Veil/TokenLoanTest.daml` (lifecycle, margin call and
-liquidation, cure by pay-down, overdue and lapse, write-off, firm offers,
-offer guards, forged funding, lock needs both executors).
+liquidation, cure by pay-down, overdue and lapse, write-off, committed offers
+and lender archive, offer guards, forged funding, lock needs both executors and
+a bilateral batch, allocation expiry, registry replacement, unique settlement
+anchors).
