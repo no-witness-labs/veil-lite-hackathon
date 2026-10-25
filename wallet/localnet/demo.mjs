@@ -202,7 +202,7 @@ const fetchOf = (entity, contractId, actingParties) => ({ fetch: { templateId: i
 const createOf = (entity, createArguments, signatories, observers = [], label) => ({ create: { templateId: intentTemplate(entity), createArguments, signatories, stakeholders: [...new Set([...signatories, ...observers])], ...(label ? { label } : {}) } })
 
 await step('Installing veil-wallet on participant 1')
-const dar = readFileSync(`${REPO}wallet/.daml/dist/veil-wallet-0.1.0.dar`)
+const dar = readFileSync(`${REPO}wallet/.daml/dist/veil-wallet-0.2.0.dar`)
 const { main: walletPkg, lite: litePkg } = walletPackages(dar)
 PACKAGES = { 'veil-wallet': walletPkg.id, 'veil-lite': litePkg.id }
 if (!process.env.SKIP_DAR_UPLOAD) {

@@ -10,7 +10,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BASE="${1:-http://127.0.0.1:6864}"
-DAR="$ROOT/.daml/dist/veil-lite-0.10.0.dar"
+DAR="$ROOT/.daml/dist/veil-lite-1.0.0.dar"
 CONFIG="$ROOT/frontend/public/ledger-config.json"
 AUTH_DIR="$ROOT/.local/auth"
 ADMIN_HEADER="$AUTH_DIR/headers/participant_admin.txt"

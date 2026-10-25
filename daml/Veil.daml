@@ -1,12 +1,13 @@
 module Veil where
 
+import DA.Foldable (forA_)
 import DA.Numeric (cast, mul)
 import DA.Optional (fromOptional)
-import DA.Time (addRelTime, days, seconds)
+import DA.Time (RelTime, addRelTime, days, hours, seconds)
 import Splice.Api.Token.AllocationInstructionV2 qualified as Instr
 import Splice.Api.Token.AllocationV2 qualified as Token
 import Splice.Api.Token.HoldingV2 qualified as Holding
-import Splice.Api.Token.MetadataV1 (ExtraArgs, emptyMetadata)
+import Splice.Api.Token.MetadataV1 (AnyContractId, ExtraArgs, emptyMetadata)
 
 data MarginCallDetails = MarginCallDetails
   with
@@ -154,54 +155,6 @@ template CashHolding
           maturity
           liquidationThresholdLtv
           marginCallWindowSeconds
-          expiresAt
-
-    -- | Lender funds an offer secured by real Canton Coin. The principal is
-    -- escrowed exactly as in MakeOffer; the collateral side is only a quantity
-    -- until the borrower locks it in a committed allocation on acceptance.
-    choice MakeCoinOffer : ContractId CoinLoanOffer
-      with
-        borrower : Party
-        regulator : Party
-        valuationAgent : Party
-        valuationCid : ContractId CollateralValuation
-        coinAdmin : Party
-        principal : Decimal
-        interest : Decimal
-        collateralQuantity : Decimal
-        maturity : Time
-        liquidationThresholdLtv : Decimal
-        marginCallWindowSeconds : Int
-        settlementRef : Text
-        expiresAt : Optional Time
-      controller owner
-      do
-        validateOfferTerms owner borrower regulator principal interest collateralQuantity maturity expiresAt
-        mark <- fetch valuationCid
-        unitPrice <- checkedPrice valuationAgent owner borrower regulator coinAsset mark.streamId valuationCid
-        assertMsg "offer LTV must be below the liquidation threshold"
-          (ltvBelow liquidationThresholdLtv principal collateralQuantity unitPrice)
-        assertMsg "insufficient cash to fund offer" (amount >= principal)
-        if amount > principal
-          then do
-            _ <- create CashHolding with issuer; owner; amount = amount - principal
-            pure ()
-          else pure ()
-        create CoinLoanOffer with
-          issuer
-          lender = owner
-          borrower
-          regulator
-          valuationAgent
-          valuationStreamId = mark.streamId
-          coinAdmin
-          principal
-          interest
-          collateralQuantity
-          maturity
-          liquidationThresholdLtv
-          marginCallWindowSeconds
-          settlementRef
           expiresAt
 
     choice Split : (ContractId CashHolding, ContractId CashHolding)
@@ -685,104 +638,162 @@ closeOut loan reason unitPrice = do
     collateralReturned = Some returned
 
 -- ---------------------------------------------------------------------------
--- Canton Coin collateral (CIP-112 Token Standard V2)
+-- Token Standard loans (CIP-112 Token Standard V2)
 --
--- The borrower's Canton Coin is locked in a *committed* allocation. Since
--- 0.10.0 its executors are the lender and the borrower together, so neither
--- can settle or cancel it through the registry alone; both are CoinLoan
--- signatories, so Veil's choices carry the joint authority and decide which
--- of settle (liquidate) or cancel (release) is allowed. The token standard
--- itself refuses the borrower's withdrawal until the settlement deadline.
--- Loans opened by 0.9.0 keep their lender-only lock (`settlementExecutors =
--- None`) until they close.
+-- Principal and collateral are both registry instruments, for example USDCx
+-- lent against CBTC or Canton Coin. Every asset movement is a registry
+-- allocation executed by lender and borrower together, and each settles in a
+-- delivery-versus-payment batch inside a Veil choice:
+--
+--   * the lender funds an offer with a committed principal allocation, which
+--     cannot be withdrawn before the offer expires (the lender can still
+--     archive the offer itself, which stops acceptance);
+--   * acceptance locks the borrower's collateral in a committed allocation and
+--     settles the principal to the borrower in the same transaction;
+--   * every payment settles borrower -> lender in its own batch; full
+--     repayment also cancels the collateral lock;
+--   * liquidation settles the whole collateral lock to the lender.
+--
+-- Both counterparties are signatories of the loan, so its choices carry the
+-- executors' joint authority, and neither can settle or cancel an allocation
+-- through the registry alone. The registry factories are pinned on the offer
+-- and checked against the instrument admin on every use, so the executors'
+-- authority only ever reaches factories that both counterparties accepted at
+-- origination, or that both later replace together (RegistryChange; see
+-- docs/AUDIT-TRIAGE.md, R-1).
 
--- | Valuation-stream asset name for Canton Coin marks.
-coinAsset : Text
-coinAsset = "Canton Coin"
+-- | A registry instrument: its admin and the instrument id it issues.
+data Instrument = Instrument
+  with
+    admin : Party
+    id : Text
+  deriving (Eq, Show)
 
--- | Registry instrument id of Canton Coin.
-coinInstrumentId : Text
-coinInstrumentId = "Amulet"
+-- | The registry factories for one instrument, as agreed at origination.
+data Registry = Registry
+  with
+    instrument : Instrument
+    allocationFactory : ContractId Instr.AllocationFactory
+    settlementFactory : ContractId Token.SettlementFactory
+  deriving (Eq, Show)
 
-coinAccount : Party -> Holding.Account
-coinAccount party = Holding.Account with owner = Some party; provider = None; id = ""
+tokenAccount : Party -> Holding.Account
+tokenAccount party = Holding.Account with owner = Some party; provider = None; id = ""
 
--- | Executors of the lock and receipt allocations of a new Canton Coin loan.
-coinLoanExecutors : Party -> Party -> [Party]
-coinLoanExecutors lender borrower = [lender, borrower]
+-- | Every allocation of a loan is executed by lender and borrower together.
+loanExecutors : Party -> Party -> [Party]
+loanExecutors lender borrower = [lender, borrower]
 
--- | A loan's executors: recorded since 0.10.0, lender-only before.
-coinExecutorsOf : CoinLoan -> [Party]
-coinExecutorsOf loan = fromOptional [loan.lender] loan.settlementExecutors
-
-coinSettlement : [Party] -> Text -> Token.SettlementInfo
-coinSettlement executors settlementRef = Token.SettlementInfo with
-  executors
-  id = settlementRef
-  cid = None
+-- | Each batch of a loan has its own settlement id: the funding, the
+-- collateral lock and every payment. The anchor is the archived request the
+-- offer was funded from, so two loans never share a settlement even when a
+-- lender reuses a reference.
+loanSettlement : Party -> Party -> AnyContractId -> Text -> Token.SettlementInfo
+loanSettlement lender borrower anchor settlementId = Token.SettlementInfo with
+  executors = loanExecutors lender borrower
+  id = settlementId
+  cid = Some anchor
   meta = emptyMetadata
+
+fundingRef : Text -> Text
+fundingRef ref = ref <> "/funding"
+
+collateralRef : Text -> Text
+collateralRef ref = ref <> "/collateral"
+
+paymentRef : Text -> Int -> Text
+paymentRef ref n = ref <> "/payment/" <> show n
 
 -- | The lock must outlive maturity so overdue liquidation remains possible; a
 -- day after maturity the borrower may withdraw whatever was never settled.
-coinSettlementDeadline : Time -> Time
-coinSettlementDeadline maturity = addRelTime maturity (days 1)
+lockDeadline : Time -> Time
+lockDeadline maturity = addRelTime maturity (days 1)
 
-coinCollateralLeg : Token.TransferSide -> Party -> Decimal -> Token.TransferLegSide
-coinCollateralLeg side otherside quantity = Token.TransferLegSide with
-  transferLegId = "collateral"
+-- | A payment is allocated and settled in one transaction; the deadline only
+-- bounds an allocation that a failed batch might leave behind.
+paymentWindow : RelTime
+paymentWindow = hours 1
+
+legSide : Text -> Token.TransferSide -> Party -> Decimal -> Instrument -> Token.TransferLegSide
+legSide transferLegId side otherside amount instrument = Token.TransferLegSide with
+  transferLegId
   side
-  otherside = coinAccount otherside
-  amount = quantity
-  instrumentId = coinInstrumentId
+  otherside = tokenAccount otherside
+  amount
+  instrumentId = instrument.id
   meta = emptyMetadata
 
-coinAllocationSpec : Party -> Party -> Bool -> Token.TransferLegSide -> Time -> Token.AllocationSpecification
-coinAllocationSpec coinAdmin authorizer committed leg maturity = Token.AllocationSpecification with
-  admin = coinAdmin
-  authorizer = coinAccount authorizer
+allocationSpec : Instrument -> Party -> Bool -> Time -> Token.TransferLegSide -> Token.AllocationSpecification
+allocationSpec instrument authorizer committed deadline leg = Token.AllocationSpecification with
+  admin = instrument.admin
+  authorizer = tokenAccount authorizer
   transferLegSides = [leg]
-  settlementDeadline = Some (coinSettlementDeadline maturity)
+  settlementDeadline = Some deadline
   nextIterationFunding = None
   committed
   meta = emptyMetadata
 
--- | The lender's uncommitted receiving side of a liquidation.
-coinReceiptSpec : CoinLoan -> Token.AllocationSpecification
-coinReceiptSpec loan = coinAllocationSpec loan.coinAdmin loan.lender False
-  (coinCollateralLeg Token.ReceiverSide loan.borrower loan.collateralQuantity) loan.maturity
+-- | The sending side of a transfer: committed, so the sender cannot withdraw
+-- it before the deadline.
+sendSpec : Instrument -> Text -> Party -> Party -> Decimal -> Time -> Token.AllocationSpecification
+sendSpec instrument legId sender receiver amount deadline =
+  allocationSpec instrument sender True deadline (legSide legId Token.SenderSide receiver amount instrument)
+
+-- | The receiving side of a transfer.
+receiveSpec : Instrument -> Text -> Party -> Party -> Decimal -> Time -> Token.AllocationSpecification
+receiveSpec instrument legId sender receiver amount deadline =
+  allocationSpec instrument receiver False deadline (legSide legId Token.ReceiverSide sender amount instrument)
+
+transferLeg : Instrument -> Text -> Party -> Party -> Decimal -> Token.TransferLeg
+transferLeg instrument transferLegId sender receiver amount = Token.TransferLeg with
+  transferLegId
+  sender = tokenAccount sender
+  receiver = tokenAccount receiver
+  amount
+  instrumentId = instrument.id
+  meta = emptyMetadata
 
 -- | Require that an allocation is the registry's own and exactly the one Veil
--- asked for. Only the admin's templates carry the admin's signature, so a
--- borrower- or lender-written Allocation fails here before Veil ever relies on
--- it or hands it the counterparties' authority (audit 0.10.0, finding 2). The
--- registry may annotate metadata, so the top-level meta fields are not compared.
-checkCoinAllocation : ContractId Token.Allocation -> Party -> Token.SettlementInfo -> Token.AllocationSpecification -> Update ()
-checkCoinAllocation allocationCid coinAdmin settlement spec = do
-  v <- checkCoinSettlement allocationCid coinAdmin settlement
+-- expects. Only the admin's templates carry the admin's signature, so an
+-- allocation written by a counterparty fails here before Veil relies on it or
+-- hands it the executors' authority. The registry may annotate metadata, so
+-- the top-level meta fields are not compared.
+checkAllocation : ContractId Token.Allocation -> Instrument -> Token.SettlementInfo -> Token.AllocationSpecification -> Update ()
+checkAllocation allocationCid instrument settlement spec = do
+  v <- checkSettlement allocationCid instrument settlement
   assertMsg "allocation terms mismatch" ((v.allocation with meta = spec.meta) == spec)
+  -- A registry may expire an allocation before its settlement deadline (Amulet
+  -- caps it by a TTL), after which the authorizer can take the holdings back
+  -- alone. Refuse one that would not last as long as Veil relies on it.
+  assertMsg "allocation expires before its settlement deadline"
+    (case (spec.settlementDeadline, v.expiresAt) of
+      (Some deadline, Some expiry) -> expiry >= deadline
+      _ -> True)
 
--- | The signature and settlement part of checkCoinAllocation. Used to
--- re-check a loan's lock before Veil hands it the executors' authority: the
--- terms were verified when it was created (for 0.9.0 locks, not re-judged).
-checkCoinSettlement : ContractId Token.Allocation -> Party -> Token.SettlementInfo -> Update Token.AllocationView
-checkCoinSettlement allocationCid coinAdmin settlement = do
+-- | The signature and settlement part of checkAllocation, for an allocation
+-- whose terms were verified when the loan was opened.
+checkSettlement : ContractId Token.Allocation -> Instrument -> Token.SettlementInfo -> Update Token.AllocationView
+checkSettlement allocationCid instrument settlement = do
   allocation <- fetch allocationCid
-  assertMsg "allocation must be signed by the Canton Coin admin" (coinAdmin `elem` signatory allocation)
+  assertMsg "allocation must be signed by the instrument admin" (instrument.admin `elem` signatory allocation)
   let v = view allocation
   assertMsg "allocation settlement mismatch" ((v.settlement with meta = settlement.meta) == settlement)
   pure v
 
-allocateCoin : ContractId Instr.AllocationFactory -> Party -> Token.SettlementInfo -> Token.AllocationSpecification -> [ContractId Holding.Holding] -> ExtraArgs -> Update (ContractId Token.Allocation)
-allocateCoin factoryCid coinAdmin settlement spec inputHoldingCids extraArgs = do
-  let authorizer = fromSomeNote "allocation authorizer" spec.authorizer.owner
-  -- The factory is disclosed by the DSO, its only stakeholder, so it can only
-  -- be read through the public-fetch choice, whose answer its own code
-  -- computes. That catches a wrong factory, not a forged one: the result is
-  -- what checkCoinAllocation verifies.
-  factoryView <- exercise factoryCid Instr.AllocationFactory_PublicFetch with actors = [authorizer]
-  assertMsg "allocation factory admin must be the Canton Coin admin" (factoryView.admin == coinAdmin)
+-- | Allocate through the pinned factory with the authorizer's authority. The
+-- factory is disclosed by its admin, its only stakeholder, so it can only be
+-- read through the public-fetch choice, whose answer its own code computes.
+-- That catches a wrong factory, not a forged one; the allocation it returns
+-- is what checkAllocation verifies.
+allocate : Registry -> Token.SettlementInfo -> Token.AllocationSpecification -> [ContractId Holding.Holding] -> ExtraArgs -> Update (ContractId Token.Allocation)
+allocate registry settlement spec inputHoldingCids extraArgs = do
+  authorizer <- case spec.authorizer.owner of
+    Some p -> pure p
+    None -> abort "allocation authorizer missing"
+  factoryView <- exercise registry.allocationFactory Instr.AllocationFactory_PublicFetch with actors = [authorizer]
+  assertMsg "allocation factory admin must be the instrument admin" (factoryView.admin == registry.instrument.admin)
   now <- getTime
-  result <- exercise factoryCid Instr.AllocationFactory_Allocate with
+  result <- exercise registry.allocationFactory Instr.AllocationFactory_Allocate with
     settlement
     allocation = spec
     requestedAt = now
@@ -791,24 +802,59 @@ allocateCoin factoryCid coinAdmin settlement spec inputHoldingCids extraArgs = d
     actors = [authorizer]
   allocationCid <- case result.output of
     Instr.AllocationInstructionResult_Completed allocationCid -> pure allocationCid
-    _ -> abort "Canton Coin allocation did not complete in one step"
-  checkCoinAllocation allocationCid coinAdmin settlement spec
+    _ -> abort "allocation did not complete in one step"
+  checkAllocation allocationCid registry.instrument settlement spec
   pure allocationCid
-  where
-    fromSomeNote _ (Some p) = p
-    fromSomeNote note None = error ("missing " <> note)
 
--- | Offer secured by Canton Coin; mirrors LoanOffer, with the lock created on
--- acceptance.
-template CoinLoanOffer
+-- | Settle one transfer leg: the sender's and the receiver's allocations, both
+-- already verified, through the pinned settlement factory.
+settle : Registry -> Token.SettlementInfo -> Token.TransferLeg -> ContractId Token.Allocation -> ContractId Token.Allocation -> ExtraArgs -> Update ()
+settle registry settlement leg senderCid receiverCid extraArgs = do
+  factoryView <- exercise registry.settlementFactory Token.SettlementFactory_PublicFetch with actors = settlement.executors
+  assertMsg "settlement factory admin must be the instrument admin" (factoryView.admin == registry.instrument.admin)
+  result <- exercise registry.settlementFactory Token.SettlementFactory_SettleBatch with
+    settlement
+    transferLegs = [leg]
+    allocations =
+      [ Token.FinalizedAllocation with allocationCid = senderCid; extraTransferLegSides = []; nextIterationFunding = None
+      , Token.FinalizedAllocation with allocationCid = receiverCid; extraTransferLegSides = []; nextIterationFunding = None
+      ]
+    actors = settlement.executors
+    extraArgs
+  let settled r = case r.output of
+        Token.AllocationResult_Settled _ -> True
+        _ -> False
+  assertMsg "transfer did not settle" (length result.allocationSettleResults == 2 && all settled result.allocationSettleResults)
+
+-- | Move one amount between the counterparties: allocate both sides through
+-- the pinned allocation factory and settle them as one batch.
+transfer : Registry -> Token.SettlementInfo -> Text -> Party -> Party -> Decimal -> Time -> [ContractId Holding.Holding] -> TransferArgs -> Update ()
+transfer registry settlement legId sender receiver amount deadline inputHoldingCids args = do
+  let instrument = registry.instrument
+  senderCid <- allocate registry settlement (sendSpec instrument legId sender receiver amount deadline) inputHoldingCids args.sendArgs
+  receiverCid <- allocate registry settlement (receiveSpec instrument legId sender receiver amount deadline) [] args.receiveArgs
+  settle registry settlement (transferLeg instrument legId sender receiver amount) senderCid receiverCid args.settleArgs
+
+-- | Registry choice context for each call of one transfer. Each registry
+-- serves its own context per call, so they are passed separately.
+data TransferArgs = TransferArgs
   with
-    issuer : Party
+    sendArgs : ExtraArgs
+    receiveArgs : ExtraArgs
+    settleArgs : ExtraArgs
+  deriving (Eq, Show)
+
+-- | The lender's terms, before funding. Created and funded in one command
+-- (create-and-exercise), so an offer only ever exists with its principal
+-- already committed.
+template TokenOfferRequest
+  with
     lender : Party
     borrower : Party
     regulator : Party
     valuationAgent : Party
-    valuationStreamId : ContractId ValuationStream
-    coinAdmin : Party
+    principalRegistry : Registry
+    collateralRegistry : Registry
     principal : Decimal
     interest : Decimal
     collateralQuantity : Decimal
@@ -816,72 +862,172 @@ template CoinLoanOffer
     liquidationThresholdLtv : Decimal
     marginCallWindowSeconds : Int
     settlementRef : Text
-    -- Appended in 0.9.0; None on offers created by earlier versions.
-    expiresAt : Optional Time
+    expiresAt : Time
   where
-    signatory issuer, lender
+    signatory lender
+
+    -- | Check the terms on a fresh mark and commit the principal in an
+    -- allocation that only lender and borrower together can settle or cancel.
+    choice FundTokenOffer : ContractId TokenLoanOffer
+      with
+        valuationCid : ContractId CollateralValuation
+        inputHoldingCids : [ContractId Holding.Holding]
+        extraArgs : ExtraArgs
+      controller lender
+      do
+        validateOfferTerms lender borrower regulator principal interest collateralQuantity maturity (Some expiresAt)
+        mark <- fetch valuationCid
+        unitPrice <- checkedPrice valuationAgent lender borrower regulator collateralRegistry.instrument.id mark.streamId valuationCid
+        assertMsg "offer LTV must be below the liquidation threshold"
+          (ltvBelow liquidationThresholdLtv principal collateralQuantity unitPrice)
+        let settlementAnchor = coerceContractId self
+        fundingAllocationCid <- allocate principalRegistry (loanSettlement lender borrower settlementAnchor (fundingRef settlementRef))
+          (fundingSpec principalRegistry.instrument lender borrower principal expiresAt) inputHoldingCids extraArgs
+        create TokenLoanOffer with
+          lender; borrower; regulator; valuationAgent
+          valuationStreamId = mark.streamId
+          principalRegistry; collateralRegistry
+          principal; interest; collateralQuantity; maturity
+          liquidationThresholdLtv; marginCallWindowSeconds; settlementRef; settlementAnchor; expiresAt
+          fundingAllocationCid
+
+fundingSpec : Instrument -> Party -> Party -> Decimal -> Time -> Token.AllocationSpecification
+fundingSpec instrument lender borrower principal expiresAt = sendSpec instrument "principal" lender borrower principal expiresAt
+
+-- | A funded offer to one borrower. The principal stays committed until the
+-- offer expires; the lender, its only signatory, can archive the offer to stop
+-- acceptance, but recovers the principal only after expiry.
+template TokenLoanOffer
+  with
+    lender : Party
+    borrower : Party
+    regulator : Party
+    valuationAgent : Party
+    valuationStreamId : ContractId ValuationStream
+    principalRegistry : Registry
+    collateralRegistry : Registry
+    principal : Decimal
+    interest : Decimal
+    collateralQuantity : Decimal
+    maturity : Time
+    liquidationThresholdLtv : Decimal
+    marginCallWindowSeconds : Int
+    settlementRef : Text
+    settlementAnchor : AnyContractId
+    expiresAt : Time
+    fundingAllocationCid : ContractId Token.Allocation
+  where
+    signatory lender
     observer borrower, regulator
 
     ensure principal > 0.0 && interest >= 0.0 && collateralQuantity > 0.0
       && liquidationThresholdLtv > 0.0 && liquidationThresholdLtv <= 100.0
       && marginCallWindowSeconds >= 60 && marginCallWindowSeconds <= 86400
-      && lender /= borrower && settlementRef /= ""
+      && lender /= borrower && settlementRef /= "" && expiresAt <= maturity
       && valuationAgent /= lender && valuationAgent /= borrower && valuationAgent /= regulator
-      && issuer /= lender && issuer /= borrower && issuer /= regulator && issuer /= valuationAgent
-      && coinAdmin /= lender && coinAdmin /= borrower
+      && registryIndependent lender borrower principalRegistry && registryIndependent lender borrower collateralRegistry
 
-    -- | In one transaction: lock the borrower's Canton Coin in a committed
-    -- allocation executed jointly by lender and borrower, verify that the
-    -- registry admin signed exactly that lock, recheck LTV on a fresh CC mark,
-    -- deliver the principal, and open the loan. Offers created by 0.9.0 get
-    -- the joint lock too: an offer carries no allocation yet.
-    choice AcceptCoin : ContractId CoinLoan
+    -- | In one transaction: recheck LTV on a fresh mark, verify the funding is
+    -- the registry's own committed allocation for exactly these terms, lock
+    -- the borrower's collateral, and settle the principal to the borrower.
+    choice AcceptTokenOffer : ContractId TokenLoan
       with
         valuationCid : ContractId CollateralValuation
-        allocationFactoryCid : ContractId Instr.AllocationFactory
-        inputHoldingCids : [ContractId Holding.Holding]
-        extraArgs : ExtraArgs
+        collateralHoldingCids : [ContractId Holding.Holding]
+        lockArgs : ExtraArgs
+        receiveArgs : ExtraArgs
+        settleArgs : ExtraArgs
       controller borrower
       do
-        assertOfferLive maturity expiresAt
-        unitPrice <- checkedPrice valuationAgent lender borrower regulator coinAsset valuationStreamId valuationCid
+        assertOfferLive maturity (Some expiresAt)
+        unitPrice <- checkedPrice valuationAgent lender borrower regulator collateralRegistry.instrument.id valuationStreamId valuationCid
         assertMsg "acceptance LTV must be below the liquidation threshold"
           (ltvBelow liquidationThresholdLtv principal collateralQuantity unitPrice)
-        let executors = coinLoanExecutors lender borrower
-        allocationCid <- allocateCoin allocationFactoryCid coinAdmin (coinSettlement executors settlementRef)
-          (coinAllocationSpec coinAdmin borrower True (coinCollateralLeg Token.SenderSide lender collateralQuantity) maturity)
-          inputHoldingCids extraArgs
-        _ <- create CashHolding with issuer; owner = borrower; amount = principal
-        create CoinLoan with
-          issuer; lender; borrower; regulator; valuationAgent; valuationStreamId; coinAdmin
-          principal; interest; collateralQuantity; maturity; liquidationThresholdLtv
-          marginCallWindowSeconds; settlementRef; allocationCid
+        let funding = loanSettlement lender borrower settlementAnchor (fundingRef settlementRef)
+            principalInstrument = principalRegistry.instrument
+        checkAllocation fundingAllocationCid principalInstrument funding
+          (fundingSpec principalInstrument lender borrower principal expiresAt)
+        lockCid <- allocate collateralRegistry (loanSettlement lender borrower settlementAnchor (collateralRef settlementRef))
+          (lockSpec collateralRegistry.instrument lender borrower collateralQuantity maturity)
+          collateralHoldingCids lockArgs
+        receiptCid <- allocate principalRegistry funding
+          (receiveSpec principalInstrument "principal" lender borrower principal expiresAt) [] receiveArgs
+        settle principalRegistry funding (transferLeg principalInstrument "principal" lender borrower principal)
+          fundingAllocationCid receiptCid settleArgs
+        create TokenLoan with
+          lender; borrower; regulator; valuationAgent; valuationStreamId
+          principalRegistry; collateralRegistry
+          principal; interest; collateralQuantity; maturity
+          liquidationThresholdLtv; marginCallWindowSeconds; settlementRef; settlementAnchor; lockCid
           marginCall = None
-          amountRepaid = None
-          settlementExecutors = Some executors
+          amountRepaid = 0.0
+          payments = 0
 
-    choice WithdrawCoinOffer : ContractId CashHolding
-      controller lender
-      do
-        create CashHolding with issuer; owner = lender; amount = principal
-
-    -- | Borrower declines; the escrowed principal returns to the lender. No
-    -- Canton Coin was locked yet, so nothing else needs releasing.
-    choice RejectCoinOffer : ContractId CashHolding
+    -- | Borrower declines; the executors cancel the funding and the principal
+    -- returns to the lender.
+    choice RejectTokenOffer : ()
+      with
+        cancelArgs : ExtraArgs
       controller borrower
       do
-        create CashHolding with issuer; owner = lender; amount = principal
+        cancelAllocation fundingAllocationCid principalRegistry.instrument
+          (loanSettlement lender borrower settlementAnchor (fundingRef settlementRef)) cancelArgs
 
--- | Open loan whose collateral is a committed Canton Coin allocation.
-template CoinLoan
+    -- | The principal is committed until the offer expires; after that the
+    -- lender withdraws
+    -- the funding, which the registry now allows its authorizer alone.
+    choice WithdrawTokenOffer : ()
+      with
+        withdrawArgs : ExtraArgs
+      controller lender
+      do
+        now <- getTime
+        assertMsg "the funding is committed until the offer expires" (now > expiresAt)
+        _ <- checkSettlement fundingAllocationCid principalRegistry.instrument
+          (loanSettlement lender borrower settlementAnchor (fundingRef settlementRef))
+        result <- exercise fundingAllocationCid Token.Allocation_Withdraw with
+          actors = [lender]
+          extraArgs = withdrawArgs
+        case result.output of
+          Token.AllocationResult_Withdrawn -> pure ()
+          _ -> abort "funding allocation was not withdrawn"
+
+-- | A registry admin must be neither counterparty: it would otherwise sign
+-- allocations and transfers on its own behalf.
+registryIndependent : Party -> Party -> Registry -> Bool
+registryIndependent lender borrower registry =
+  registry.instrument.admin /= lender && registry.instrument.admin /= borrower && registry.instrument.id /= ""
+
+lockSpec : Instrument -> Party -> Party -> Decimal -> Time -> Token.AllocationSpecification
+lockSpec instrument lender borrower quantity maturity = sendSpec instrument "collateral" borrower lender quantity (lockDeadline maturity)
+
+-- | The lender's receiving side of a liquidation.
+seizureSpec : Instrument -> Party -> Party -> Decimal -> Time -> Token.AllocationSpecification
+seizureSpec instrument lender borrower quantity maturity = receiveSpec instrument "collateral" borrower lender quantity (lockDeadline maturity)
+
+-- | Cancel with the executors' authority, after re-verifying that the
+-- allocation is the registry's own.
+cancelAllocation : ContractId Token.Allocation -> Instrument -> Token.SettlementInfo -> ExtraArgs -> Update ()
+cancelAllocation allocationCid instrument settlement extraArgs = do
+  _ <- checkSettlement allocationCid instrument settlement
+  result <- exercise allocationCid Token.Allocation_Cancel with
+    actors = settlement.executors
+    extraArgs
+  case result.output of
+    Token.AllocationResult_Cancelled -> pure ()
+    _ -> abort "allocation was not cancelled"
+
+-- | Open loan: the principal has been paid out and the collateral is locked
+-- in a committed allocation that lender and borrower execute together.
+template TokenLoan
   with
-    issuer : Party
     lender : Party
     borrower : Party
     regulator : Party
     valuationAgent : Party
     valuationStreamId : ContractId ValuationStream
-    coinAdmin : Party
+    principalRegistry : Registry
+    collateralRegistry : Registry
     principal : Decimal
     interest : Decimal
     collateralQuantity : Decimal
@@ -889,22 +1035,22 @@ template CoinLoan
     liquidationThresholdLtv : Decimal
     marginCallWindowSeconds : Int
     settlementRef : Text
-    allocationCid : ContractId Token.Allocation
+    settlementAnchor : AnyContractId
+    lockCid : ContractId Token.Allocation
     marginCall : Optional MarginCallDetails
-    amountRepaid : Optional Decimal
-    -- Appended in 0.10.0: the executors of the lock, Some [lender, borrower].
-    -- None on loans opened by 0.9.0, whose lock the lender executes alone.
-    settlementExecutors : Optional [Party]
+    amountRepaid : Decimal
+    -- Payments settled so far; numbers each payment's settlement id.
+    payments : Int
   where
-    signatory issuer, lender, borrower
+    signatory lender, borrower
     observer regulator
 
     ensure principal > 0.0 && interest >= 0.0 && collateralQuantity > 0.0
       && liquidationThresholdLtv > 0.0 && liquidationThresholdLtv <= 100.0
       && lender /= borrower && settlementRef /= ""
-      && repaidTotal amountRepaid >= 0.0 && repaidTotal amountRepaid < principal + interest
+      && amountRepaid >= 0.0 && amountRepaid < principal + interest && payments >= 0
 
-    choice IssueCoinMarginCall : ContractId CoinLoan
+    choice IssueTokenMarginCall : ContractId TokenLoan
       with
         valuationCid : ContractId CollateralValuation
       controller lender
@@ -912,16 +1058,16 @@ template CoinLoan
         now <- getTime
         assertMsg "cannot issue a margin call at or after maturity" (now < maturity)
         assertMsg "a margin call is already open" (marginCall == None)
-        unitPrice <- checkedPrice valuationAgent lender borrower regulator coinAsset valuationStreamId valuationCid
+        unitPrice <- markOf this valuationCid
         assertMsg "margin call requires an LTV breach"
-          (ltvAtOrAbove liquidationThresholdLtv (outstandingPrincipal principal interest amountRepaid) collateralQuantity unitPrice)
+          (ltvAtOrAbove liquidationThresholdLtv (outstandingPrincipal principal interest (Some amountRepaid)) collateralQuantity unitPrice)
         let call = MarginCallDetails with
               issuedAt = now
               deadline = addRelTime now (seconds marginCallWindowSeconds)
               unitPrice
         create this with marginCall = Some call
 
-    choice ResolveCoinMarginCall : ContractId CoinLoan
+    choice ResolveTokenMarginCall : ContractId TokenLoan
       with
         valuationCid : ContractId CollateralValuation
       controller borrower
@@ -929,23 +1075,25 @@ template CoinLoan
         now <- getTime
         assertMsg "cannot resolve a margin call at or after maturity" (now < maturity)
         assertMsg "no margin call is open" (marginCall /= None)
-        unitPrice <- checkedPrice valuationAgent lender borrower regulator coinAsset valuationStreamId valuationCid
+        unitPrice <- markOf this valuationCid
         assertMsg "collateral remains below the required value"
-          (ltvBelow liquidationThresholdLtv (outstandingPrincipal principal interest amountRepaid) collateralQuantity unitPrice)
+          (ltvBelow liquidationThresholdLtv (outstandingPrincipal principal interest (Some amountRepaid)) collateralQuantity unitPrice)
         create this with marginCall = None
 
-    choice PartialRepayCoin : ContractId CoinLoan
+    -- | Pay part of the balance. During a margin call the payment must bring
+    -- LTV back under the threshold, and then clears the call.
+    choice PayDownToken : ContractId TokenLoan
       with
-        paymentCid : ContractId CashHolding
+        amount : Decimal
+        paymentHoldingCids : [ContractId Holding.Holding]
+        args : TransferArgs
         valuationCid : Optional (ContractId CollateralValuation)
       controller borrower
       do
         now <- getTime
         assertMsg "cannot pay down at or after maturity" (now < maturity)
-        cash <- fetch paymentCid
-        assertMsg "payment issuer mismatch" (cash.issuer == issuer)
-        assertMsg "payment cash must be owned by the borrower" (cash.owner == borrower)
-        let paid = repaidTotal amountRepaid + cash.amount
+        assertMsg "payment must be positive" (amount > 0.0)
+        let paid = amountRepaid + amount
         assertMsg "a partial payment must be less than the outstanding balance; use Repay to settle"
           (paid < principal + interest)
         cured <- case marginCall of
@@ -954,53 +1102,37 @@ template CoinLoan
             markCid <- case valuationCid of
               None -> abort "a fresh valuation is required to pay down during a margin call"
               Some markCid -> pure markCid
-            unitPrice <- checkedPrice valuationAgent lender borrower regulator coinAsset valuationStreamId markCid
+            unitPrice <- markOf this markCid
             assertMsg "payment must restore LTV below the threshold while a margin call is open"
               (ltvBelow liquidationThresholdLtv (outstandingPrincipal principal interest (Some paid)) collateralQuantity unitPrice)
             pure True
-        archive paymentCid
-        _ <- create CashHolding with issuer; owner = lender; amount = cash.amount
+        payLender this amount paymentHoldingCids args
         create this with
-          amountRepaid = Some paid
+          amountRepaid = paid
+          payments = payments + 1
           marginCall = if cured then None else marginCall
 
-    -- | Settle the outstanding balance in cash; the executors' authority,
-    -- carried by this contract, cancels the allocation and the coin unlocks.
-    choice RepayCoin : ContractId LoanClosed
+    -- | Pay the outstanding balance and, in the same transaction, cancel the
+    -- collateral lock so the collateral returns to the borrower.
+    choice RepayToken : ContractId TokenLoanClosed
       with
-        repaymentCid : ContractId CashHolding
-        cancelExtraArgs : ExtraArgs
+        paymentHoldingCids : [ContractId Holding.Holding]
+        args : TransferArgs
+        cancelArgs : ExtraArgs
       controller borrower
       do
-        let repayment = principal + interest - repaidTotal amountRepaid
-        cash <- fetch repaymentCid
-        assertMsg "repayment issuer mismatch" (cash.issuer == issuer)
-        assertMsg "repayment cash must be owned by the borrower" (cash.owner == borrower)
-        assertMsg "repayment amount mismatch" (cash.amount == repayment)
-        archive repaymentCid
-        _ <- create CashHolding with issuer; owner = lender; amount = repayment
-        releaseCoin this cancelExtraArgs
-        closeCoinLoan this "Repaid" True (Some (principal + interest)) None
-
-    -- | Lender prepares the receiving side of a liquidation: an uncommitted
-    -- allocation that credits the lender when the batch settles.
-    nonconsuming choice PrepareCoinReceipt : ContractId Token.Allocation
-      with
-        allocationFactoryCid : ContractId Instr.AllocationFactory
-        extraArgs : ExtraArgs
-      controller lender
-      do
-        allocateCoin allocationFactoryCid coinAdmin (coinSettlement (coinExecutorsOf this) settlementRef)
-          (coinReceiptSpec this) [] extraArgs
+        let owed = principal + interest - amountRepaid
+        payLender this owed paymentHoldingCids args
+        releaseCollateral this cancelArgs
+        closeTokenLoan this "Repaid" True (principal + interest) None
 
     -- | After an expired call, on a fresh mark that still breaches, the locked
-    -- Canton Coin settles to the lender.
-    choice LiquidateCoin : ContractId LoanClosed
+    -- collateral settles to the lender.
+    choice LiquidateToken : ContractId TokenLoanClosed
       with
         valuationCid : ContractId CollateralValuation
-        settlementFactoryCid : ContractId Token.SettlementFactory
-        receiptAllocationCid : ContractId Token.Allocation
-        extraArgs : ExtraArgs
+        receiveArgs : ExtraArgs
+        settleArgs : ExtraArgs
       controller lender
       do
         call <- case marginCall of
@@ -1008,121 +1140,182 @@ template CoinLoan
           Some call -> pure call
         now <- getTime
         assertMsg "margin call deadline has not passed" (now >= call.deadline)
-        unitPrice <- checkedPrice valuationAgent lender borrower regulator coinAsset valuationStreamId valuationCid
+        unitPrice <- markOf this valuationCid
         assertMsg "liquidation requires an LTV breach"
-          (ltvAtOrAbove liquidationThresholdLtv (outstandingPrincipal principal interest amountRepaid) collateralQuantity unitPrice)
-        settleCoin this settlementFactoryCid receiptAllocationCid extraArgs
-        closeCoinLoan this "Liquidated" False amountRepaid (Some unitPrice)
+          (ltvAtOrAbove liquidationThresholdLtv (outstandingPrincipal principal interest (Some amountRepaid)) collateralQuantity unitPrice)
+        seizeCollateral this receiveArgs settleArgs
+        closeTokenLoan this "Liquidated" False amountRepaid (Some unitPrice)
 
-    choice LiquidateCoinOverdue : ContractId LoanClosed
+    -- | An unpaid loan past maturity: the lock settles to the lender until the
+    -- lock deadline, a day after maturity.
+    choice LiquidateTokenOverdue : ContractId TokenLoanClosed
       with
-        settlementFactoryCid : ContractId Token.SettlementFactory
-        receiptAllocationCid : ContractId Token.Allocation
-        extraArgs : ExtraArgs
+        receiveArgs : ExtraArgs
+        settleArgs : ExtraArgs
       controller lender
       do
         now <- getTime
         assertMsg "loan is not past maturity" (now > maturity)
-        settleCoin this settlementFactoryCid receiptAllocationCid extraArgs
-        closeCoinLoan this "LiquidatedAtMaturity" False amountRepaid None
+        seizeCollateral this receiveArgs settleArgs
+        closeTokenLoan this "LiquidatedAtMaturity" False amountRepaid None
 
-    -- | The lender forgives the loan and releases the Canton Coin. Also used by
-    -- the demo reset so no borrower funds stay locked.
-    choice WriteOffCoin : ContractId LoanClosed
+    -- | The lender forgives the balance and releases the collateral.
+    choice WriteOffToken : ContractId TokenLoanClosed
       with
-        cancelExtraArgs : ExtraArgs
+        cancelArgs : ExtraArgs
       controller lender
       do
-        releaseCoin this cancelExtraArgs
-        closeCoinLoan this "WrittenOff" True amountRepaid None
+        releaseCollateral this cancelArgs
+        closeTokenLoan this "WrittenOff" True amountRepaid None
 
-    -- | Close a loan whose lock has lapsed (0.10.0). After the settlement
-    -- deadline (maturity + 1 day) the registry refuses to settle and the
-    -- borrower may withdraw the coin, so no other choice can close the loan.
-    -- The allocation is not touched: it may already be withdrawn. Nothing is
-    -- seized; the unpaid balance stays on the record via amountRepaid.
-    choice CloseLapsedCoinLoan : ContractId LoanClosed
+    -- | After the lock deadline the registry refuses to settle and the
+    -- borrower may withdraw the collateral, so no other choice can close the
+    -- loan. The lock is not touched: it may already be withdrawn. Nothing is
+    -- seized; the unpaid balance stays on the record.
+    choice CloseLapsedTokenLoan : ContractId TokenLoanClosed
       controller lender
       do
         now <- getTime
-        assertMsg "the collateral lock has not lapsed: settlement deadline not passed"
-          (now > coinSettlementDeadline maturity)
-        closeCoinLoan this "CollateralLapsed" True amountRepaid None
+        assertMsg "the collateral lock has not lapsed: lock deadline not passed" (now > lockDeadline maturity)
+        closeTokenLoan this "CollateralLapsed" True amountRepaid None
 
--- The lock's executors cancel it. Both are CoinLoan signatories, so this
--- choice body carries their authority; the lock is re-verified first so that
--- the authority only ever reaches the registry's own allocation.
-releaseCoin : CoinLoan -> ExtraArgs -> Update ()
-releaseCoin loan extraArgs = do
-  let executors = coinExecutorsOf loan
-  _ <- checkCoinSettlement loan.allocationCid loan.coinAdmin (coinSettlement executors loan.settlementRef)
-  result <- exercise loan.allocationCid Token.Allocation_Cancel with
-    actors = executors
-    extraArgs
-  case result.output of
-    Token.AllocationResult_Cancelled -> pure ()
-    _ -> abort "collateral allocation was not cancelled"
+    -- | Swap in new factories for the same instruments, for example after
+    -- registry maintenance archived the pinned ones, which would otherwise
+    -- block repayment. Both counterparties authorize it (RegistryChange).
+    choice ReplaceRegistries : ContractId TokenLoan
+      with
+        newPrincipalRegistry : Registry
+        newCollateralRegistry : Registry
+      controller lender, borrower
+      do
+        assertMsg "a registry change cannot change the instruments"
+          (newPrincipalRegistry.instrument == principalRegistry.instrument
+            && newCollateralRegistry.instrument == collateralRegistry.instrument)
+        forA_ [newPrincipalRegistry, newCollateralRegistry] (checkFactories lender)
+        create this with principalRegistry = newPrincipalRegistry; collateralRegistry = newCollateralRegistry
 
--- Both allocations are verified as the registry's own before the batch runs.
--- The settlement factory cannot be: only its admin is a stakeholder, so Daml
--- cannot fetch it, and PublicFetch reports whatever its code says. The
--- executors' authority therefore reaches the factory the lender names; see
--- docs/AUDIT-TRIAGE.md (0.10.0, residual R-1).
-settleCoin : CoinLoan -> ContractId Token.SettlementFactory -> ContractId Token.Allocation -> ExtraArgs -> Update ()
-settleCoin loan settlementFactoryCid receiptAllocationCid extraArgs = do
-  let executors = coinExecutorsOf loan
-      settlement = coinSettlement executors loan.settlementRef
-  factoryView <- exercise settlementFactoryCid Token.SettlementFactory_PublicFetch with actors = [loan.lender]
-  assertMsg "settlement factory admin must be the Canton Coin admin" (factoryView.admin == loan.coinAdmin)
-  _ <- checkCoinSettlement loan.allocationCid loan.coinAdmin settlement
-  checkCoinAllocation receiptAllocationCid loan.coinAdmin settlement (coinReceiptSpec loan)
-  result <- exercise settlementFactoryCid Token.SettlementFactory_SettleBatch with
-    settlement
-    transferLegs =
-      [ Token.TransferLeg with
-          transferLegId = "collateral"
-          sender = coinAccount loan.borrower
-          receiver = coinAccount loan.lender
-          amount = loan.collateralQuantity
-          instrumentId = coinInstrumentId
-          meta = emptyMetadata
-      ]
-    allocations =
-      [ Token.FinalizedAllocation with allocationCid = loan.allocationCid; extraTransferLegSides = []; nextIterationFunding = None
-      , Token.FinalizedAllocation with allocationCid = receiptAllocationCid; extraTransferLegSides = []; nextIterationFunding = None
-      ]
-    actors = executors
-    extraArgs
-  let settled r = case r.output of
-        Token.AllocationResult_Settled _ -> True
-        _ -> False
-  assertMsg "collateral settlement did not settle" (all settled result.allocationSettleResults)
+-- | One counterparty's proposal to replace a loan's pinned factories; the
+-- other accepts it, which supplies both authorities to ReplaceRegistries.
+template RegistryChange
+  with
+    proposer : Party
+    counterparty : Party
+    loanCid : ContractId TokenLoan
+    newPrincipalRegistry : Registry
+    newCollateralRegistry : Registry
+  where
+    signatory proposer
+    observer counterparty
+    ensure proposer /= counterparty
 
--- A CIP-112 allocation settles exactly its one fixed collateral leg, so a Canton
--- Coin liquidation always transfers the whole locked quantity: the record says
--- so explicitly rather than implying a surplus refund.
-closeCoinLoan : CoinLoan -> Text -> Bool -> Optional Decimal -> Optional Decimal -> Update (ContractId LoanClosed)
-closeCoinLoan loan reason collateralReleased amountRepaid liquidationUnitPrice = do
+    choice AcceptRegistryChange : ContractId TokenLoan
+      controller counterparty
+      do
+        exercise loanCid ReplaceRegistries with newPrincipalRegistry; newCollateralRegistry
+
+    choice RejectRegistryChange : ()
+      controller counterparty
+      do
+        pure ()
+
+    choice WithdrawRegistryChange : ()
+      controller proposer
+      do
+        pure ()
+
+-- | Both factories of a registry must answer for its instrument admin.
+checkFactories : Party -> Registry -> Update ()
+checkFactories actor registry = do
+  allocationView <- exercise registry.allocationFactory Instr.AllocationFactory_PublicFetch with actors = [actor]
+  settlementView <- exercise registry.settlementFactory Token.SettlementFactory_PublicFetch with actors = [actor]
+  assertMsg "registry factories must answer for the instrument admin"
+    (allocationView.admin == registry.instrument.admin && settlementView.admin == registry.instrument.admin)
+
+markOf : TokenLoan -> ContractId CollateralValuation -> Update Decimal
+markOf loan = checkedPrice loan.valuationAgent loan.lender loan.borrower loan.regulator
+  loan.collateralRegistry.instrument.id loan.valuationStreamId
+
+payLender : TokenLoan -> Decimal -> [ContractId Holding.Holding] -> TransferArgs -> Update ()
+payLender loan amount paymentHoldingCids args = do
   now <- getTime
-  create LoanClosed with
-    issuer = loan.issuer
+  transfer loan.principalRegistry (loanSettlement loan.lender loan.borrower loan.settlementAnchor (paymentRef loan.settlementRef (loan.payments + 1)))
+    "payment" loan.borrower loan.lender amount (addRelTime now paymentWindow) paymentHoldingCids args
+
+lockSettlement : TokenLoan -> Token.SettlementInfo
+lockSettlement loan = loanSettlement loan.lender loan.borrower loan.settlementAnchor (collateralRef loan.settlementRef)
+
+releaseCollateral : TokenLoan -> ExtraArgs -> Update ()
+releaseCollateral loan = cancelAllocation loan.lockCid loan.collateralRegistry.instrument (lockSettlement loan)
+
+-- A committed allocation settles exactly its one fixed leg, so liquidation
+-- always transfers the whole locked quantity; the close record says so rather
+-- than implying a surplus refund.
+seizeCollateral : TokenLoan -> ExtraArgs -> ExtraArgs -> Update ()
+seizeCollateral loan receiveArgs settleArgs = do
+  let instrument = loan.collateralRegistry.instrument
+      settlement = lockSettlement loan
+  _ <- checkSettlement loan.lockCid instrument settlement
+  receiptCid <- allocate loan.collateralRegistry settlement
+    (seizureSpec instrument loan.lender loan.borrower loan.collateralQuantity loan.maturity) [] receiveArgs
+  settle loan.collateralRegistry settlement (transferLeg instrument "collateral" loan.borrower loan.lender loan.collateralQuantity)
+    loan.lockCid receiptCid settleArgs
+
+closeTokenLoan : TokenLoan -> Text -> Bool -> Decimal -> Optional Decimal -> Update (ContractId TokenLoanClosed)
+closeTokenLoan loan reason collateralReleased amountRepaid liquidationUnitPrice = do
+  now <- getTime
+  create TokenLoanClosed with
     lender = loan.lender
     borrower = loan.borrower
     regulator = loan.regulator
     valuationAgent = loan.valuationAgent
     valuationStreamId = loan.valuationStreamId
+    principalInstrument = loan.principalRegistry.instrument
+    collateralInstrument = loan.collateralRegistry.instrument
     principal = loan.principal
     interest = loan.interest
-    collateralAsset = coinAsset
     collateralQuantity = loan.collateralQuantity
     maturity = loan.maturity
+    settlementRef = loan.settlementRef
     reason
     collateralReleased
     amountRepaid
-    closedAt = Some now
+    closedAt = now
     liquidationUnitPrice
-    collateralSeized = if collateralReleased then None else Some loan.collateralQuantity
-    collateralReturned = Some (if collateralReleased then loan.collateralQuantity else 0.0)
+    collateralSeized = if collateralReleased then 0.0 else loan.collateralQuantity
+    collateralReturned = if collateralReleased then loan.collateralQuantity else 0.0
+
+-- | Settlement record of a closed token loan, kept by both counterparties.
+template TokenLoanClosed
+  with
+    lender : Party
+    borrower : Party
+    regulator : Party
+    valuationAgent : Party
+    valuationStreamId : ContractId ValuationStream
+    principalInstrument : Instrument
+    collateralInstrument : Instrument
+    principal : Decimal
+    interest : Decimal
+    collateralQuantity : Decimal
+    maturity : Time
+    settlementRef : Text
+    reason : Text
+    collateralReleased : Bool
+    amountRepaid : Decimal
+    closedAt : Time
+    liquidationUnitPrice : Optional Decimal
+    collateralSeized : Decimal
+    collateralReturned : Decimal
+  where
+    signatory lender, borrower
+    observer regulator
+
+    -- | Both counterparties must agree, so neither can erase the other's
+    -- proof of settlement alone.
+    choice DismissTokenLoanClosed : ()
+      controller lender, borrower
+      do
+        pure ()
 
 -- ---------------------------------------------------------------------------
 -- Origination and close-out rules added in 0.9.0 (docs/AUDIT-TRIAGE.md).

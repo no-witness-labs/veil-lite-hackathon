@@ -147,3 +147,59 @@ After a demo reset left no active contracts on `fbdd86ab…`, the node operator 
 0.9.0 DAR from hackcanton-01; a package listing the same day shows only `17fcd804…`
 (0.10.0). No new contract can be created or exercised under 0.9.0, and no lender-only
 (`settlementExecutors = None`) Canton Coin loan remains on the node.
+
+# 1.0.0: Token Standard loans (LocalNet; not upgrade-compatible)
+
+1.0.0 is a clean package for LocalNet. It drops the upgrade check against
+0.9.0/0.10.0 and replaces `CoinLoanOffer`/`CoinLoan` with
+`TokenOfferRequest`/`TokenLoanOffer`/`TokenLoan`/`TokenLoanClosed`. Principal
+and collateral are both registry instruments (for example USDCx against CBTC),
+and every movement is an allocation executed by lender and borrower together:
+
+| Step | What settles | Allocations |
+|---|---|---|
+| `FundTokenOffer` | nothing yet | lender's committed principal allocation, deadline = offer expiry (`<ref>/funding`) |
+| `AcceptTokenOffer` | principal lender → borrower | funding + borrower's receipt; the borrower's committed collateral lock is created (`<ref>/collateral`, deadline maturity + 1 day) |
+| `PayDownToken`, `RepayToken` | payment borrower → lender | borrower's payment + lender's receipt (`<ref>/payment/<n>`); repay also cancels the lock |
+| `LiquidateToken*` | whole lock borrower → lender | lock + lender's receipt |
+
+How the 0.10.0 residual items change, after a review of `9ce901b`:
+
+- **R-1 Settlement factory authenticity: narrowed, not closed.** Both registries'
+  allocation and settlement factories are pinned on the offer
+  (`principalRegistry`, `collateralRegistry`) and every use checks
+  `PublicFetch` against the instrument admin. Only `ReplaceRegistries`, which
+  needs both counterparties (one proposes a `RegistryChange`, the other
+  accepts), can swap them, and never the instruments. `PublicFetch` still
+  cannot tell a forged factory from a real one, so each side's client must check
+  the contract ids against the registry's published factories before accepting
+  an offer or a change.
+- **Pinned factories archived by the registry.** Without a replacement the
+  borrower could not repay while the lender could still liquidate at maturity.
+  `RegistryChange` restores repayment when both agree; a lender who refuses can
+  still liquidate at maturity. That remains a trust assumption.
+- **Duplicate `settlementRef`: closed.** Every settlement carries
+  `cid = Some settlementAnchor`, the archived `TokenOfferRequest` the offer was
+  funded from, so two loans never share a settlement identity even with the
+  same reference, and an offer cannot pay out another offer's funding.
+- **Allocation expiry.** A registry may expire an allocation before its
+  settlement deadline (Amulet caps it with a TTL), after which the authorizer
+  can take the holdings back alone. `checkAllocation` refuses a funding or lock
+  whose `expiresAt` is earlier than its deadline, so a loan longer than the
+  registry's TTL cannot be opened. Renewing a lock is future work.
+- **Offers are committed, not firm.** The funding cannot be withdrawn before the
+  offer expires and only both executors can cancel it, but the lender, the
+  offer's only signatory, can archive the offer and so stop acceptance; the
+  principal then returns only after expiry.
+- **Unchanged:** a liquidation transfers the whole lock (no surplus, as for
+  0.10.0 coin loans). The mocks in `test/daml/Veil/TokenMocks.daml` now require
+  every leg of a batch to have exactly one sending and one receiving allocation,
+  and can cap expiry with a TTL, but they carry no balances: tests check which
+  allocations exist and settle, not debits and credits. Real registries
+  (Amulet, the DA Registry Utility for USDCx and CBTC) are not yet exercised.
+
+Tests: `test/daml/Veil/TokenLoanTest.daml` (lifecycle, margin call and
+liquidation, cure by pay-down, overdue and lapse, write-off, committed offers
+and lender archive, offer guards, forged funding, lock needs both executors and
+a bilateral batch, allocation expiry, registry replacement, unique settlement
+anchors).
