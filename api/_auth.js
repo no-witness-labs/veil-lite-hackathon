@@ -181,7 +181,7 @@ function knownParties(env = process.env) {
 }
 
 function packageRef(env = process.env) {
-  return envValue('VEIL_PACKAGE_REF', env) || '#veil-lite'
+  return envValue('VEIL_PACKAGE_REF', env) || '#veil'
 }
 
 function roleParty(auth, config) {

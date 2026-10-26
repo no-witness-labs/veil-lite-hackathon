@@ -24,7 +24,7 @@ and URLs are printed by `python3 scripts/bootstrap-devnet.py`.
 | `VEIL_OIDC_CLIENT_ID` | no | `web-app-ui-hackcanton-01-devnet` |
 | `VEIL_LEDGER_USER_ID` | no | your ledger user ID (JWT subject) |
 | `VEIL_UPSTREAM_REFRESH_TOKEN` | **yes** | `refresh_token` from `.local/devnet/tokens.json` |
-| `VEIL_PACKAGE_REF` | no | `#veil-lite` |
+| `VEIL_PACKAGE_REF` | no | `#veil` |
 | `VEIL_REGISTRY_URL` | no | `https://validator-api-http.validator.hackcanton-01.devnet.naas.noders.services/api/validator/v0/scan-proxy` (Canton Coin registry; enables CC collateral) |
 | `VEIL_PARTY_ISSUER`, `_LENDER`, `_BORROWER`, `_REGULATOR`, `_VALUER`, `_OUTSIDER` | no | full party IDs |
 | `VEIL_AUTH_PRIVATE_KEY` | **yes** | PEM that signs hosted role tokens |

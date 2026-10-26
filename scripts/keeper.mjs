@@ -38,7 +38,7 @@ const USAGE = `Usage: node scripts/keeper.mjs [--once] [--execute] [--interval S
   --valuer PARTY         only trust marks from this valuer [VEIL_PARTY_VALUER]
   --issuer PARTY         only handle loans of this issuer  [VEIL_PARTY_ISSUER]
   --user-id ID           ledger user id (default: token sub) [VEIL_LEDGER_USER_ID]
-  --package-ref REF      Daml package reference (default #veil-lite) [VEIL_PACKAGE_REF]
+  --package-ref REF      Daml package reference (default #veil) [VEIL_PACKAGE_REF]
   --state-dir DIR        command journal + audit log (default .local/keeper) [VEIL_KEEPER_STATE_DIR]
   --keeper-id NAME       this keeper's identity as proposer (default keeper) [VEIL_KEEPER_ID]
   --require-approval N   liquidations need N approvals before submission (default 0 = off)
@@ -111,7 +111,7 @@ export function parseConfig(argv, env = process.env) {
     valuer: trimmed(cli.valuer ?? env.VEIL_PARTY_VALUER),
     issuer: trimmed(cli.issuer ?? env.VEIL_PARTY_ISSUER),
     userId: trimmed(cli.userId ?? env.VEIL_LEDGER_USER_ID),
-    packageRef: trimmed(cli.packageRef ?? env.VEIL_PACKAGE_REF) || '#veil-lite',
+    packageRef: trimmed(cli.packageRef ?? env.VEIL_PACKAGE_REF) || '#veil',
     intervalMs: number(cli.interval, 30, '--interval') * 1000,
     skewMs: number(cli.skewSeconds, DEFAULT_OPTIONS.skewMs / 1000, '--skew-seconds') * 1000,
     settlementWarnHours: number(cli.warnHours, DEFAULT_OPTIONS.settlementWarnHours, '--warn-hours'),

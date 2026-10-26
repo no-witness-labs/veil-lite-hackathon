@@ -103,7 +103,7 @@ async function walletSigns(what, entity, contractId, choice, choiceArgument, chi
 //
 // A .dalf is a DamlLf Archive { payload = 3, hash = 4 }; the package id is the
 // SHA-256 of the payload, recomputed here, and the payload's LF 2 package
-// metadata names the package. veil-wallet is the DAR's main package; veil-lite
+// metadata names the package. veil-wallet is the DAR's main package; veil
 // is the version veil-wallet was compiled against, bundled in the same DAR and
 // installed by the same upload. Its contracts are the ones veil-wallet's
 // choices create, so every command below names these exact package ids.
@@ -178,16 +178,16 @@ function walletPackages(darBytes) {
   if (!mainPath || !files.has(mainPath)) throw new Error('the DAR names no main package')
   const main = dalfPackage(files.get(mainPath), mainPath)
   if (main.name !== 'veil-wallet') throw new Error(`the DAR's main package is ${main.name}, not veil-wallet`)
-  const lite = [...files].filter(([path]) => path.endsWith('.dalf')).map(([path, bytes]) => dalfPackage(bytes, path)).filter((p) => p.name === 'veil-lite')
-  if (lite.length !== 1) throw new Error(`the DAR holds ${lite.length} veil-lite packages, expected 1`)
+  const lite = [...files].filter(([path]) => path.endsWith('.dalf')).map(([path, bytes]) => dalfPackage(bytes, path)).filter((p) => p.name === 'veil')
+  if (lite.length !== 1) throw new Error(`the DAR holds ${lite.length} veil packages, expected 1`)
   return { main, lite: lite[0] }
 }
 
 // Templates by package; commands name the pinned package id, intents the package name.
 const TEMPLATES = {
   CashGrant: 'veil-wallet:Veil.Wallet.Onboarding', CollateralGrant: 'veil-wallet:Veil.Wallet.Onboarding', StreamInvite: 'veil-wallet:Veil.Wallet.Onboarding',
-  CashHolding: 'veil-lite:Veil', CollateralHolding: 'veil-lite:Veil', ValuationStream: 'veil-lite:Veil', CollateralValuation: 'veil-lite:Veil',
-  LoanOffer: 'veil-lite:Veil', Loan: 'veil-lite:Veil', LoanClosed: 'veil-lite:Veil',
+  CashHolding: 'veil:Veil', CollateralHolding: 'veil:Veil', ValuationStream: 'veil:Veil', CollateralValuation: 'veil:Veil',
+  LoanOffer: 'veil:Veil', Loan: 'veil:Veil', LoanClosed: 'veil:Veil',
 }
 let PACKAGES
 const commandTemplate = (entity) => { const [pkg, module] = TEMPLATES[entity].split(':'); return `${PACKAGES[pkg]}:${module}:${entity}` }
@@ -204,14 +204,14 @@ const createOf = (entity, createArguments, signatories, observers = [], label) =
 await step('Installing veil-wallet on participant 1')
 const dar = readFileSync(`${REPO}wallet/.daml/dist/veil-wallet-0.2.0.dar`)
 const { main: walletPkg, lite: litePkg } = walletPackages(dar)
-PACKAGES = { 'veil-wallet': walletPkg.id, 'veil-lite': litePkg.id }
+PACKAGES = { 'veil-wallet': walletPkg.id, 'veil': litePkg.id }
 if (!process.env.SKIP_DAR_UPLOAD) {
   const up = await fetch(`${J}/v2/packages`, { method: 'POST', headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/octet-stream' }, body: dar })
   if (!up.ok) throw new Error(`DAR upload → ${up.status} ${await up.text()}`)
 }
 const listed = new Set((await call('/v2/packages')).packageIds)
 for (const [name, id] of Object.entries(PACKAGES)) if (!listed.has(id)) throw new Error(`${name} ${id} is not on the participant after the upload`)
-info(`${process.env.SKIP_DAR_UPLOAD ? 'already vetted' : 'uploaded and vetted'}; the wallet pins veil-wallet ${walletPkg.version} ${walletPkg.id.slice(0, 12)}… and veil-lite ${litePkg.version} ${litePkg.id.slice(0, 12)}…`)
+info(`${process.env.SKIP_DAR_UPLOAD ? 'already vetted' : 'uploaded and vetted'}; the wallet pins veil-wallet ${walletPkg.version} ${walletPkg.id.slice(0, 12)}… and veil ${litePkg.version} ${litePkg.id.slice(0, 12)}…`)
 
 await step('Issuer, lender, valuer and regulator (ordinary parties on participant 1)')
 const existing = process.env.PARTIES_JSON ? JSON.parse(readFileSync(process.env.PARTIES_JSON, 'utf8')) : null

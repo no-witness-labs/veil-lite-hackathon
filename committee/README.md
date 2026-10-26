@@ -22,7 +22,7 @@ confirmed now but executed hours later would otherwise look fresh.
 ## Build and test
 
 ```bash
-dpm build                  # veil-lite, from the repository root
+dpm build                  # veil, from the repository root
 cd committee && dpm build
 cd test && dpm build && dpm test
 ```

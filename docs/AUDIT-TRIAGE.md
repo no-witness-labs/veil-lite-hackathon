@@ -285,9 +285,11 @@ The keeper, run against the same ledger, issued the call on a breached loan
 and liquidated it after the window.
 
 Not yet done: deployment to hackcanton-01. The node runs veil-lite 0.10.0, and
-1.0.0 is not upgrade-compatible, so it cannot be uploaded under the same
-package name. The demo issuer's USDCx also needs the reference token's DAR on
-the node.
+1.0.0 is not upgrade-compatible with it, so 1.0 is a new package, `veil`
+(templates `#veil:Veil:…`). It installs beside veil-lite without an upgrade
+check, and the hosted app switches when it is redeployed with the new default
+`VEIL_PACKAGE_REF`. The demo issuer's USDCx also needs the reference token's
+DAR on the node.
 
 Tests: `test/daml/Veil/TokenLoanTest.daml` (lifecycle, margin call and
 liquidation, cure by pay-down, overdue and lapse, write-off, committed offers

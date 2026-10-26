@@ -22,7 +22,7 @@ Veil's own contracts are unchanged.
 ## Build and test
 
 ```bash
-dpm build                 # veil-lite, from the repository root
+dpm build                 # veil, from the repository root
 cd wallet && dpm build
 cd test && dpm build && dpm test
 node --test test/wallet-verify.test.mjs   # from the repository root: the signing checks

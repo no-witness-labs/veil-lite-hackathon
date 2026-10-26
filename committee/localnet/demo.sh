@@ -16,7 +16,7 @@ VEIL_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 DECMAN_DIR="${DECMAN_DIR:?set DECMAN_DIR to your decentralization-manager checkout}"
 . "$DECMAN_DIR/hackathon/lib.sh"
 
-VEIL_DARS="$VEIL_DIR/.daml/dist/veil-lite-1.0.0.dar
+VEIL_DARS="$VEIL_DIR/.daml/dist/veil-1.0.0.dar
 $VEIL_DIR/committee/.daml/dist/veil-price-committee-0.2.0.dar"
 TBILL="Tokenized T-Bill / MMF"
 USER_ID=ledger-api-user
@@ -126,7 +126,7 @@ current_mark() {
     local end
     end=$(ledger_get "$P1" /v2/state/ledger-end | jq -r '.offset')
     canton_post "$P1" /v2/state/active-contracts "$(jq -n --arg p "$LENDER" --argjson end "$end" \
-        '{eventFormat: {filtersByParty: {($p): {cumulative: [{identifierFilter: {TemplateFilter: {value: {templateId: "#veil-lite:Veil:CollateralValuation", includeCreatedEventBlob: false}}}}]}}, verbose: false}, activeAtOffset: $end}')" \
+        '{eventFormat: {filtersByParty: {($p): {cumulative: [{identifierFilter: {TemplateFilter: {value: {templateId: "#veil:Veil:CollateralValuation", includeCreatedEventBlob: false}}}}]}}, verbose: false}, activeAtOffset: $end}')" \
         | jq -c --arg dec "$DEC_PARTY_ID" '[.[].contractEntry.JsActiveContract.createdEvent | select(.createArgument.valuationAgent == $dec) | {cid: .contractId, price: .createArgument.unitPrice}] | last'
 }
 
@@ -159,17 +159,17 @@ MARK_CID=$(printf '%s' "$MARK" | jq -r '.cid')
 
 step "Lender funds an offer priced off the committee's mark; the borrower accepts"
 CASH=$(submit "$P1" "[\"$ISSUER\",\"$LENDER\"]" '[]' "$(jq -n --arg i "$ISSUER" --arg o "$LENDER" \
-    '{CreateCommand: {templateId: "#veil-lite:Veil:CashHolding", createArguments: {issuer: $i, owner: $o, amount: "100.0"}}}')" | created CashHolding)
+    '{CreateCommand: {templateId: "#veil:Veil:CashHolding", createArguments: {issuer: $i, owner: $o, amount: "100.0"}}}')" | created CashHolding)
 COLLATERAL=$(submit "$P1" "[\"$ISSUER\",\"$BORROWER\"]" '[]' "$(jq -n --arg i "$ISSUER" --arg o "$BORROWER" --arg a "$TBILL" \
-    '{CreateCommand: {templateId: "#veil-lite:Veil:CollateralHolding", createArguments: {issuer: $i, owner: $o, asset: $a, quantity: "150.0"}}}')" | created CollateralHolding)
+    '{CreateCommand: {templateId: "#veil:Veil:CollateralHolding", createArguments: {issuer: $i, owner: $o, asset: $a, quantity: "150.0"}}}')" | created CollateralHolding)
 MATURITY=$(date -u -v+30d +%Y-%m-%dT00:00:00Z 2>/dev/null || date -u -d '+30 days' +%Y-%m-%dT00:00:00Z)
 OFFER=$(submit "$P1" "[\"$LENDER\"]" '[]' "$(jq -n --arg c "$CASH" --arg b "$BORROWER" --arg r "$REGULATOR" --arg v "$DEC_PARTY_ID" --arg m "$MARK_CID" --arg a "$TBILL" --arg mat "$MATURITY" \
-    '{ExerciseCommand: {templateId: "#veil-lite:Veil:CashHolding", contractId: $c, choice: "MakeOffer", choiceArgument: {
+    '{ExerciseCommand: {templateId: "#veil:Veil:CashHolding", contractId: $c, choice: "MakeOffer", choiceArgument: {
         borrower: $b, regulator: $r, valuationAgent: $v, valuationCid: $m, principal: "100.0", interest: "5.0",
         collateralAsset: $a, collateralQuantity: "150.0", maturity: $mat, liquidationThresholdLtv: "90.0",
         marginCallWindowSeconds: "60", expiresAt: null}}}')" | created LoanOffer)
 LOAN=$(submit "$P1" "[\"$BORROWER\"]" '[]' "$(jq -n --arg o "$OFFER" --arg c "$COLLATERAL" --arg m "$MARK_CID" \
-    '{ExerciseCommand: {templateId: "#veil-lite:Veil:LoanOffer", contractId: $o, choice: "Accept", choiceArgument: {collateralCid: $c, valuationCid: $m}}}')" | created Loan)
+    '{ExerciseCommand: {templateId: "#veil:Veil:LoanOffer", contractId: $o, choice: "Accept", choiceArgument: {collateralCid: $c, valuationCid: $m}}}')" | created Loan)
 info "loan $LOAN: 100 against 150 T-Bill units at 1.00 (LTV 66.7%)"
 
 step "Committee: node 2 proposes dropping the price to 0.62"
@@ -186,7 +186,7 @@ STRESSED=$(current_mark); info "price mark $STRESSED"
 
 step "LTV is now 107.5%: the lender issues a margin call on the committee's price"
 CALLED=$(submit "$P1" "[\"$LENDER\"]" '[]' "$(jq -n --arg l "$LOAN" --arg m "$(printf '%s' "$STRESSED" | jq -r '.cid')" \
-    '{ExerciseCommand: {templateId: "#veil-lite:Veil:Loan", contractId: $l, choice: "IssueMarginCall", choiceArgument: {valuationCid: $m}}}')")
+    '{ExerciseCommand: {templateId: "#veil:Veil:Loan", contractId: $l, choice: "IssueMarginCall", choiceArgument: {valuationCid: $m}}}')")
 printf '%s' "$CALLED" | jq '[.transaction.events[]?.CreatedEvent? // empty | select(.templateId | endswith(":Loan")) | .createArgument.marginCall]'
 
 step "Committee audit trail (node 1)"

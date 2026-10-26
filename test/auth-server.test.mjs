@@ -26,7 +26,7 @@ const partyEnv = {
   VEIL_PARTY_REGULATOR: 'Regulator::local',
   VEIL_PARTY_VALUER: 'Valuer::local',
   VEIL_PARTY_OUTSIDER: 'Outsider::local',
-  VEIL_PACKAGE_REF: '#veil-lite',
+  VEIL_PACKAGE_REF: '#veil',
 }
 
 beforeEach(() => {
@@ -98,7 +98,7 @@ function exerciseBody(actAs, readAs, userId = 'veil-lender') {
   return {
     commands: {
       commands: [{ ExerciseCommand: {
-        templateId: '#veil-lite:Veil:Loan',
+        templateId: '#veil:Veil:Loan',
         contractId: '#contract',
         choice: 'Repay',
         choiceArgument: {},
@@ -207,7 +207,7 @@ test('regulator and outsider cannot submit; ordinary users cannot create; operat
   }
 
   const lender = jwt({ sub: 'veil-lender' })
-  const create = { commands: { commands: [{ CreateCommand: { templateId: '#veil-lite:Veil:CashHolding', createArguments: {} } }], commandId: 'create', actAs: [partyEnv.VEIL_PARTY_LENDER], userId: 'veil-lender' } }
+  const create = { commands: { commands: [{ CreateCommand: { templateId: '#veil:Veil:CashHolding', createArguments: {} } }], commandId: 'create', actAs: [partyEnv.VEIL_PARTY_LENDER], userId: 'veil-lender' } }
   assertAuthError(() => authorizeLedgerRequest(req(lender, 'POST', '/v2/commands/submit-and-wait-for-transaction', create), '/v2/commands/submit-and-wait-for-transaction', create), 403, 'COMMAND_FORBIDDEN')
 
   const operator = jwt({ sub: 'veil-operator' })
@@ -224,7 +224,7 @@ test('a lender may create-and-fund its own demo-USDCx token offer, and no other 
   const fund = (sub, party, value = {}) => ({
     commands: {
       commands: [{ CreateAndExerciseCommand: {
-        templateId: '#veil-lite:Veil:TokenOfferRequest',
+        templateId: '#veil:Veil:TokenOfferRequest',
         createArguments: {
           lender: party,
           principalRegistry: { instrument: { admin: partyEnv.VEIL_PARTY_ISSUER, id: 'USDCx' } },
@@ -252,14 +252,14 @@ test('a lender may create-and-fund its own demo-USDCx token offer, and no other 
   assertAuthError(() => check('veil-lender', withTerms({ collateralRegistry: { instrument: { admin: partyEnv.VEIL_PARTY_ISSUER, id: 'USDCx' } } })), 403, 'COMMAND_FORBIDDEN')
   assertAuthError(() => check('veil-lender', withTerms({ principalRegistry: undefined })), 403, 'COMMAND_FORBIDDEN')
   assertAuthError(() => check('veil-lender', fund('veil-lender', lender, { choice: 'Archive' })), 403, 'COMMAND_FORBIDDEN')
-  assertAuthError(() => check('veil-lender', fund('veil-lender', lender, { templateId: '#veil-lite:Veil:ValuationStream', choice: 'PublishInitial' })), 403, 'COMMAND_FORBIDDEN')
+  assertAuthError(() => check('veil-lender', fund('veil-lender', lender, { templateId: '#veil:Veil:ValuationStream', choice: 'PublishInitial' })), 403, 'COMMAND_FORBIDDEN')
   const borrower = partyEnv.VEIL_PARTY_BORROWER
   assertAuthError(() => check('veil-borrower', fund('veil-borrower', borrower, { createArguments: { ...terms, lender: borrower } })), 403, 'COMMAND_FORBIDDEN')
 })
 
 test('roles may not archive contracts directly; only reset (the operator) does', () => {
   const submitPath = '/v2/commands/submit-and-wait-for-transaction'
-  const archive = (sub, party, template) => ({ commands: { commands: [{ ExerciseCommand: { templateId: `#veil-lite:Veil:${template}`, contractId: '#offer', choice: 'Archive', choiceArgument: {} } }], commandId: 'archive', actAs: [party], userId: sub } })
+  const archive = (sub, party, template) => ({ commands: { commands: [{ ExerciseCommand: { templateId: `#veil:Veil:${template}`, contractId: '#offer', choice: 'Archive', choiceArgument: {} } }], commandId: 'archive', actAs: [party], userId: sub } })
   const check = (sub, body) => authorizeLedgerRequest(req(jwt({ sub }), 'POST', submitPath, body), submitPath, body)
   // A funded token offer has the lender as its only signatory: archiving it
   // would strand the committed principal.

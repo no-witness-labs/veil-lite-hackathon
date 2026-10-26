@@ -26,7 +26,7 @@ function ledgerConfig(source = process.env) {
   const { issuer, parties } = knownParties(source)
   return {
     jsonApiUrl: '',
-    packageRef: env('VEIL_PACKAGE_REF', '#veil-lite', source),
+    packageRef: env('VEIL_PACKAGE_REF', '#veil', source),
     issuer,
     parties,
   }

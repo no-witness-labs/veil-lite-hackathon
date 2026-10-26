@@ -30,7 +30,7 @@ const baseEnv = {
   VEIL_PARTY_REGULATOR: P.regulator,
   VEIL_PARTY_VALUER: P.valuer,
   VEIL_PARTY_OUTSIDER: P.outsider,
-  VEIL_PACKAGE_REF: '#veil-lite',
+  VEIL_PACKAGE_REF: '#veil',
   VEIL_AUTH_PUBLIC_KEY: publicPem,
   VEIL_AUTH_PRIVATE_KEY: privatePem,
   VEIL_AUTH_AUDIENCE: 'veil-local',
@@ -189,21 +189,21 @@ function fakeLedger({ holdings = true } = {}) {
         assert.equal(templateId, `#splice-test-token-v2:${TEMPLATE_IDS[template].split(':').slice(1).join(':')}`)
         return add(template, createArguments)
       }
-      assert.equal(templateId, `#veil-lite:Veil:${template}`)
+      assert.equal(templateId, `#veil:Veil:${template}`)
       assert.ok(template === 'CashHolding' || template === 'CollateralHolding', template)
       add(template, createArguments)
       return null
     }
     if (command.CreateAndExerciseCommand) {
       const { templateId, createArguments, choice, choiceArgument } = command.CreateAndExerciseCommand
-      assert.equal(templateId, '#veil-lite:Veil:ValuationStream')
+      assert.equal(templateId, '#veil:Veil:ValuationStream')
       assert.equal(choice, 'PublishInitial')
       const streamId = `stream-${state.next++}`
       return mark(createArguments.collateralAsset, new Date().toISOString(), streamId, choiceArgument.unitPrice)
     }
     const { templateId, contractId, choice } = command.ExerciseCommand
     const contract = remove(contractId)
-    assert.equal(templateId, `#veil-lite:Veil:${contract.template}`)
+    assert.equal(templateId, `#veil:Veil:${contract.template}`)
     state.onExercise?.(choice, contract)
     if (choice === 'Withdraw') add('CashHolding', { issuer: P.issuer, owner: P.lender, amount: contract.args.principal })
     if (choice === 'RejectTokenOffer' || choice === 'WithdrawTokenOffer') {
@@ -416,7 +416,7 @@ test('close records a lapsed token-loan lock without the registry', async () => 
   assert.equal(res.statusCode, 200, res.body)
   const [close, batch] = ledger.state.submissions
   assert.deepEqual(close.actAs, [P.lender])
-  assert.deepEqual(close.commands[0].ExerciseCommand, { templateId: '#veil-lite:Veil:TokenLoan', contractId: lapsed.contractId, choice: 'CloseLapsedTokenLoan', choiceArgument: {} })
+  assert.deepEqual(close.commands[0].ExerciseCommand, { templateId: '#veil:Veil:TokenLoan', contractId: lapsed.contractId, choice: 'CloseLapsedTokenLoan', choiceArgument: {} })
   assert.equal(ledger.state.registryCalls.length, 0)
   assert.ok(batch.commands.some((c) => c.ExerciseCommand.choice === 'DismissTokenLoanClosed'), 'the lapse record is dismissed with the desk')
 })

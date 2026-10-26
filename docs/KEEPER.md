@@ -144,7 +144,7 @@ nothing. It does not call the registry or touch the journal in dry-run. Add
 | `VEIL_PARTY_ISSUER` | `--issuer` | only handle loans of this issuer |
 | `VEIL_REGISTRY_URL` | `--registry-url` | token registry (needed to liquidate a `TokenLoan`) |
 | `VEIL_LEDGER_USER_ID` | `--user-id` | ledger user; defaults to the token's `sub` |
-| `VEIL_PACKAGE_REF` | `--package-ref` | default `#veil-lite` |
+| `VEIL_PACKAGE_REF` | `--package-ref` | default `#veil` |
 
 Credentials, first match wins (never printed):
 

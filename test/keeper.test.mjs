@@ -340,7 +340,7 @@ describe('keeper I/O', () => {
     assert.equal(submit.method, 'POST')
     const { commands } = submit.body
     assert.deepEqual(commands.commands, [{
-      ExerciseCommand: { templateId: '#veil-lite:Veil:Loan', contractId: 'loan-1', choice: 'IssueMarginCall', choiceArgument: { valuationCid: 'mark-stream-tbill' } },
+      ExerciseCommand: { templateId: '#veil:Veil:Loan', contractId: 'loan-1', choice: 'IssueMarginCall', choiceArgument: { valuationCid: 'mark-stream-tbill' } },
     }])
     assert.deepEqual(commands.actAs, [P.lender])
     assert.equal(commands.userId, 'team-user')
@@ -356,7 +356,7 @@ describe('keeper I/O', () => {
     routes.push({ match: (c) => c.url.endsWith('/v2/commands/submit-and-wait-for-transaction'), reply: { json: { transaction: { updateId: 'u2', events: [] } } } })
     await keeper(true).k.tick()
     assert.deepEqual(submits()[0].body.commands.commands[0].ExerciseCommand, {
-      templateId: '#veil-lite:Veil:Loan', contractId: 'loan-1', choice: 'LiquidateOverdue', choiceArgument: { valuationCid: 'mark-stream-tbill' },
+      templateId: '#veil:Veil:Loan', contractId: 'loan-1', choice: 'LiquidateOverdue', choiceArgument: { valuationCid: 'mark-stream-tbill' },
     })
   })
 
@@ -395,7 +395,7 @@ describe('keeper I/O', () => {
 
     const [liquidate] = submits().map((c) => c.body.commands)
     assert.deepEqual(liquidate.commands[0].ExerciseCommand, {
-      templateId: '#veil-lite:Veil:TokenLoan', contractId: 'token-loan-1', choice: 'LiquidateToken',
+      templateId: '#veil:Veil:TokenLoan', contractId: 'token-loan-1', choice: 'LiquidateToken',
       choiceArgument: {
         valuationCid: 'mark-stream-cc',
         receiveArgs: { context: { values: { a: 1 } }, meta: { values: {} } },
@@ -445,7 +445,7 @@ describe('keeper I/O', () => {
     assert.equal(summary.submitted, 1)
     assert.ok(calls.every((c) => c.url.startsWith(LEDGER)), 'a lapsed close must not call the registry')
     assert.deepEqual(submits()[0].body.commands.commands[0].ExerciseCommand, {
-      templateId: '#veil-lite:Veil:TokenLoan', contractId: 'token-loan-1', choice: 'CloseLapsedTokenLoan', choiceArgument: {},
+      templateId: '#veil:Veil:TokenLoan', contractId: 'token-loan-1', choice: 'CloseLapsedTokenLoan', choiceArgument: {},
     })
   })
 
@@ -853,7 +853,7 @@ describe('parseConfig', () => {
     assert.equal(config.once, true)
     assert.equal(config.intervalMs, 10_000)
     assert.equal(config.ledgerUrl, 'http://x')
-    assert.equal(config.packageRef, '#veil-lite')
+    assert.equal(config.packageRef, '#veil')
     assert.throws(() => parseConfig(['--bogus'], {}), /unknown argument/)
   })
 })

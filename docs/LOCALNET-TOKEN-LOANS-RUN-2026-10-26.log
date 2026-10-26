@@ -1,6 +1,6 @@
 
-==> Installing veil-lite 1.0.0 and splice-test-token-v2 on the app-provider participant
-    uploaded .daml/dist/veil-lite-1.0.0.dar
+==> Installing veil 1.0.0 and splice-test-token-v2 on the app-provider participant
+    uploaded .daml/dist/veil-1.0.0.dar
     uploaded vendor/splice-test-token-v2/splice-test-token-v2-1.0.0.dar
 
 ==> Parties and registries
@@ -15,7 +15,7 @@
     acceptance pays the principal and locks the collateral in one transaction
     borrower holds 100 USDCx
     borrower holds 50 CBTC and 150 locked
-    refused as expected: the borrower cancelling the lock alone at the registry (DAML_FAILURE(9,a3bd5521): Interpretation error: Error: User failure: UNHANDLED_EXCEPTION/DA.Exception.GeneralError:GeneralError (error categ)
+    refused as expected: the borrower cancelling the lock alone at the registry (DAML_FAILURE(9,ef093448): Interpretation error: Error: User failure: UNHANDLED_EXCEPTION/DA.Exception.GeneralError:GeneralError (error categ)
     paid down 30
     lender holds 930 USDCx
     repaid: Repaid, 105.0000000000 USDCx
