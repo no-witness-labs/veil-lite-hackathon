@@ -10,6 +10,8 @@ import type { Contract, Draft, MarginCall, Role, Status, Valuation, ValuationAss
 
 /** Every demo amount is simulated; the unit says so wherever a figure appears. */
 export const UNIT_CASH = 'simulated USDC'
+/** The token-loan principal: Splice's reference token, issued by the demo issuer. */
+export const UNIT_USDCX = 'demo USDCx'
 
 export const PARTY_NAMES: Record<Role, string> = {
   lender: 'Meridian Capital',
@@ -127,17 +129,36 @@ export function shortParty(party: string): string {
 /** The contract that defines the party's current view: the most recently
  * created issuer-matching LoanOffer / Loan / LoanClosed. Lets the demo be
  * re-run cleanly while keeping an accidental foreign issuer out of the UI. */
-const DEAL_TEMPLATES = new Set(['LoanOffer', 'Loan', 'LoanClosed', 'CoinLoanOffer', 'CoinLoan'])
+const DEAL_TEMPLATES = new Set(['LoanOffer', 'Loan', 'LoanClosed', 'TokenLoanOffer', 'TokenLoan', 'TokenLoanClosed'])
 
-/** Canton Coin deals carry no asset field: the collateral is always CC. */
-export const COIN_ASSET_NAME = 'Canton Coin'
-export const isCoinDeal = (deal: Contract | undefined) => deal?.template === 'CoinLoanOffer' || deal?.template === 'CoinLoan'
-export const assetOf = (deal: Contract | undefined) => (isCoinDeal(deal) ? COIN_ASSET_NAME : deal?.args.collateralAsset)
+/** Token Standard deals: demo USDCx lent against a registry instrument. */
+export const isTokenDeal = (deal: Contract | undefined) =>
+  deal?.template === 'TokenLoanOffer' || deal?.template === 'TokenLoan' || deal?.template === 'TokenLoanClosed'
+
+/** The collateral's asset name, as its price stream names it: a token deal's
+ * collateral instrument id ('Amulet' for Canton Coin). */
+export function assetOf(deal: Contract | undefined): string | undefined {
+  if (!isTokenDeal(deal)) return deal?.args.collateralAsset
+  return (deal!.template === 'TokenLoanClosed' ? deal!.args.collateralInstrument : deal!.args.collateralRegistry?.instrument)?.id
+}
+
+/** What a deal's principal, payments and marks are counted in. */
+export const principalUnit = (deal: Contract | undefined) => (isTokenDeal(deal) ? UNIT_USDCX : UNIT_CASH)
+
+/** How an asset is named on screen. */
+export const assetLabel = (asset: string | undefined): string => (asset === 'Amulet' ? 'Canton Coin' : asset ?? '')
+
+/** The demo issuer a deal belongs to: a token deal has no issuer field, and
+ * the issuer is the admin of its USDCx principal. */
+export function dealIssuer(deal: Contract): string | undefined {
+  if (!isTokenDeal(deal)) return deal.args.issuer
+  return (deal.template === 'TokenLoanClosed' ? deal.args.principalInstrument : deal.args.principalRegistry?.instrument)?.admin
+}
 
 export function currentDeal(contracts: Contract[], issuer?: string): Contract | undefined {
   const relevant = contracts.filter(
     (c) => DEAL_TEMPLATES.has(c.template)
-      && (issuer === undefined || c.args.issuer === issuer),
+      && (issuer === undefined || dealIssuer(c) === issuer),
   )
   if (relevant.length === 0) return undefined
   return relevant.reduce((a, b) => (b.offset > a.offset ? b : a))
@@ -156,13 +177,13 @@ export function substitutionRequestFor(contracts: Contract[], deal: Contract | u
 
 export function statusOf(deal: Contract | undefined): Status {
   if (!deal) return 'none'
-  if (deal.template === 'LoanOffer' || deal.template === 'CoinLoanOffer') return 'offered'
-  if (deal.template === 'Loan' || deal.template === 'CoinLoan') return 'active'
+  if (deal.template === 'LoanOffer' || deal.template === 'TokenLoanOffer') return 'offered'
+  if (deal.template === 'Loan' || deal.template === 'TokenLoan') return 'active'
   return deal.args.reason === 'Liquidated' || deal.args.reason === 'LiquidatedAtMaturity' ? 'liquidated' : 'repaid'
 }
 
 export function marginCallOf(deal: Contract | undefined): MarginCall | undefined {
-  if (!deal || (deal.template !== 'Loan' && deal.template !== 'CoinLoan')) return undefined
+  if (!deal || (deal.template !== 'Loan' && deal.template !== 'TokenLoan')) return undefined
   const call = deal.args.marginCall
   if (!call || typeof call !== 'object') return undefined
   if (typeof call.issuedAt !== 'string' || typeof call.deadline !== 'string') return undefined
@@ -391,9 +412,9 @@ export const DISCLOSURE: DisclosureRow[] = [
     by: { lender: 'observer', borrower: 'signatory', regulator: 'observer', valuer: 'none', issuer: 'signatory', outsider: 'none' },
   },
   {
-    template: 'CoinLoan',
-    note: 'Loan secured by real Canton Coin; same stakeholders as Loan',
-    by: { lender: 'signatory', borrower: 'signatory', regulator: 'observer', valuer: 'none', issuer: 'signatory', outsider: 'none' },
+    template: 'TokenLoan',
+    note: 'Demo USDCx lent against real Canton Coin: both principals sign, the regulator observes. The issuer runs the USDCx registry and is not on the loan.',
+    by: { lender: 'signatory', borrower: 'signatory', regulator: 'observer', valuer: 'none', issuer: 'none', outsider: 'none' },
   },
   {
     template: 'CC allocation (CIP-112)',

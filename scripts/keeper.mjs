@@ -10,7 +10,7 @@ import { readFileSync } from 'node:fs'
 import { userInfo } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { DEFAULT_OPTIONS, EXECUTABLE, decide, parseDecimal } from './keeper-lib.mjs'
+import { DEFAULT_OPTIONS, EXECUTABLE, LOCK_GRACE_MS, decide } from './keeper-lib.mjs'
 import { BlockedError, JournalError, openJournal, operationKey, startable } from './keeper/journal.mjs'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -19,7 +19,6 @@ const TOKEN_REFRESH_MARGIN_S = 60
 const META = { values: {} }
 const EMPTY_EXTRA = { context: { values: {} }, meta: META }
 const COIN_INSTRUMENT = 'Amulet'
-const ALLOCATION_INTERFACE = '#splice-api-token-allocation-v2:Splice.Api.Token.AllocationV2:Allocation'
 // The state already moved on (another keeper, the borrower, or a retried
 // command that did land). Re-read next tick instead of failing.
 const BENIGN_ERROR = /CONTRACT_NOT_FOUND|CONTRACT_NOT_ACTIVE|DUPLICATE_COMMAND|LOCKED_CONTRACTS|ALREADY_EXISTS/
@@ -32,14 +31,14 @@ const USAGE = `Usage: node scripts/keeper.mjs [--once] [--execute] [--interval S
   --once                 run a single tick and exit (non-zero on errors)
   --interval SECONDS     seconds between ticks when looping (default 30)
   --skew-seconds N       clock-skew margin against ledger time (default 5)
-  --warn-hours N         warn when a CoinLoan settlement deadline is this close (default 6)
+  --warn-hours N         warn when a TokenLoan lock deadline is this close (default 6)
   --ledger-url URL       JSON Ledger API base              [VEIL_LEDGER_TARGET]
-  --registry-url URL     token registry base (CoinLoan)    [VEIL_REGISTRY_URL]
+  --registry-url URL     token registry base (TokenLoan)   [VEIL_REGISTRY_URL]
   --lender PARTY         lender party to act as            [VEIL_PARTY_LENDER]
   --valuer PARTY         only trust marks from this valuer [VEIL_PARTY_VALUER]
   --issuer PARTY         only handle loans of this issuer  [VEIL_PARTY_ISSUER]
   --user-id ID           ledger user id (default: token sub) [VEIL_LEDGER_USER_ID]
-  --package-ref REF      Daml package reference (default #veil-lite) [VEIL_PACKAGE_REF]
+  --package-ref REF      Daml package reference (default #veil) [VEIL_PACKAGE_REF]
   --state-dir DIR        command journal + audit log (default .local/keeper) [VEIL_KEEPER_STATE_DIR]
   --keeper-id NAME       this keeper's identity as proposer (default keeper) [VEIL_KEEPER_ID]
   --require-approval N   liquidations need N approvals before submission (default 0 = off)
@@ -112,7 +111,7 @@ export function parseConfig(argv, env = process.env) {
     valuer: trimmed(cli.valuer ?? env.VEIL_PARTY_VALUER),
     issuer: trimmed(cli.issuer ?? env.VEIL_PARTY_ISSUER),
     userId: trimmed(cli.userId ?? env.VEIL_LEDGER_USER_ID),
-    packageRef: trimmed(cli.packageRef ?? env.VEIL_PACKAGE_REF) || '#veil-lite',
+    packageRef: trimmed(cli.packageRef ?? env.VEIL_PACKAGE_REF) || '#veil',
     intervalMs: number(cli.interval, 30, '--interval') * 1000,
     skewMs: number(cli.skewSeconds, DEFAULT_OPTIONS.skewMs / 1000, '--skew-seconds') * 1000,
     settlementWarnHours: number(cli.warnHours, DEFAULT_OPTIONS.settlementWarnHours, '--warn-hours'),
@@ -331,10 +330,12 @@ export function createKeeper(config, { now = () => Date.now(), emit = defaultEmi
     for (const ce of events) {
       const kind = templateSuffix(ce.templateId)
       const args = ce.createArgument ?? {}
-      if (kind === 'Veil:Loan' || kind === 'Veil:CoinLoan') {
+      if (kind === 'Veil:Loan' || kind === 'Veil:TokenLoan') {
         if (args.lender !== config.lender) continue
         const loan = { contractId: ce.contractId, template: kind.slice(5), args }
-        if (config.issuer && args.issuer !== config.issuer) skipped.push({ loan, reason: 'issuer differs from VEIL_PARTY_ISSUER' })
+        // A token loan has no issuer; the demo issuer is its USDCx admin.
+        const issuer = kind === 'Veil:TokenLoan' ? args.principalRegistry?.instrument?.admin : args.issuer
+        if (config.issuer && issuer !== config.issuer) skipped.push({ loan, reason: 'issuer differs from VEIL_PARTY_ISSUER' })
         else if (config.valuer && args.valuationAgent !== config.valuer) skipped.push({ loan, reason: 'valuation agent differs from VEIL_PARTY_VALUER' })
         else loans.push(loan)
       } else if (kind === 'Veil:CollateralValuation') {
@@ -359,8 +360,8 @@ export function createKeeper(config, { now = () => Date.now(), emit = defaultEmi
 
   /** What the transaction must show, checked when reconciliation fetches it. */
   function expectedEffect(kind, template, loanCid) {
-    if (kind === 'receipt') return { archive: null, createTemplate: 'Allocation' }
-    return { archive: loanCid, createTemplate: kind === 'issueMarginCall' ? `^Veil:${template}$` : '^Veil:LoanClosed$' }
+    if (kind === 'issueMarginCall') return { archive: loanCid, createTemplate: `^Veil:${template}$` }
+    return { archive: loanCid, createTemplate: template === 'TokenLoan' ? '^Veil:TokenLoanClosed$' : '^Veil:LoanClosed$' }
   }
 
   /**
@@ -494,113 +495,66 @@ export function createKeeper(config, { now = () => Date.now(), emit = defaultEmi
 
   const exercise = (template, contractId, choice, choiceArgument = {}) => ({ ExerciseCommand: { templateId: tpl(template), contractId, choice, choiceArgument } })
 
-  // ---------------------------------------------------- Canton Coin (V2) --
+  // ---------------------------------------------- Token Standard loans --
 
-  const coinAccount = (party) => ({ owner: party, provider: null, id: '' })
-  const coinSettlement = (executors, id) => ({ executors, id, cid: null, meta: META })
-  // Recorded on loans opened since 0.10.0 (lender and borrower jointly);
-  // a 0.9.0 loan records none and its lock is executed by the lender alone.
-  const coinExecutors = (a) => (Array.isArray(a.settlementExecutors) && a.settlementExecutors.length > 0 ? a.settlementExecutors : [a.lender])
-  const sameParties = (x, y) => Array.isArray(x) && x.length === y.length && x.every((p, i) => p === y[i])
+  const account = (party) => ({ owner: party, provider: null, id: '' })
+  // Veil.loanSettlement for the collateral lock: lender and borrower execute it.
+  const lockSettlement = (a) => ({ executors: [a.lender, a.borrower], id: `${a.settlementRef}/collateral`, cid: a.settlementAnchor ?? null, meta: META })
 
-  /** A receiving allocation from an earlier, unfinished liquidation attempt. */
-  async function existingReceipt(loan) {
+  /** Liquidation in one Veil choice: it allocates the lender's receiving side
+   * and settles the whole lock through the pinned settlement factory, with
+   * Canton Coin's choice context and disclosures from the registry. */
+  async function liquidateToken(loan, action, approved) {
     const a = loan.args
-    const events = await activeContracts([
-      { identifierFilter: { InterfaceFilter: { value: { interfaceId: ALLOCATION_INTERFACE, includeInterfaceView: true, includeCreatedEventBlob: false } } } },
-    ])
-    const quantity = parseDecimal(a.collateralQuantity)
-    for (const ce of events) {
-      if (ce.contractId === a.allocationCid) continue
-      for (const iv of ce.interfaceViews ?? []) {
-        const v = iv?.viewValue
-        const legs = v?.allocation?.transferLegSides ?? []
-        if (v?.settlement?.id === a.settlementRef
-          && sameParties(v?.settlement?.executors, coinExecutors(a))
-          && v?.allocation?.authorizer?.owner === config.lender
-          && legs.length === 1
-          && legs[0].side === 'ReceiverSide'
-          && legs[0].otherside?.owner === a.borrower
-          && legs[0].instrumentId === COIN_INSTRUMENT
-          && parseDecimal(legs[0].amount) === quantity) return ce.contractId
-      }
+    for (const field of ['borrower', 'settlementRef', 'collateralQuantity', 'maturity', 'lockCid', 'collateralRegistry']) {
+      if (!a[field]) throw new Error(`TokenLoan is missing ${field}`)
     }
-    return null
-  }
-
-  async function prepareReceipt(loan) {
-    try {
-      const found = await existingReceipt(loan)
-      if (found) {
-        emit({ event: 'receipt', loanCid: loan.contractId, receiptAllocationCid: found, reused: true })
-        return found
-      }
-    } catch (error) {
-      // The lookup is an optimisation against orphan receipts; preparing a new
-      // one is still correct. Surface the failure rather than hide it.
-      emit({ event: 'receiptLookupFailed', level: 'warn', loanCid: loan.contractId, error: message(error) })
-    }
-    const a = loan.args
-    const settlement = coinSettlement(coinExecutors(a), a.settlementRef)
-    const spec = {
-      admin: a.coinAdmin,
-      authorizer: coinAccount(a.lender),
-      transferLegSides: [{ transferLegId: 'collateral', side: 'ReceiverSide', otherside: coinAccount(a.borrower), amount: a.collateralQuantity, instrumentId: COIN_INSTRUMENT, meta: META }],
-      settlementDeadline: new Date(Date.parse(a.maturity) + 86_400_000).toISOString(),
+    const instrument = a.collateralRegistry.instrument
+    if (instrument?.id !== COIN_INSTRUMENT) throw new Error(`TokenLoan collateral ${instrument?.id} has no registry here; only Canton Coin is supported`)
+    if (!config.registryUrl) throw new Error('Canton Coin liquidation needs the token registry: set VEIL_REGISTRY_URL')
+    const settlement = lockSettlement(a)
+    const receipt = {
+      admin: instrument.admin,
+      authorizer: account(a.lender),
+      transferLegSides: [{ transferLegId: 'collateral', side: 'ReceiverSide', otherside: account(a.borrower), amount: a.collateralQuantity, instrumentId: COIN_INSTRUMENT, meta: META }],
+      settlementDeadline: new Date(Date.parse(a.maturity) + LOCK_GRACE_MS).toISOString(),
       nextIterationFunding: null,
       committed: false,
       meta: META,
     }
     const factory = await registry('/registry/allocation-instruction/v2/allocation-factory', {
-      choiceArguments: { settlement, allocation: spec, requestedAt: new Date(now()).toISOString(), inputHoldingCids: [], extraArgs: EMPTY_EXTRA, actors: [a.lender] },
+      choiceArguments: { settlement, allocation: receipt, requestedAt: new Date(now()).toISOString(), inputHoldingCids: [], extraArgs: EMPTY_EXTRA, actors: [a.lender] },
       excludeDebugFields: true,
+    }).catch((error) => {
+      // Scan 0.6.12 (Splice LocalNet) has only the V1 endpoint, which names
+      // the same Amulet factory and the context a V2 allocation reads.
+      if (error?.status !== 404) throw error
+      return registry('/registry/allocation-instruction/v1/allocation-factory', { choiceArguments: {}, excludeDebugFields: true })
     })
-    const prepared = await submit(
-      { kind: 'receipt', loanCid: loan.contractId, template: loan.template },
-      exercise('CoinLoan', loan.contractId, 'PrepareCoinReceipt', {
-        allocationFactoryCid: factory.factoryId,
-        extraArgs: { context: factory.choiceContext.choiceContextData, meta: META },
-      }),
-      factory.choiceContext.disclosedContracts ?? [],
-    )
-    const receipt = prepared.created.find((c) => /Allocation/.test(templateSuffix(c.templateId)))
-    if (!receipt) throw new Error('PrepareCoinReceipt created no allocation')
-    emit({ event: 'receipt', loanCid: loan.contractId, receiptAllocationCid: receipt.contractId, reused: false, updateId: prepared.updateId })
-    return receipt.contractId
-  }
-
-  async function liquidateCoin(loan, action, approved) {
-    const a = loan.args
-    for (const field of ['coinAdmin', 'borrower', 'settlementRef', 'collateralQuantity', 'maturity', 'allocationCid']) {
-      if (!a[field]) throw new Error(`CoinLoan is missing ${field}`)
-    }
-    if (!config.registryUrl) throw new Error('Canton Coin liquidation needs the token registry: set VEIL_REGISTRY_URL')
-    const receiptAllocationCid = await prepareReceipt(loan)
-    const executors = coinExecutors(a)
-    const settlement = coinSettlement(executors, a.settlementRef)
-    const transferLegs = [{ transferLegId: 'collateral', sender: coinAccount(a.borrower), receiver: coinAccount(a.lender), amount: a.collateralQuantity, instrumentId: COIN_INSTRUMENT, meta: META }]
-    const allocations = [a.allocationCid, receiptAllocationCid].map((allocationCid) => ({ allocationCid, extraTransferLegSides: [], nextIterationFunding: null }))
+    const transferLegs = [{ transferLegId: 'collateral', sender: account(a.borrower), receiver: account(a.lender), amount: a.collateralQuantity, instrumentId: COIN_INSTRUMENT, meta: META }]
     const settle = await registry('/registry/allocation/v2/settlement-factory', {
-      choiceArguments: { settlement, transferLegs, allocations, actors: executors, extraArgs: EMPTY_EXTRA },
+      choiceArguments: { settlement, transferLegs, allocations: [{ allocationCid: a.lockCid, extraTransferLegSides: [], nextIterationFunding: null }], actors: settlement.executors, extraArgs: EMPTY_EXTRA },
       excludeDebugFields: true,
     })
-    const extraArgs = { context: settle.choiceContext.choiceContextData, meta: META }
+    const receiveArgs = { context: factory.choiceContext.choiceContextData, meta: META }
+    const settleArgs = { context: settle.choiceContext.choiceContextData, meta: META }
     const choiceArgument = action.kind === 'liquidate'
-      ? { valuationCid: action.valuationCid, settlementFactoryCid: settle.factoryId, receiptAllocationCid, extraArgs }
-      : { settlementFactoryCid: settle.factoryId, receiptAllocationCid, extraArgs }
+      ? { valuationCid: action.valuationCid, receiveArgs, settleArgs }
+      : { receiveArgs, settleArgs }
+    const disclosed = [...new Map([...(factory.choiceContext.disclosedContracts ?? []), ...(settle.choiceContext.disclosedContracts ?? [])].map((d) => [d.contractId, d])).values()]
     return submit(
       { kind: action.kind, loanCid: loan.contractId, template: loan.template, approved },
-      exercise('CoinLoan', loan.contractId, action.choice, choiceArgument),
-      settle.choiceContext.disclosedContracts ?? [],
+      exercise('TokenLoan', loan.contractId, action.choice, choiceArgument),
+      disclosed,
     )
   }
 
   async function perform(loan, action, approved = false) {
     if (action.kind === 'closeLapsed') {
       // No registry call: the lapsed allocation is left for the borrower.
-      return submit({ kind: action.kind, loanCid: loan.contractId, template: loan.template, approved }, exercise('CoinLoan', loan.contractId, action.choice))
+      return submit({ kind: action.kind, loanCid: loan.contractId, template: loan.template, approved }, exercise('TokenLoan', loan.contractId, action.choice))
     }
-    if (loan.template === 'CoinLoan' && action.kind !== 'issueMarginCall') return liquidateCoin(loan, action, approved)
+    if (loan.template === 'TokenLoan' && action.kind !== 'issueMarginCall') return liquidateToken(loan, action, approved)
     // T-Bill LiquidateOverdue takes an Optional mark (0.9.0), the others a plain one.
     const choiceArgument = action.kind === 'liquidateOverdue' ? { valuationCid: action.valuationCid ?? null } : { valuationCid: action.valuationCid }
     return submit({ kind: action.kind, loanCid: loan.contractId, template: loan.template, approved }, exercise(loan.template, loan.contractId, action.choice, choiceArgument))

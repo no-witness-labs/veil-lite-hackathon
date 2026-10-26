@@ -9,14 +9,20 @@ const { beginRequest, isTimeout, noteRole, readCapped, ResponseTooLargeError, se
 const ROUTES = [
   { method: 'GET', pattern: /^\/registry\/metadata\/v1\/info$/, label: '/api/registry/registry/metadata/v1/info' },
   { method: 'POST', pattern: /^\/registry\/allocation-instruction\/v2\/allocation-factory$/, label: '/api/registry/registry/allocation-instruction/v2/allocation-factory' },
+  // Scan 0.6.12 (Splice LocalNet) serves only the V1 endpoint; it returns the
+  // same Amulet factory and the context a V2 allocation reads.
+  { method: 'POST', pattern: /^\/registry\/allocation-instruction\/v1\/allocation-factory$/, label: '/api/registry/registry/allocation-instruction/v1/allocation-factory' },
   { method: 'POST', pattern: /^\/registry\/allocation\/v2\/settlement-factory$/, label: '/api/registry/registry/allocation/v2/settlement-factory' },
   { method: 'POST', pattern: /^\/registry\/allocations\/v2\/[A-Za-z0-9:_-]{1,256}\/choice-contexts\/cancel$/, label: '/api/registry/registry/allocations/v2/:allocationId/choice-contexts/cancel' },
 ]
 const TRANSACTING_ROLES = new Set(['lender', 'borrower', 'operator'])
+const USDCX_PATH = '/usdcx/context'
 
 // The node bearer is sent to the registry, so the registry base URL must be an
-// https URL on a known host. Anything else leaves the registry disabled.
+// https URL on a known host, or a validator on this machine (Splice LocalNet).
+// Anything else leaves the registry disabled.
 const REGISTRY_HOSTS = new Set(['validator-api-http.validator.hackcanton-01.devnet.naas.noders.services'])
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]'])
 const REGISTRY_TIMEOUT_MS = 10_000
 const MAX_REGISTRY_RESPONSE_BYTES = 1_048_576
 const MAX_ERROR_TEXT = 300
@@ -30,7 +36,9 @@ function registryTarget(env) {
   } catch {
     return ''
   }
-  if (url.protocol !== 'https:' || !REGISTRY_HOSTS.has(url.hostname) || (url.port && url.port !== '443')) return ''
+  const known = url.protocol === 'https:' && REGISTRY_HOSTS.has(url.hostname) && (!url.port || url.port === '443')
+  const local = url.protocol === 'http:' && LOOPBACK_HOSTS.has(url.hostname)
+  if (!known && !local) return ''
   if (url.username || url.password || url.search || url.hash) return ''
   return stripTrailingSlash(`${url.origin}${url.pathname}`)
 }
@@ -52,8 +60,15 @@ function registryErrorMessage(status, raw) {
 async function proxyRegistryRequest(req, res, path, env = req?.veilEnv || process.env) {
   const method = String(req.method || 'GET').toUpperCase()
   const route = ROUTES.find((r) => r.pattern.test(path))
-  beginRequest(req, res, route ? route.label : '/api/registry/*')
+  const usdcx = path === USDCX_PATH
+  beginRequest(req, res, usdcx ? '/api/registry/usdcx/context' : route ? route.label : '/api/registry/*')
   try {
+    if (usdcx) {
+      // Demo USDCx is served from the ledger, not proxied (api/_usdcx.js). Its
+      // module needs the server ledger client, which needs this one.
+      await require('./_usdcx').usdcxContextRequest(req, res, env)
+      return
+    }
     if (!route) throw new AuthError(404, 'ROUTE_NOT_FOUND')
     if (route.method !== method) throw new AuthError(405, 'METHOD_NOT_ALLOWED')
     const auth = authenticate(req, env)

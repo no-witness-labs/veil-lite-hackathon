@@ -1,11 +1,10 @@
 const crypto = require('node:crypto')
-const { authConfig, authenticate, AuthError, DEFAULT_ISSUER, knownParties, packageRef, privateKeyFromEnv, respondError, ROLE_SUBJECTS } = require('./_auth')
-const { ledgerTarget, parseJsonBody, requestBody } = require('./_ledger')
-const { upstreamConfig, upstreamToken } = require('./_upstream')
-const { registryTarget } = require('./_registry')
+const { authConfig, authenticate, AuthError, DEFAULT_ISSUER, knownParties, privateKeyFromEnv, respondError } = require('./_auth')
+const { parseJsonBody, requestBody } = require('./_ledger')
+const { LedgerCallError, ledgerAccess, ledgerClient, templateName } = require('./_nodeLedger')
 const { topUpHoldings } = require('./_holdings')
-const { mintRoleToken } = require('./demo-login')
-const { beginRequest, isTimeout, noteRole, readCapped, ResponseTooLargeError, sanitizeLedgerError, sendError, sendJson, upstreamFetch } = require('./_http')
+const { usdcxContext } = require('./_usdcx')
+const { beginRequest, noteRole, sendError, sendJson } = require('./_http')
 
 // Visitor desks. The hosted demo is open and every visitor signs in as the same
 // shared parties, so the app gives each browser its own "desk": one
@@ -27,9 +26,10 @@ const { beginRequest, isTimeout, noteRole, readCapped, ResponseTooLargeError, sa
 // stream for that asset). After the janitor, the same background task tops up
 // the shared wallets (api/_holdings.js) so the demo never runs dry.
 
-/** Mirrors VALUED_ASSETS and SEED_PRICE in frontend/src/ledger.ts. */
-const VALUED_ASSETS = Object.freeze(['Tokenized T-Bill', 'Tokenized MMF', 'Canton Coin'])
-const SEED_PRICE = Object.freeze({ 'Canton Coin': '0.15' })
+/** Mirrors VALUED_ASSETS and SEED_PRICE in frontend/src/ledger.ts. Canton
+ * Coin is priced under its instrument id, which the token-loan choices check. */
+const VALUED_ASSETS = Object.freeze(['Tokenized T-Bill', 'Tokenized MMF', 'Amulet'])
+const SEED_PRICE = Object.freeze({ Amulet: '0.15' })
 const DESK_TTL_SECONDS = 24 * 60 * 60
 const DESK_AUDIENCE = 'veil-desk'
 const DESK_TYPE = 'veil-desk'
@@ -41,22 +41,12 @@ const MAX_DESKS = 25
 /** Idle streams closed per create, so one visitor's sign-in stays bounded. */
 const JANITOR_MAX_STREAMS = 6
 const MAX_DESK_TOKEN_LENGTH = 8192
-const MAX_ACS_BYTES = 16 * 1_048_576
-const REGISTRY_TIMEOUT_MS = 10_000
 const ACTIONS = new Set(['create', 'close'])
-const DESK_SCOPED = new Set(['LoanOffer', 'CoinLoanOffer', 'Loan', 'CoinLoan', 'LoanClosed', 'SubstitutionRequest', 'CollateralValuation', 'ValuationStream'])
-const ISSUER_SCOPED = new Set(['LoanOffer', 'CoinLoanOffer', 'Loan', 'CoinLoan', 'LoanClosed', 'SubstitutionRequest'])
+const DESK_SCOPED = new Set(['LoanOffer', 'TokenLoanOffer', 'Loan', 'TokenLoan', 'LoanClosed', 'TokenLoanClosed', 'SubstitutionRequest', 'CollateralValuation', 'ValuationStream'])
+const ISSUER_SCOPED = new Set(['LoanOffer', 'Loan', 'LoanClosed', 'SubstitutionRequest'])
+/** Token deals carry no issuer; the demo issuer is the admin of their USDCx. */
+const PRINCIPAL_SCOPED = new Set(['TokenLoanOffer', 'TokenLoan', 'TokenLoanClosed'])
 const META = { values: {} }
-
-class LedgerCallError extends Error {
-  constructor(status, code, message, extra = {}) {
-    super(message)
-    this.name = 'LedgerCallError'
-    this.status = status
-    this.code = code
-    this.extra = extra
-  }
-}
 
 /* ------------------------------------------------------------ desk token -- */
 
@@ -120,24 +110,6 @@ function verifyDeskToken(token, env, ledger, now = Math.floor(Date.now() / 1000)
 
 /* ------------------------------------------------------ pure desk logic -- */
 
-function templateName(templateId) {
-  const parts = String(templateId).split(':')
-  return parts.length >= 3 && parts[parts.length - 2] === 'Veil' ? parts[parts.length - 1] : null
-}
-
-/** Normalize ACS entries to {contractId, template, offset, args}; Veil templates only. */
-function normalizeActive(entries) {
-  const out = []
-  for (const entry of Array.isArray(entries) ? entries : []) {
-    const ce = entry?.contractEntry?.JsActiveContract?.createdEvent
-    if (!ce || typeof ce.contractId !== 'string') continue
-    const template = templateName(ce.templateId)
-    if (!template) continue
-    out.push({ contractId: ce.contractId, template, offset: ce.offset ?? 0, args: ce.createArgument ?? {} })
-  }
-  return out
-}
-
 /** Current marks between the configured demo parties, one per active stream. */
 function demoMarks(contracts, config) {
   const { parties } = config
@@ -166,18 +138,25 @@ function streamOf(contract) {
   }
 }
 
+function principalAdmin(contract) {
+  const a = contract.args
+  return (contract.template === 'TokenLoanClosed' ? a.principalInstrument : a.principalRegistry?.instrument)?.admin
+}
+
 /** Contracts on the given streams, grouped by what closing them takes. */
 function deskContracts(contracts, streamIds, issuer) {
   const ids = new Set(streamIds)
-  const out = { offers: [], coinLoans: [], loans: [], closed: [], substitutions: [], marks: [], streams: [] }
+  const out = { offers: [], tokenOffers: [], tokenLoans: [], loans: [], closed: [], substitutions: [], marks: [], streams: [] }
   for (const c of contracts) {
     const stream = streamOf(c)
     if (!stream || !ids.has(stream)) continue
     if (ISSUER_SCOPED.has(c.template) && c.args.issuer !== issuer) continue
-    if (c.template === 'LoanOffer' || c.template === 'CoinLoanOffer') out.offers.push(c)
-    else if (c.template === 'CoinLoan') out.coinLoans.push(c)
+    if (PRINCIPAL_SCOPED.has(c.template) && principalAdmin(c) !== issuer) continue
+    if (c.template === 'LoanOffer') out.offers.push(c)
+    else if (c.template === 'TokenLoanOffer') out.tokenOffers.push(c)
+    else if (c.template === 'TokenLoan') out.tokenLoans.push(c)
     else if (c.template === 'Loan') out.loans.push(c)
-    else if (c.template === 'LoanClosed') out.closed.push(c)
+    else if (c.template === 'LoanClosed' || c.template === 'TokenLoanClosed') out.closed.push(c)
     else if (c.template === 'SubstitutionRequest') out.substitutions.push(c)
     else if (c.template === 'CollateralValuation') out.marks.push(c)
     else if (c.template === 'ValuationStream') out.streams.push(c)
@@ -205,106 +184,6 @@ function idleStreams(marks, nowMs, keep = [], idleMs = IDLE_MS) {
 
 /** Open desks, counting a partial desk as one. */
 const deskCount = (streamCount) => Math.ceil(streamCount / VALUED_ASSETS.length)
-
-/* ------------------------------------------------------- ledger access -- */
-
-async function ledgerAccess(env) {
-  const shared = upstreamConfig(env)
-  if (shared) return { bearer: await upstreamToken(shared), userId: shared.ledgerUserId, shared }
-  // Local sandbox: the proxy forwards each caller's own role token, but a desk
-  // needs lender, borrower and valuer authority together, which only the
-  // operator user holds. Mint a short-lived operator token for this request.
-  const privateKeyPem = privateKeyFromEnv(env)
-  if (!privateKeyPem) throw new AuthError(503, 'DESK_UNAVAILABLE')
-  return { bearer: mintRoleToken('operator', privateKeyPem, env), userId: ROLE_SUBJECTS.operator, shared: null }
-}
-
-function ledgerClient(env, access, ctx) {
-  const target = ledgerTarget(env)
-  const pkg = packageRef(env)
-  const template = (name) => `${pkg}:Veil:${name}`
-
-  async function call(method, path, body) {
-    let response
-    let raw
-    try {
-      response = await upstreamFetch(`${target}${path}`, {
-        method,
-        headers: { Authorization: `Bearer ${access.bearer}`, Accept: 'application/json', ...(body ? { 'Content-Type': 'application/json' } : {}) },
-        body: body ? JSON.stringify(body) : undefined,
-      })
-      raw = await readCapped(response, MAX_ACS_BYTES)
-    } catch (error) {
-      if (error instanceof ResponseTooLargeError) throw new LedgerCallError(502, 'PROXY_ERROR', 'The ledger returned an oversized response.')
-      if (isTimeout(error)) throw new LedgerCallError(504, 'LEDGER_TIMEOUT')
-      throw new LedgerCallError(502, 'PROXY_ERROR')
-    }
-    if (!response.ok) {
-      const { code, message, errorId, category } = sanitizeLedgerError(response.status, raw)
-      ctx.ledgerCode = code
-      throw new LedgerCallError(response.status, code, message, { ...(errorId ? { errorId } : {}), ...(category !== undefined ? { category } : {}) })
-    }
-    try {
-      return JSON.parse(raw.toString('utf8') || '{}')
-    } catch {
-      throw new LedgerCallError(502, 'PROXY_ERROR')
-    }
-  }
-
-  async function active(party) {
-    const end = await call('GET', '/v2/state/ledger-end')
-    const entries = await call('POST', '/v2/state/active-contracts', {
-      eventFormat: { filtersByParty: { [party]: { cumulative: [{ identifierFilter: { WildcardFilter: { value: { includeCreatedEventBlob: false } } } }] } }, verbose: false },
-      activeAtOffset: end.offset,
-    })
-    return normalizeActive(entries)
-  }
-
-  async function submit(actAs, commands, prefix, disclosedContracts) {
-    const result = await call('POST', '/v2/commands/submit-and-wait-for-transaction', {
-      commands: {
-        commands,
-        commandId: `desk-${prefix}-${crypto.randomUUID()}`,
-        actAs,
-        userId: access.userId,
-        ...(disclosedContracts && disclosedContracts.length > 0
-          ? { disclosedContracts: disclosedContracts.map(({ templateId, contractId, createdEventBlob, synchronizerId }) => ({ templateId, contractId, createdEventBlob, synchronizerId })) }
-          : {}),
-      },
-    })
-    return result?.transaction ?? {}
-  }
-
-  async function cancelContext(allocationCid) {
-    const base = registryTarget(env)
-    if (!base || !access.shared) throw new LedgerCallError(503, 'REGISTRY_UNAVAILABLE', 'A Canton Coin loan needs the token registry to be released, which is not configured here.')
-    let response
-    let raw
-    try {
-      response = await upstreamFetch(`${base}/registry/allocations/v2/${encodeURIComponent(allocationCid)}/choice-contexts/cancel`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${access.bearer}`, 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({ excludeDebugFields: true }),
-      }, REGISTRY_TIMEOUT_MS)
-      raw = await readCapped(response, 1_048_576)
-    } catch (error) {
-      if (isTimeout(error)) throw new LedgerCallError(504, 'REGISTRY_TIMEOUT')
-      throw new LedgerCallError(502, 'REGISTRY_PROXY_ERROR')
-    }
-    if (!response.ok) throw new LedgerCallError(502, 'REGISTRY_PROXY_ERROR', `The token registry returned HTTP ${response.status}.`)
-    try {
-      return JSON.parse(raw.toString('utf8'))
-    } catch {
-      throw new LedgerCallError(502, 'REGISTRY_PROXY_ERROR')
-    }
-  }
-
-  const exercise = (name, contractId, choice, choiceArgument = {}) => ({ ExerciseCommand: { templateId: template(name), contractId, choice, choiceArgument } })
-  const createAndExercise = (name, createArguments, choice, choiceArgument) => ({ CreateAndExerciseCommand: { templateId: template(name), createArguments, choice, choiceArgument } })
-  const create = (name, createArguments) => ({ CreateCommand: { templateId: template(name), createArguments } })
-
-  return { active, submit, cancelContext, exercise, createAndExercise, create }
-}
 
 /* ------------------------------------------------------- desk operations -- */
 
@@ -335,68 +214,108 @@ async function openStreams(ledger, config, assets) {
   return streams
 }
 
-// A Canton Coin lock lapses a day after maturity (Veil.coinSettlementDeadline):
+// A token loan's collateral lock lapses a day after maturity (Veil.lockDeadline):
 // the registry then refuses to settle or release it through Veil, and only
-// CloseLapsedCoinLoan can close the loan. The margin keeps this server's clock,
-// if slightly ahead of ledger time, from choosing it before the ledger agrees.
-const COIN_SETTLEMENT_GRACE_MS = 86_400_000
+// CloseLapsedTokenLoan can close the loan. The margin keeps this server's
+// clock, if slightly ahead of ledger time, from choosing it before the ledger
+// agrees.
+const LOCK_GRACE_MS = 86_400_000
 const LAPSE_MARGIN_MS = 60_000
+/** Re-reads while closing a desk that visitors keep adding to. */
+const MAX_CLOSE_ROUNDS = 3
 
-function coinLockLapsed(maturity, nowMs) {
+function lockLapsed(maturity, nowMs) {
   const maturityMs = Date.parse(maturity)
-  return Number.isFinite(maturityMs) && nowMs > maturityMs + COIN_SETTLEMENT_GRACE_MS + LAPSE_MARGIN_MS
+  return Number.isFinite(maturityMs) && nowMs > maturityMs + LOCK_GRACE_MS + LAPSE_MARGIN_MS
 }
 
 function retryable(error) {
   return error instanceof LedgerCallError && /CONTRACT_NOT_FOUND|CONTRACT_NOT_ACTIVE|INACTIVE_CONTRACTS|INCONSISTENT|LOCKED_CONTRACTS/.test(error.code)
 }
 
-/** Close every contract on these streams, in resetDemo's order: release
- * Canton Coin first, then in one transaction withdraw offers, return escrowed
- * substitution collateral, archive loans, dismiss closed records and archive
- * the marks. Holdings are never burned or minted. */
+/** Choice arguments and disclosures to cancel an allocation at its registry:
+ * demo USDCx when the issuer is its admin, otherwise Canton Coin. */
+async function cancelArgs(ledger, issuer, registry, allocationCid) {
+  if (registry?.instrument?.admin === issuer) {
+    const ctx = await usdcxContext(ledger, issuer, [allocationCid])
+    return { args: { context: ctx.choiceContext.choiceContextData, meta: META }, disclosed: ctx.choiceContext.disclosedContracts }
+  }
+  const ctx = await ledger.amulet(`/registry/allocations/v2/${encodeURIComponent(allocationCid)}/choice-contexts/cancel`, { excludeDebugFields: true })
+  return { args: { context: ctx.choiceContextData, meta: META }, disclosed: ctx.disclosedContracts }
+}
+
+/** Close every contract on these streams, in resetDemo's order: first the
+ * token deals, each with its registry's context (offers are rejected so the
+ * lender's committed principal returns; loans are written off so the
+ * borrower's collateral unlocks), then in one transaction withdraw offers,
+ * return escrowed substitution collateral, archive loans, dismiss closed
+ * records and archive the marks. Holdings are never burned or minted. */
 async function closeStreams(ledger, config, streamIds) {
-  if (streamIds.length === 0) return { offers: 0, loans: 0, coinLoans: 0, closed: 0, substitutions: 0, marks: 0 }
+  if (streamIds.length === 0) return { offers: 0, loans: 0, tokenLoans: 0, closed: 0, substitutions: 0, marks: 0 }
   const { issuer, parties } = config
-  let scoped = deskContracts(await ledger.active(parties.lender), streamIds, issuer)
-  const coinLoans = scoped.coinLoans.length
-  for (const loan of scoped.coinLoans) {
-    if (coinLockLapsed(loan.args.maturity, Date.now())) {
-      // The lock lapsed: nothing to release, and the borrower can withdraw it.
-      // Record the lapse; the LoanClosed is dismissed below.
-      await ledger.submit([parties.lender], [ledger.exercise('CoinLoan', loan.contractId, 'CloseLapsedCoinLoan')], 'close-lapsed-coin')
+  let tokenOffers = 0
+  let tokenLoans = 0
+  for (let round = 0; ; round += 1) {
+    const scoped = deskContracts(await ledger.active(parties.lender), streamIds, issuer)
+    // A visitor may fund an offer or accept one while the desk closes. Token
+    // deals are closed before anything else, and the desk is re-read until
+    // none is left: archiving the marks first would strand a committed
+    // principal or a locked collateral where no cleanup finds it again.
+    if (scoped.tokenOffers.length + scoped.tokenLoans.length > 0) {
+      if (round >= MAX_CLOSE_ROUNDS) throw new LedgerCallError(409, 'DESK_BUSY', 'New loans kept opening on this desk while it closed; try again.')
+      await closeTokenDeals(ledger, config, scoped)
+      tokenOffers += scoped.tokenOffers.length
+      tokenLoans += scoped.tokenLoans.length
       continue
     }
-    // Never strand borrower Canton Coin: the lender releases it (WriteOffCoin),
-    // which cancels the allocation and leaves a LoanClosed to dismiss below.
-    // The CoinLoan's signatories supply every executor's authority on-ledger.
-    const ctx = await ledger.cancelContext(loan.args.allocationCid)
-    await ledger.submit(
-      [parties.lender],
-      [ledger.exercise('CoinLoan', loan.contractId, 'WriteOffCoin', { cancelExtraArgs: { context: ctx.choiceContextData, meta: META } })],
-      'write-off-coin',
-      ctx.disclosedContracts,
-    )
-  }
-  for (let attempt = 0; ; attempt += 1) {
-    if (coinLoans > 0 || attempt > 0) scoped = deskContracts(await ledger.active(parties.lender), streamIds, issuer)
     const commands = [
-      ...scoped.offers.map((c) => ledger.exercise(c.template, c.contractId, c.template === 'CoinLoanOffer' ? 'WithdrawCoinOffer' : 'Withdraw')),
+      ...scoped.offers.map((c) => ledger.exercise('LoanOffer', c.contractId, 'Withdraw')),
       ...scoped.substitutions.map((c) => ledger.exercise('SubstitutionRequest', c.contractId, 'CancelSubstitution')),
       ...scoped.loans.map((c) => ledger.exercise('Loan', c.contractId, 'Archive')),
-      ...scoped.closed.map((c) => ledger.exercise('LoanClosed', c.contractId, 'Dismiss')),
+      ...scoped.closed.map((c) => (c.template === 'TokenLoanClosed'
+        ? ledger.exercise('TokenLoanClosed', c.contractId, 'DismissTokenLoanClosed')
+        : ledger.exercise('LoanClosed', c.contractId, 'Dismiss'))),
       ...scoped.marks.map((c) => ledger.exercise('CollateralValuation', c.contractId, 'Archive')),
       ...scoped.streams.map((c) => ledger.exercise('ValuationStream', c.contractId, 'Archive')),
     ]
-    const counts = { offers: scoped.offers.length, loans: scoped.loans.length, coinLoans, closed: scoped.closed.length, substitutions: scoped.substitutions.length, marks: scoped.marks.length }
+    const counts = { offers: scoped.offers.length + tokenOffers, loans: scoped.loans.length, tokenLoans, closed: scoped.closed.length, substitutions: scoped.substitutions.length, marks: scoped.marks.length }
     if (commands.length === 0) return counts
     try {
       await ledger.submit([issuer, parties.lender, parties.borrower, parties.valuer], commands, 'close')
       return counts
     } catch (error) {
-      // A visitor may have moved a contract meanwhile; re-read once.
-      if (attempt > 0 || !retryable(error)) throw error
+      // A visitor may have moved a contract meanwhile; re-read and retry.
+      if (round >= MAX_CLOSE_ROUNDS || !retryable(error)) throw error
     }
+  }
+}
+
+/** Release every token deal's assets, each with its registry's context:
+ * offers are rejected (or, once expired, withdrawn) so the lender's committed
+ * principal returns; loans are written off so the borrower's collateral
+ * unlocks, or recorded as lapsed once the lock can no longer settle. */
+async function closeTokenDeals(ledger, config, scoped) {
+  const { issuer, parties } = config
+  for (const offer of scoped.tokenOffers) {
+    const cancel = await cancelArgs(ledger, issuer, offer.args.principalRegistry, offer.args.fundingAllocationCid)
+    // Until the offer expires only the borrower's rejection releases the
+    // committed principal; after it, the lender withdraws it.
+    const command = Date.now() > Date.parse(offer.args.expiresAt) + LAPSE_MARGIN_MS
+      ? [[parties.lender], ledger.exercise('TokenLoanOffer', offer.contractId, 'WithdrawTokenOffer', { withdrawArgs: cancel.args })]
+      : [[parties.borrower], ledger.exercise('TokenLoanOffer', offer.contractId, 'RejectTokenOffer', { cancelArgs: cancel.args })]
+    await ledger.submit(command[0], [command[1]], 'close-token-offer', cancel.disclosed)
+  }
+  for (const loan of scoped.tokenLoans) {
+    if (lockLapsed(loan.args.maturity, Date.now())) {
+      // The lock lapsed: nothing to release, and the borrower can withdraw it.
+      // Record the lapse; the closed record is dismissed with the desk.
+      await ledger.submit([parties.lender], [ledger.exercise('TokenLoan', loan.contractId, 'CloseLapsedTokenLoan')], 'close-lapsed-token')
+      continue
+    }
+    // Never strand the borrower's collateral: the lender writes the loan off,
+    // which cancels the lock with both counterparties' authority.
+    const cancel = await cancelArgs(ledger, issuer, loan.args.collateralRegistry, loan.args.lockCid)
+    await ledger.submit([parties.lender], [ledger.exercise('TokenLoan', loan.contractId, 'WriteOffToken', { cancelArgs: cancel.args })], 'write-off-token', cancel.disclosed)
   }
 }
 
@@ -419,7 +338,7 @@ async function janitor(ledger, config, marks, keep, nowMs, ctx) {
     const fresh = demoMarks(await ledger.active(config.parties.valuer), config)
     const busy = new Set(
       (await ledger.active(config.parties.lender))
-        .filter((c) => (c.template === 'Loan' || c.template === 'CoinLoan') && c.args.issuer === config.issuer)
+        .filter((c) => (c.template === 'Loan' && c.args.issuer === config.issuer) || (c.template === 'TokenLoan' && principalAdmin(c) === config.issuer))
         .map(streamOf),
     )
     const longIdle = new Set(idleStreams(fresh, nowMs, keep, BUSY_IDLE_MS))

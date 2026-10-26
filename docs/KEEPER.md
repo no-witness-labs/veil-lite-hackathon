@@ -2,7 +2,7 @@
 
 `scripts/keeper.mjs` is an off-ledger process that does what a lender's operations
 desk would otherwise click in the UI. It reads the lender's open `Loan` and
-`CoinLoan` contracts and the current `CollateralValuation` marks from the JSON
+`TokenLoan` contracts and the current `CollateralValuation` marks from the JSON
 Ledger API v2, decides what to do, and (only with `--execute`) submits the
 lender's choices. It is Node 22 ESM with no dependencies.
 
@@ -15,14 +15,14 @@ For every active loan where the configured party is the lender:
 
 | Situation | Action |
 | --- | --- |
-| No margin call, fresh mark, LTV >= threshold, before maturity | `IssueMarginCall` / `IssueCoinMarginCall` |
+| No margin call, fresh mark, LTV >= threshold, before maturity | `IssueMarginCall` / `IssueTokenMarginCall` |
 | Call open, deadline not passed | nothing (waits) |
-| Call deadline passed, fresh mark, still breached | `Liquidate`, or for Canton Coin `PrepareCoinReceipt` → `LiquidateCoin` |
+| Call deadline passed, fresh mark, still breached | `Liquidate` / `LiquidateToken` |
 | Call deadline passed, price recovered | nothing (the borrower can resolve the call) |
-| Ledger time past maturity | T-Bill: `LiquidateOverdue` with the fresh mark (0.9.0 returns surplus collateral at that price; without a fresh mark the keeper reports `needsFreshPrice`). Canton Coin: `PrepareCoinReceipt` → `LiquidateCoinOverdue` (no mark needed) |
-| CoinLoan past its settlement deadline (maturity + 1 day) | `CloseLapsedCoinLoan` (0.10.0): the registry no longer settles the lock, so the loan closes as `CollateralLapsed` with nothing seized. No registry call and no approval quorum: nothing changes hands |
+| Ledger time past maturity | T-Bill: `LiquidateOverdue` with the fresh mark (0.9.0 returns surplus collateral at that price; without a fresh mark the keeper reports `needsFreshPrice`). Token loan: `LiquidateTokenOverdue` (no mark needed) |
+| TokenLoan past its lock deadline (maturity + 1 day) | `CloseLapsedTokenLoan`: the registry no longer settles the lock, so the loan closes as `CollateralLapsed` with nothing seized. No registry call and no approval quorum: nothing changes hands |
 | No mark, ambiguous marks, or a mark older than 300 s | nothing; logs `needsFreshPrice` |
-| CoinLoan within `--warn-hours` of its allocation settlement deadline (maturity + 1 day) | warning on stdout and stderr: after that deadline the borrower can withdraw the locked coin |
+| TokenLoan within `--warn-hours` of its lock deadline (maturity + 1 day) | warning on stdout and stderr: after that deadline the borrower can withdraw the locked collateral |
 
 The rules match `daml/Veil.daml`: a mark is usable only while
 `observedAt <= now <= observedAt + 300s`; breach is
@@ -36,16 +36,16 @@ so it waits slightly longer rather than submitting a command the ledger rejects.
 The keeper is the lender, not the valuer: it never publishes prices. A stale mark
 blocks margin-call and price-based liquidation until the valuer publishes.
 
-Canton Coin liquidation fetches the allocation-factory choice context from the
-token registry, submits `PrepareCoinReceipt` with its disclosed contracts, then
-fetches the settlement-factory context and submits `LiquidateCoin` or
-`LiquidateCoinOverdue`. Both registry requests name the loan's executors: the
-recorded `settlementExecutors` (lender and borrower, since 0.10.0), or the lender
-alone for a loan opened by 0.9.0. The settlement batch lists all of them as
-actors; the keeper still submits as the lender only, because the `CoinLoan`
-signatories supply the borrower's authority on-ledger. If an earlier attempt
-already created a matching receipt allocation (same executors), the keeper
-reuses it instead of creating another.
+Token-loan liquidation is one choice, `LiquidateToken` or
+`LiquidateTokenOverdue`: inside it Veil allocates the lender's receiving side and
+settles the whole lock through the factory pinned on the loan. The keeper fetches
+the Canton Coin registry's allocation-factory context (falling back to the V1
+endpoint where Scan has no V2 one, as on Splice LocalNet 0.6.12) and its
+settlement-factory context, both naming the lock's settlement (lender and
+borrower as executors), and submits with their disclosed contracts. It submits as
+the lender only: the `TokenLoan` signatories supply the borrower's authority
+on-ledger. The keeper handles Canton Coin collateral only; a loan against another
+instrument is reported as invalid.
 
 ### Command journal
 
@@ -53,8 +53,7 @@ With `--execute`, every submission goes through a write-ahead journal in
 `--state-dir` (default `.local/keeper/`, env `VEIL_KEEPER_STATE_DIR`):
 
 - `journal.json`: one entry per operation key `<kind>:<loan contract id>`
-  (kinds `issueMarginCall`, `liquidate`, `liquidateOverdue`, `closeLapsed`, and `receipt` for
-  the Canton Coin `PrepareCoinReceipt` step). Rewritten atomically (temp file,
+  (kinds `issueMarginCall`, `liquidate`, `liquidateOverdue`, `closeLapsed`). Rewritten atomically (temp file,
   fsync, rename) under `journal.lock`, so a running keeper and the operator
   commands below can share it.
 - `audit.log`: append-only JSON lines for every proposal, approval decision,
@@ -132,7 +131,7 @@ nothing. It does not call the registry or touch the journal in dry-run. Add
 --submit-timeout-seconds N  after this the outcome is unknown (default 60)
 --interval N        seconds between ticks when looping (default 30)
 --skew-seconds N    clock-skew margin (default 5)
---warn-hours N      CoinLoan settlement-deadline warning window (default 6)
+--warn-hours N      TokenLoan lock-deadline warning window (default 6)
 ```
 
 ## Configuration
@@ -143,9 +142,9 @@ nothing. It does not call the registry or touch the journal in dry-run. Add
 | `VEIL_PARTY_LENDER` | `--lender` | lender party to act as (required) |
 | `VEIL_PARTY_VALUER` | `--valuer` | only trust marks from, and only handle loans priced by, this valuer |
 | `VEIL_PARTY_ISSUER` | `--issuer` | only handle loans of this issuer |
-| `VEIL_REGISTRY_URL` | `--registry-url` | token registry (needed to liquidate a `CoinLoan`) |
+| `VEIL_REGISTRY_URL` | `--registry-url` | token registry (needed to liquidate a `TokenLoan`) |
 | `VEIL_LEDGER_USER_ID` | `--user-id` | ledger user; defaults to the token's `sub` |
-| `VEIL_PACKAGE_REF` | `--package-ref` | default `#veil-lite` |
+| `VEIL_PACKAGE_REF` | `--package-ref` | default `#veil` |
 
 Credentials, first match wins (never printed):
 

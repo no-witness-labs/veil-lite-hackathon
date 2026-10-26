@@ -11,6 +11,7 @@ import {
   coinAdmin,
   proposeSubstitution,
   rejectSubstitution,
+  COIN_ASSET,
   COLLATERAL_ASSET,
   createOffer,
   ensureDesk,
@@ -42,7 +43,8 @@ import {
   assetOf,
   currentDeal,
   fmtTimestamp,
-  isCoinDeal,
+  assetLabel,
+  isTokenDeal,
   marginCallOf,
   repaidOf,
   substitutionRequestFor,
@@ -365,8 +367,10 @@ export default function App() {
   const showCreateForm = !isOutsider && role === 'lender' && (status === 'none' || lenderCanStartNext)
   const showWaiting = !isOutsider && !isValuer && (role === 'borrower' || role === 'regulator') && status === 'none'
   const showPosition = !isOutsider && !isValuer && hasDeal && !!deal && !lenderCanStartNext
-  const coinDeal = isCoinDeal(deal)
+  const tokenDeal = isTokenDeal(deal)
   const dealAsset = assetOf(deal) ?? COLLATERAL_ASSET
+  // A token loan's principal and payments are demo USDCx; a T-Bill loan's are cash.
+  const spendable = (kind: 'cash' | 'usdcx') => holdings.filter((holding) => holding.kind === kind).reduce((sum, holding) => sum + holding.amount, 0)
   const collateralCandidates = holdings
     .filter((holding) => holding.kind === 'collateral' && holding.asset === dealAsset)
     .map((holding) => holding.amount)
@@ -387,7 +391,7 @@ export default function App() {
   // The largest single reserve holding: a top-up of any size up to this is
   // carved out of it privately before the loan sees it.
   // Canton Coin loans have no top-up choice: they cure by pay-down or recovery.
-  const availableTopUp = !coinDeal && collateralCandidates.length > 0 ? collateralCandidates[collateralCandidates.length - 1] : 0
+  const availableTopUp = !tokenDeal && collateralCandidates.length > 0 ? collateralCandidates[collateralCandidates.length - 1] : 0
 
   const onReset = async () => {
     if (session?.role !== 'operator' || configOk !== true || busy) return
@@ -651,7 +655,7 @@ export default function App() {
                     <ValuationPanel
                       contracts={deskView}
                       assets={VALUED_ASSETS}
-                      onPublish={(price, asset) => act(`Publish ${asset} valuation ${price.toFixed(2)}`, PARTY_NAMES.valuer, (snapshot) => publishValuation(price, asset, snapshot))}
+                      onPublish={(price, asset) => act(`Publish ${assetLabel(asset)} valuation ${price.toFixed(2)}`, PARTY_NAMES.valuer, (snapshot) => publishValuation(price, asset, snapshot))}
                       busy={busy}
                     />
                   )}
@@ -660,7 +664,7 @@ export default function App() {
                       draft={draft}
                       coinAvailable={coinAvailable}
                       valuations={availableValuations}
-                      availableCash={holdings.filter((holding) => holding.kind === 'cash').reduce((sum, holding) => sum + holding.amount, 0)}
+                      availableCash={spendable(draft.collateralAsset === COIN_ASSET ? 'usdcx' : 'cash')}
                       onChange={(field, value) => setDraft((d) => ({ ...d, [field]: value }) as Draft)}
                       onSubmit={() => act('Create offer', PARTY_NAMES.lender, (snapshot) => createOffer(draft, snapshot))}
                       busy={busy}
@@ -713,7 +717,7 @@ export default function App() {
                     <PaydownPanel
                       loan={deal}
                       valuation={valuation}
-                      availableCash={holdings.filter((holding) => holding.kind === 'cash').reduce((sum, holding) => sum + holding.amount, 0)}
+                      availableCash={spendable(tokenDeal ? 'usdcx' : 'cash')}
                       busy={busy}
                       onPayDown={(amount) =>
                         act(`Pay down ${amount}`, PARTY_NAMES.borrower, (snapshot) =>
@@ -721,7 +725,7 @@ export default function App() {
                         )}
                     />
                   )}
-                  {showPosition && deal && status === 'active' && !coinDeal && (
+                  {showPosition && deal && status === 'active' && !tokenDeal && (
                     <SubstitutionPanel
                       role={role}
                       loan={deal}

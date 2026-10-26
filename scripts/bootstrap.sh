@@ -10,7 +10,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BASE="${1:-http://127.0.0.1:6864}"
-DAR="$ROOT/.daml/dist/veil-lite-1.0.0.dar"
+DAR="$ROOT/.daml/dist/veil-1.0.0.dar"
 CONFIG="$ROOT/frontend/public/ledger-config.json"
 AUTH_DIR="$ROOT/.local/auth"
 ADMIN_HEADER="$AUTH_DIR/headers/participant_admin.txt"
@@ -176,7 +176,7 @@ mkdir -p "$(dirname "$CONFIG")"
 cat > "$CONFIG" <<JSON
 {
   "jsonApiUrl": "$BASE",
-  "packageRef": "#veil-lite",
+  "packageRef": "#veil",
   "issuer": "$ISSUER",
   "parties": {
     "lender": "$LENDER",
@@ -204,7 +204,7 @@ create_holding() {
   # $1 = owner; issuance requires both owner and issuer authority.
   curl --fail-with-body -sS -o /dev/null -X POST "$BASE/v2/commands/submit-and-wait-for-transaction" \
     -H "@$OPERATOR_HEADER" -H "Content-Type: application/json" \
-    -d "{\"commands\":{\"commands\":[{\"CreateCommand\":{\"templateId\":\"#veil-lite:Veil:$3\",\"createArguments\":$2}}],\"commandId\":\"seed-$3-$RANDOM\",\"actAs\":[\"$ISSUER\",\"$1\"],\"userId\":\"$USER_ID\"}}"
+    -d "{\"commands\":{\"commands\":[{\"CreateCommand\":{\"templateId\":\"#veil:Veil:$3\",\"createArguments\":$2}}],\"commandId\":\"seed-$3-$RANDOM\",\"actAs\":[\"$ISSUER\",\"$1\"],\"userId\":\"$USER_ID\"}}"
 }
 
 ledger_end="$(curl --fail-with-body -sS -H "@$OPERATOR_HEADER" "$BASE/v2/state/ledger-end" \
@@ -249,7 +249,7 @@ print(len(marks))')"
 seed_stream() {
   curl --fail-with-body -sS -o /dev/null -X POST "$BASE/v2/commands/submit-and-wait-for-transaction" \
     -H "@$OPERATOR_HEADER" -H "Content-Type: application/json" \
-    -d "{\"commands\":{\"commands\":[{\"CreateAndExerciseCommand\":{\"templateId\":\"#veil-lite:Veil:ValuationStream\",\"createArguments\":{\"valuationAgent\":\"$VALUER\",\"lender\":\"$LENDER\",\"borrower\":\"$BORROWER\",\"regulator\":\"$REGULATOR\",\"collateralAsset\":\"$1\"},\"choice\":\"PublishInitial\",\"choiceArgument\":{\"unitPrice\":\"${2:-1}\"}}}],\"commandId\":\"seed-valuation-$RANDOM\",\"actAs\":[\"$LENDER\",\"$BORROWER\",\"$VALUER\"],\"userId\":\"$USER_ID\"}}"
+    -d "{\"commands\":{\"commands\":[{\"CreateAndExerciseCommand\":{\"templateId\":\"#veil:Veil:ValuationStream\",\"createArguments\":{\"valuationAgent\":\"$VALUER\",\"lender\":\"$LENDER\",\"borrower\":\"$BORROWER\",\"regulator\":\"$REGULATOR\",\"collateralAsset\":\"$1\"},\"choice\":\"PublishInitial\",\"choiceArgument\":{\"unitPrice\":\"${2:-1}\"}}}],\"commandId\":\"seed-valuation-$RANDOM\",\"actAs\":[\"$LENDER\",\"$BORROWER\",\"$VALUER\"],\"userId\":\"$USER_ID\"}}"
 }
 if [ "$mark_count" = "0" ]; then
   seed_stream "$COLLATERAL_ASSET"

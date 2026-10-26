@@ -1,5 +1,5 @@
 import type { Holding, Role } from '../types'
-import { PARTY_NAMES, UNIT_CASH, fmtAmount, shortId } from '../state'
+import { PARTY_NAMES, UNIT_CASH, UNIT_USDCX, assetLabel, fmtAmount, shortId } from '../state'
 import { Panel, Tag } from '../ui/primitives'
 
 /** The active party's own wallet. Holdings are issuer + owner signatory with
@@ -12,6 +12,7 @@ export function PositionsTable({ role, holdings }: { role: Role; holdings: Holdi
   const cash = rows.filter((h) => h.kind === 'cash').reduce((s, h) => s + h.amount, 0)
   const units = rows.filter((h) => h.kind === 'collateral').reduce((s, h) => s + h.amount, 0)
   const coin = rows.filter((h) => h.kind === 'coin').reduce((s, h) => s + h.amount, 0)
+  const usdcx = rows.filter((h) => h.kind === 'usdcx').reduce((s, h) => s + h.amount, 0)
 
   return (
     <Panel
@@ -21,7 +22,7 @@ export function PositionsTable({ role, holdings }: { role: Role; holdings: Holdi
       footer={
         <>
           <span className="v-id">
-            {fmtAmount(cash)} {UNIT_CASH}, {fmtAmount(units, 0)} units{coin > 0 ? `, ${fmtAmount(coin)} CC` : ''}
+            {fmtAmount(cash)} {UNIT_CASH}, {fmtAmount(units, 0)} units{usdcx > 0 ? `, ${fmtAmount(usdcx)} ${UNIT_USDCX}` : ''}{coin > 0 ? `, ${fmtAmount(coin)} CC` : ''}
           </span>
           <span className="v-id">{rows.length} contract{rows.length === 1 ? '' : 's'}</span>
         </>
@@ -45,18 +46,18 @@ export function PositionsTable({ role, holdings }: { role: Role; holdings: Holdi
             {rows.map((h) => (
               <tr key={h.contractId}>
                 <td>
-                  <Tag tone={h.kind === 'cash' ? 'accent' : 'info'}>{h.kind}</Tag>
+                  <Tag tone={h.kind === 'cash' || h.kind === 'usdcx' ? 'accent' : 'info'}>{h.kind}</Tag>
                 </td>
                 <td style={{ color: 'var(--ink-900)' }}>
-                  {h.kind === 'cash' ? 'USDC' : (h.asset ?? 'Collateral')}{' '}
-                  <span className="v-muted">{h.kind === 'coin' ? '(real, DevNet)' : '(simulated)'}</span>
+                  {h.kind === 'cash' ? 'USDC' : (assetLabel(h.asset) || 'Collateral')}{' '}
+                  <span className="v-muted">{h.kind === 'coin' ? '(real, DevNet)' : h.kind === 'usdcx' ? '(demo, Token Standard)' : '(simulated)'}</span>
                 </td>
                 <td>
                   <span className="v-id" title={h.contractId}>{shortId(h.contractId, 10, 6)}</span>
                 </td>
                 <td className="v-num">
                   {fmtAmount(h.amount, h.kind === 'collateral' ? 0 : 2)}
-                  <span className="v-metric__unit">{h.kind === 'cash' ? UNIT_CASH : h.kind === 'coin' ? 'CC' : 'units'}</span>
+                  <span className="v-metric__unit">{h.kind === 'cash' ? UNIT_CASH : h.kind === 'usdcx' ? UNIT_USDCX : h.kind === 'coin' ? 'CC' : 'units'}</span>
                 </td>
               </tr>
             ))}

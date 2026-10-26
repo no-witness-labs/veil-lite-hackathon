@@ -1,6 +1,6 @@
 {
   "jsonApiUrl": "http://127.0.0.1:6864",
-  "packageRef": "#veil-lite",
+  "packageRef": "#veil",
   "issuer": "Issuer::<participant-fingerprint>",
   "parties": {
     "lender": "Lender::<participant-fingerprint>",

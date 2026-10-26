@@ -33,13 +33,13 @@ party namespace (the first segment of the user ID, e.g. `8e0db906-`).
 1. Create six parties whose names end in `veil-issuer`, `veil-lender`,
    `veil-borrower`, `veil-regulator`, `veil-valuer` and `veil-outsider`
    (e.g. `8e0db906-veil-lender`). The console grants your user act-as and read-as.
-2. Build the DAR with `dpm build` and upload `.daml/dist/veil-lite-0.10.0.dar` in the
-   Collections tab. Re-uploads need a version bump in `daml.yaml`, and the
-   participant checks upgrade compatibility for the same package name. The build
-   runs the same check against the live 0.9.0 package
-   (`upgrades: vendor/veil-lite/veil-lite-0.9.0.dar`). Upload the DAR before
-   deploying the app: the 0.10.0 app calls `CloseLapsedCoinLoan`, which 0.9.0
-   does not have.
+2. Build the DAR with `dpm build` and upload `.daml/dist/veil-1.0.0.dar` and
+   `vendor/splice-test-token-v2/splice-test-token-v2-1.0.0.dar` (demo USDCx) in
+   the Collections tab. Re-uploads need a version bump in `daml.yaml`, and the
+   participant checks upgrade compatibility for the same package name. 1.0 is
+   the package `veil`, not `veil-lite`: the node keeps veil-lite 0.10.0, which
+   1.0 cannot upgrade. Upload both DARs before deploying the app, which calls
+   `#veil:Veil:…` templates.
 
 ## 2. Obtain an offline refresh token (once)
 

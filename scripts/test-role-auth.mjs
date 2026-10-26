@@ -72,7 +72,7 @@ async function contracts(role, base = web, view = party[role]) {
   return entries.map((e) => e.contractEntry?.JsActiveContract?.createdEvent).filter(Boolean)
 }
 
-const template = (name) => `#veil-lite:Veil:${name}`
+const template = (name) => `#veil:Veil:${name}`
 const named = (list, name) => list.filter((c) => c.templateId.endsWith(`:Veil:${name}`))
 const TBILL = 'Tokenized T-Bill'
 const MMF = 'Tokenized MMF'

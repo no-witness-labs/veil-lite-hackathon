@@ -11,7 +11,7 @@
 //   C  100 USDCx against 1,000 CC: repay, which unlocks the CC
 //
 // Needs a fresh Splice LocalNet (0.6.12; the app-provider participant's JSON
-// Ledger API on :3975 and its validator on :3903) with no older veil-lite
+// Ledger API on :3975 and its validator on :3903) with no older veil
 // package, and the DAR built: dpm build
 // Usage: CANTON_TOKEN=<LocalNet ledger API token> node scripts/token-loans-localnet.mjs
 import { randomUUID } from 'node:crypto'
@@ -39,12 +39,12 @@ const call = (path, body, method) => http(J, path, body, method)
 const registry = (path, body, method) => http(REGISTRY, path, body, method)
 
 const T = {
-  ValuationStream: '#veil-lite:Veil:ValuationStream',
-  CollateralValuation: '#veil-lite:Veil:CollateralValuation',
-  TokenOfferRequest: '#veil-lite:Veil:TokenOfferRequest',
-  TokenLoanOffer: '#veil-lite:Veil:TokenLoanOffer',
-  TokenLoan: '#veil-lite:Veil:TokenLoan',
-  TokenLoanClosed: '#veil-lite:Veil:TokenLoanClosed',
+  ValuationStream: '#veil:Veil:ValuationStream',
+  CollateralValuation: '#veil:Veil:CollateralValuation',
+  TokenOfferRequest: '#veil:Veil:TokenOfferRequest',
+  TokenLoanOffer: '#veil:Veil:TokenLoanOffer',
+  TokenLoan: '#veil:Veil:TokenLoan',
+  TokenLoanClosed: '#veil:Veil:TokenLoanClosed',
   TokenRules: '#splice-test-token-v2:Splice.Testing.Tokens.TestTokenV2:TokenRules',
   Token: '#splice-test-token-v2:Splice.Testing.Tokens.TestTokenV2.Holding:Token',
 }
@@ -233,8 +233,8 @@ async function payments(p, usdc) {
 
 // ---------------------------------------------------------------------------
 
-step('Installing veil-lite 1.0.0 and splice-test-token-v2 on the app-provider participant')
-for (const path of ['.daml/dist/veil-lite-1.0.0.dar', 'vendor/splice-test-token-v2/splice-test-token-v2-1.0.0.dar']) {
+step('Installing veil 1.0.0 and splice-test-token-v2 on the app-provider participant')
+for (const path of ['.daml/dist/veil-1.0.0.dar', 'vendor/splice-test-token-v2/splice-test-token-v2-1.0.0.dar']) {
   const up = await fetch(`${J}/v2/packages`, { method: 'POST', headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/octet-stream' }, body: readFileSync(REPO + path) })
   if (!up.ok) throw new Error(`upload ${path} → ${up.status} ${(await up.text()).slice(0, 400)}`)
   info(`uploaded ${path}`)

@@ -37,17 +37,21 @@ function tbillLoan(over = {}) {
   }
 }
 
-function coinLoan(over = {}) {
+const registryOf = (admin, id) => ({ instrument: { admin, id }, allocationFactory: 'factory-1', settlementFactory: 'factory-1' })
+
+// Demo USDCx (issued by the demo issuer) lent against Canton Coin.
+function tokenLoan(over = {}) {
   return {
-    contractId: 'coin-loan-1',
-    template: 'CoinLoan',
+    contractId: 'token-loan-1',
+    template: 'TokenLoan',
     args: {
-      issuer: P.issuer, lender: P.lender, borrower: P.borrower, regulator: P.regulator,
-      valuationAgent: P.valuer, valuationStreamId: 'stream-cc', coinAdmin: P.dso,
+      lender: P.lender, borrower: P.borrower, regulator: P.regulator,
+      valuationAgent: P.valuer, valuationStreamId: 'stream-cc',
+      principalRegistry: registryOf(P.issuer, 'USDCx'), collateralRegistry: registryOf(P.dso, 'Amulet'),
       principal: '100.0000000000', interest: '5.0000000000', collateralQuantity: '1000.0000000000',
       maturity: iso(30 * DAY), liquidationThresholdLtv: '80.0000000000', marginCallWindowSeconds: '300',
-      settlementRef: 'veil-123', allocationCid: 'alloc-borrower',
-      marginCall: null, amountRepaid: null,
+      settlementRef: 'veil-123', settlementAnchor: 'anchor-1', lockCid: 'lock-1',
+      marginCall: null, amountRepaid: '0.0000000000', payments: '0',
       ...over,
     },
   }
@@ -58,7 +62,7 @@ function mark(streamId, unitPrice, observedAt = iso(-60_000), over = {}) {
     contractId: `mark-${streamId}`,
     args: {
       valuationAgent: P.valuer, lender: P.lender, borrower: P.borrower, regulator: P.regulator,
-      collateralAsset: streamId === 'stream-cc' ? 'Canton Coin' : 'Tokenized T-Bill',
+      collateralAsset: streamId === 'stream-cc' ? 'Amulet' : 'Tokenized T-Bill',
       streamId, unitPrice, observedAt, ...over,
     },
   }
@@ -163,36 +167,36 @@ describe('decide', () => {
     assert.deepEqual(kinds(actions), ['hold'])
   })
 
-  test('CoinLoan: breach, expiry and overdue map to the coin choices', () => {
+  test('TokenLoan: breach, expiry and overdue map to the token choices', () => {
     // 100 / (1000 * 0.12) = 83.3%
     const cc = mark('stream-cc', '0.12')
-    assert.equal(decide([coinLoan()], [cc], NOW)[0].choice, 'IssueCoinMarginCall')
-    const expired = coinLoan({ marginCall: openCall(iso(-60_000)) })
-    assert.equal(decide([expired], [cc], NOW)[0].choice, 'LiquidateCoin')
-    const overdue = decide([coinLoan({ maturity: iso(-HOUR) })], [], NOW)
+    assert.equal(decide([tokenLoan()], [cc], NOW)[0].choice, 'IssueTokenMarginCall')
+    const expired = tokenLoan({ marginCall: openCall(iso(-60_000)) })
+    assert.equal(decide([expired], [cc], NOW)[0].choice, 'LiquidateToken')
+    const overdue = decide([tokenLoan({ maturity: iso(-HOUR) })], [], NOW)
     assert.deepEqual(kinds(overdue), ['liquidateOverdue'])
-    assert.equal(overdue[0].choice, 'LiquidateCoinOverdue')
+    assert.equal(overdue[0].choice, 'LiquidateTokenOverdue')
   })
 
-  test('CoinLoan near its settlement deadline warns loudly', () => {
+  test('TokenLoan near its lock deadline warns loudly', () => {
     // settlement deadline = maturity + 1 day = now + 4h
-    const actions = decide([coinLoan({ maturity: iso(4 * HOUR - DAY) })], [], NOW)
+    const actions = decide([tokenLoan({ maturity: iso(4 * HOUR - DAY) })], [], NOW)
     assert.deepEqual(kinds(actions), ['warnSettlementDeadline', 'liquidateOverdue'])
     assert.equal(actions[0].hoursLeft, 4)
-    const passed = decide([coinLoan({ maturity: iso(-2 * DAY) })], [], NOW)
+    const passed = decide([tokenLoan({ maturity: iso(-2 * DAY) })], [], NOW)
     assert.match(passed[0].reason, /has passed/)
-    const far = decide([coinLoan({ maturity: iso(-HOUR) })], [], NOW)
+    const far = decide([tokenLoan({ maturity: iso(-HOUR) })], [], NOW)
     assert.deepEqual(kinds(far), ['liquidateOverdue'])
-    const custom = decide([coinLoan({ maturity: iso(-HOUR) })], [], NOW, { settlementWarnHours: 24 })
+    const custom = decide([tokenLoan({ maturity: iso(-HOUR) })], [], NOW, { settlementWarnHours: 24 })
     assert.deepEqual(kinds(custom), ['warnSettlementDeadline', 'liquidateOverdue'])
   })
 
-  test('CoinLoan past its settlement deadline is closed as lapsed, not liquidated', () => {
-    const lapsed = decide([coinLoan({ maturity: iso(-DAY - 60_000) })], [], NOW)
+  test('TokenLoan past its lock deadline is closed as lapsed, not liquidated', () => {
+    const lapsed = decide([tokenLoan({ maturity: iso(-DAY - 60_000) })], [], NOW)
     assert.deepEqual(kinds(lapsed), ['warnSettlementDeadline', 'closeLapsed'])
-    assert.equal(lapsed[1].choice, 'CloseLapsedCoinLoan')
+    assert.equal(lapsed[1].choice, 'CloseLapsedTokenLoan')
     // Within the skew margin of the deadline the lock may still settle.
-    const atDeadline = decide([coinLoan({ maturity: iso(-DAY - 2_000) })], [], NOW)
+    const atDeadline = decide([tokenLoan({ maturity: iso(-DAY - 2_000) })], [], NOW)
     assert.deepEqual(kinds(atDeadline), ['warnSettlementDeadline', 'liquidateOverdue'])
   })
 
@@ -311,7 +315,7 @@ describe('keeper I/O', () => {
     ledgerState([
       acsEntry('pkg:Veil:Loan', loan.contractId, loan.args),
       acsEntry('pkg:Veil:CollateralValuation', 'mark-stream-tbill', mark('stream-tbill', '0.8').args),
-      acsEntry('pkg:Veil:CoinLoan', 'coin-overdue', coinLoan({ maturity: iso(-HOUR) }).args),
+      acsEntry('pkg:Veil:TokenLoan', 'token-overdue', tokenLoan({ maturity: iso(-HOUR) }).args),
     ])
     const { k, events } = keeper(false)
     const summary = await k.tick()
@@ -336,7 +340,7 @@ describe('keeper I/O', () => {
     assert.equal(submit.method, 'POST')
     const { commands } = submit.body
     assert.deepEqual(commands.commands, [{
-      ExerciseCommand: { templateId: '#veil-lite:Veil:Loan', contractId: 'loan-1', choice: 'IssueMarginCall', choiceArgument: { valuationCid: 'mark-stream-tbill' } },
+      ExerciseCommand: { templateId: '#veil:Veil:Loan', contractId: 'loan-1', choice: 'IssueMarginCall', choiceArgument: { valuationCid: 'mark-stream-tbill' } },
     }])
     assert.deepEqual(commands.actAs, [P.lender])
     assert.equal(commands.userId, 'team-user')
@@ -352,136 +356,96 @@ describe('keeper I/O', () => {
     routes.push({ match: (c) => c.url.endsWith('/v2/commands/submit-and-wait-for-transaction'), reply: { json: { transaction: { updateId: 'u2', events: [] } } } })
     await keeper(true).k.tick()
     assert.deepEqual(submits()[0].body.commands.commands[0].ExerciseCommand, {
-      templateId: '#veil-lite:Veil:Loan', contractId: 'loan-1', choice: 'LiquidateOverdue', choiceArgument: { valuationCid: 'mark-stream-tbill' },
+      templateId: '#veil:Veil:Loan', contractId: 'loan-1', choice: 'LiquidateOverdue', choiceArgument: { valuationCid: 'mark-stream-tbill' },
     })
   })
 
-  test('CoinLoan liquidation: receipt, settlement context and disclosed contracts', async () => {
-    const loan = coinLoan({ marginCall: openCall(iso(-60_000)) })
+  test('TokenLoan liquidation: one choice with the registry\'s receive and settle context', async () => {
+    const loan = tokenLoan({ marginCall: openCall(iso(-60_000)) })
     ledgerState([
-      acsEntry('pkg:Veil:CoinLoan', loan.contractId, loan.args),
+      acsEntry('pkg:Veil:TokenLoan', loan.contractId, loan.args),
       acsEntry('pkg:Veil:CollateralValuation', 'mark-stream-cc', mark('stream-cc', '0.12').args),
     ])
-    // No reusable receipt from an earlier attempt.
-    routes.push({ match: (c) => c.url.endsWith('/v2/state/active-contracts') && c.body.eventFormat.filtersByParty[P.lender].cumulative[0].identifierFilter.InterfaceFilter, reply: { json: [] } })
     const allocDisclosed = { templateId: 'splice:AllocationFactory', contractId: 'factory-1', createdEventBlob: 'blob-a', synchronizerId: 'sync::1', debugPayload: { x: 1 } }
     const settleDisclosed = { templateId: 'splice:AmuletRules', contractId: 'rules-1', createdEventBlob: 'blob-s', synchronizerId: 'sync::1' }
     routes.push(
-      { match: (c) => c.url === `${REGISTRY}/registry/allocation-instruction/v2/allocation-factory`, reply: { json: { factoryId: 'factory-1', choiceContext: { choiceContextData: { values: { a: 1 } }, disclosedContracts: [allocDisclosed] } } } },
-      { match: (c) => c.url === `${REGISTRY}/registry/allocation/v2/settlement-factory`, reply: { json: { factoryId: 'settle-1', choiceContext: { choiceContextData: { values: { s: 1 } }, disclosedContracts: [settleDisclosed] } } } },
-      {
-        match: (c) => c.url.endsWith('/v2/commands/submit-and-wait-for-transaction'),
-        reply: (c) => c.body.commands.commands[0].ExerciseCommand.choice === 'PrepareCoinReceipt'
-          ? { json: { transaction: { updateId: 'u-prep', events: [{ CreatedEvent: { templateId: 'splice:Splice.AmuletAllocation:AmuletAllocation', contractId: 'receipt-1' } }] } } }
-          : { json: { transaction: { updateId: 'u-liq', events: [] } } },
-      },
+      { match: (c) => c.url === `${REGISTRY}/registry/allocation-instruction/v2/allocation-factory`, reply: { json: { factoryId: 'factory-1', choiceContext: { choiceContextData: { values: { a: 1 } }, disclosedContracts: [allocDisclosed, settleDisclosed] } } } },
+      { match: (c) => c.url === `${REGISTRY}/registry/allocation/v2/settlement-factory`, reply: { json: { factoryId: 'factory-1', choiceContext: { choiceContextData: { values: { s: 1 } }, disclosedContracts: [settleDisclosed] } } } },
+      { match: (c) => c.url.endsWith('/v2/commands/submit-and-wait-for-transaction'), reply: { json: { transaction: { updateId: 'u-liq', events: [] } } } },
     )
-    const { k, events } = keeper(true)
+    const { k } = keeper(true)
     const summary = await k.tick()
     assert.deepEqual(summary, { decisions: 1, submitted: 1, benign: 0, errors: 0, proposed: 0, blocked: 0, unknown: 0 })
 
-    const [prepare, liquidate] = submits().map((c) => c.body.commands)
-    assert.deepEqual(prepare.commands[0].ExerciseCommand, {
-      templateId: '#veil-lite:Veil:CoinLoan', contractId: 'coin-loan-1', choice: 'PrepareCoinReceipt',
-      choiceArgument: { allocationFactoryCid: 'factory-1', extraArgs: { context: { values: { a: 1 } }, meta: { values: {} } } },
-    })
-    assert.deepEqual(prepare.actAs, [P.lender])
-    assert.deepEqual(prepare.disclosedContracts, [{ templateId: 'splice:AllocationFactory', contractId: 'factory-1', createdEventBlob: 'blob-a', synchronizerId: 'sync::1' }])
-
+    const lock = { executors: [P.lender, P.borrower], id: 'veil-123/collateral', cid: 'anchor-1', meta: { values: {} } }
     const allocReq = calls.find((c) => c.url.endsWith('/allocation-factory')).body
     assert.equal(allocReq.choiceArguments.allocation.authorizer.owner, P.lender)
+    assert.equal(allocReq.choiceArguments.allocation.admin, P.dso)
     assert.equal(allocReq.choiceArguments.allocation.committed, false)
     assert.equal(allocReq.choiceArguments.allocation.transferLegSides[0].side, 'ReceiverSide')
     assert.equal(allocReq.choiceArguments.allocation.settlementDeadline, new Date(Date.parse(loan.args.maturity) + DAY).toISOString())
-    assert.deepEqual(allocReq.choiceArguments.settlement, { executors: [P.lender], id: 'veil-123', cid: null, meta: { values: {} } })
+    assert.deepEqual(allocReq.choiceArguments.settlement, lock)
+    assert.deepEqual(allocReq.choiceArguments.actors, [P.lender])
 
     const settleReq = calls.find((c) => c.url.endsWith('/settlement-factory')).body
-    assert.deepEqual(settleReq.choiceArguments.allocations.map((a) => a.allocationCid), ['alloc-borrower', 'receipt-1'])
+    assert.deepEqual(settleReq.choiceArguments.settlement, lock)
+    assert.deepEqual(settleReq.choiceArguments.actors, [P.lender, P.borrower])
+    assert.deepEqual(settleReq.choiceArguments.allocations.map((a) => a.allocationCid), ['lock-1'])
     assert.deepEqual(settleReq.choiceArguments.transferLegs[0].sender.owner, P.borrower)
 
+    const [liquidate] = submits().map((c) => c.body.commands)
     assert.deepEqual(liquidate.commands[0].ExerciseCommand, {
-      templateId: '#veil-lite:Veil:CoinLoan', contractId: 'coin-loan-1', choice: 'LiquidateCoin',
+      templateId: '#veil:Veil:TokenLoan', contractId: 'token-loan-1', choice: 'LiquidateToken',
       choiceArgument: {
-        valuationCid: 'mark-stream-cc', settlementFactoryCid: 'settle-1', receiptAllocationCid: 'receipt-1',
-        extraArgs: { context: { values: { s: 1 } }, meta: { values: {} } },
+        valuationCid: 'mark-stream-cc',
+        receiveArgs: { context: { values: { a: 1 } }, meta: { values: {} } },
+        settleArgs: { context: { values: { s: 1 } }, meta: { values: {} } },
       },
     })
+    // The loan's signatories carry the borrower's authority on-ledger.
     assert.deepEqual(liquidate.actAs, [P.lender])
     assert.equal(liquidate.userId, 'team-user')
-    assert.deepEqual(liquidate.disclosedContracts, [settleDisclosed])
+    // Each disclosed contract once, without the registry's debug fields.
+    assert.deepEqual(liquidate.disclosedContracts, [
+      { templateId: 'splice:AllocationFactory', contractId: 'factory-1', createdEventBlob: 'blob-a', synchronizerId: 'sync::1' },
+      settleDisclosed,
+    ])
     assert.ok(calls.every((c) => c.headers.Authorization === 'Bearer test-token'))
-    assert.ok(events.some((e) => e.event === 'receipt' && e.reused === false))
   })
 
-  test('CoinLoan overdue reuses an earlier receipt allocation', async () => {
-    const loan = coinLoan({ maturity: iso(-HOUR) })
-    ledgerState([acsEntry('pkg:Veil:CoinLoan', loan.contractId, loan.args)])
-    const view = {
-      settlement: { executors: [P.lender], id: 'veil-123', cid: null, meta: { values: {} } },
-      allocation: {
-        authorizer: { owner: P.lender, provider: null, id: '' },
-        transferLegSides: [{ transferLegId: 'collateral', side: 'ReceiverSide', otherside: { owner: P.borrower, provider: null, id: '' }, amount: '1000.0000000000', instrumentId: 'Amulet', meta: { values: {} } }],
-      },
-    }
+  test('TokenLoan overdue liquidates without a mark', async () => {
+    const loan = tokenLoan({ maturity: iso(-HOUR) })
+    ledgerState([acsEntry('pkg:Veil:TokenLoan', loan.contractId, loan.args)])
     routes.push(
-      { match: (c) => c.url.endsWith('/v2/state/active-contracts') && c.body.eventFormat.filtersByParty[P.lender].cumulative[0].identifierFilter.InterfaceFilter, reply: { json: [{ contractEntry: { JsActiveContract: { createdEvent: { templateId: 'splice:X:AmuletAllocation', contractId: 'receipt-old', interfaceViews: [{ viewValue: view }] } } } }] } },
-      { match: (c) => c.url.endsWith('/settlement-factory'), reply: { json: { factoryId: 'settle-1', choiceContext: { choiceContextData: {}, disclosedContracts: [] } } } },
+      { match: (c) => c.url.endsWith('/allocation-factory'), reply: { json: { factoryId: 'factory-1', choiceContext: { choiceContextData: {}, disclosedContracts: [] } } } },
+      { match: (c) => c.url.endsWith('/settlement-factory'), reply: { json: { factoryId: 'factory-1', choiceContext: { choiceContextData: {}, disclosedContracts: [] } } } },
       { match: (c) => c.url.endsWith('/v2/commands/submit-and-wait-for-transaction'), reply: { json: { transaction: { updateId: 'u', events: [] } } } },
     )
     await keeper(true).k.tick()
-    assert.equal(calls.filter((c) => c.url.endsWith('/allocation-factory')).length, 0)
     const [only] = submits()
     const ex = only.body.commands.commands[0].ExerciseCommand
-    assert.equal(ex.choice, 'LiquidateCoinOverdue')
-    assert.equal(ex.choiceArgument.receiptAllocationCid, 'receipt-old')
-    assert.equal(ex.choiceArgument.valuationCid, undefined)
+    assert.equal(ex.choice, 'LiquidateTokenOverdue')
+    assert.deepEqual(Object.keys(ex.choiceArgument), ['receiveArgs', 'settleArgs'])
   })
 
-  test('CoinLoan opened by 0.10.0: receipt and batch name both executors; a lender-only receipt is not reused', async () => {
-    const loan = coinLoan({ maturity: iso(-HOUR), settlementExecutors: [P.lender, P.borrower] })
-    ledgerState([acsEntry('pkg:Veil:CoinLoan', loan.contractId, loan.args)])
-    const legacyReceipt = {
-      settlement: { executors: [P.lender], id: 'veil-123', cid: null, meta: { values: {} } },
-      allocation: {
-        authorizer: { owner: P.lender, provider: null, id: '' },
-        transferLegSides: [{ transferLegId: 'collateral', side: 'ReceiverSide', otherside: { owner: P.borrower, provider: null, id: '' }, amount: '1000.0000000000', instrumentId: 'Amulet', meta: { values: {} } }],
-      },
-    }
-    routes.push(
-      { match: (c) => c.url.endsWith('/v2/state/active-contracts') && c.body.eventFormat.filtersByParty[P.lender].cumulative[0].identifierFilter.InterfaceFilter, reply: { json: [{ contractEntry: { JsActiveContract: { createdEvent: { templateId: 'splice:X:AmuletAllocation', contractId: 'receipt-old', interfaceViews: [{ viewValue: legacyReceipt }] } } } }] } },
-      { match: (c) => c.url.endsWith('/allocation-factory'), reply: { json: { factoryId: 'factory-1', choiceContext: { choiceContextData: {}, disclosedContracts: [] } } } },
-      { match: (c) => c.url.endsWith('/settlement-factory'), reply: { json: { factoryId: 'settle-1', choiceContext: { choiceContextData: {}, disclosedContracts: [] } } } },
-      {
-        match: (c) => c.url.endsWith('/v2/commands/submit-and-wait-for-transaction'),
-        reply: (c) => c.body.commands.commands[0].ExerciseCommand.choice === 'PrepareCoinReceipt'
-          ? { json: { transaction: { updateId: 'u-prep', events: [{ CreatedEvent: { templateId: 'splice:Splice.AmuletAllocation:AmuletAllocation', contractId: 'receipt-new' } }] } } }
-          : { json: { transaction: { updateId: 'u-liq', events: [] } } },
-      },
-    )
-    await keeper(true).k.tick()
-    const joint = { executors: [P.lender, P.borrower], id: 'veil-123', cid: null, meta: { values: {} } }
-    const allocReq = calls.find((c) => c.url.endsWith('/allocation-factory')).body
-    assert.deepEqual(allocReq.choiceArguments.settlement, joint)
-    assert.deepEqual(allocReq.choiceArguments.actors, [P.lender])
-    const settleReq = calls.find((c) => c.url.endsWith('/settlement-factory')).body
-    assert.deepEqual(settleReq.choiceArguments.settlement, joint)
-    assert.deepEqual(settleReq.choiceArguments.actors, [P.lender, P.borrower])
-    assert.deepEqual(settleReq.choiceArguments.allocations.map((a) => a.allocationCid), ['alloc-borrower', 'receipt-new'])
-    const [, liquidate] = submits().map((c) => c.body.commands)
-    assert.equal(liquidate.commands[0].ExerciseCommand.choice, 'LiquidateCoinOverdue')
-    // The CoinLoan's signatories carry the borrower's authority on-ledger.
-    assert.deepEqual(liquidate.actAs, [P.lender])
+  test('a token loan of another USDCx admin is skipped', async () => {
+    const loan = tokenLoan({ principalRegistry: registryOf('Other::9', 'USDCx') })
+    ledgerState([acsEntry('pkg:Veil:TokenLoan', loan.contractId, loan.args)])
+    const { k, events } = keeper(true)
+    const summary = await k.tick()
+    assert.equal(summary.decisions, 0)
+    assert.ok(events.some((e) => e.event === 'skip' && /issuer/.test(e.reason)))
   })
 
-  test('lapsed CoinLoan is closed with CloseLapsedCoinLoan and no registry call', async () => {
-    const loan = coinLoan({ maturity: iso(-2 * DAY), settlementExecutors: [P.lender, P.borrower] })
-    ledgerState([acsEntry('pkg:Veil:CoinLoan', loan.contractId, loan.args)])
+  test('lapsed TokenLoan is closed with CloseLapsedTokenLoan and no registry call', async () => {
+    const loan = tokenLoan({ maturity: iso(-2 * DAY) })
+    ledgerState([acsEntry('pkg:Veil:TokenLoan', loan.contractId, loan.args)])
     routes.push({ match: (c) => c.url.endsWith('/v2/commands/submit-and-wait-for-transaction'), reply: { json: { transaction: { updateId: 'u-lapse', events: [] } } } })
     const summary = await keeper(true).k.tick()
     assert.equal(summary.submitted, 1)
     assert.ok(calls.every((c) => c.url.startsWith(LEDGER)), 'a lapsed close must not call the registry')
     assert.deepEqual(submits()[0].body.commands.commands[0].ExerciseCommand, {
-      templateId: '#veil-lite:Veil:CoinLoan', contractId: 'coin-loan-1', choice: 'CloseLapsedCoinLoan', choiceArgument: {},
+      templateId: '#veil:Veil:TokenLoan', contractId: 'token-loan-1', choice: 'CloseLapsedTokenLoan', choiceArgument: {},
     })
   })
 
@@ -639,6 +603,31 @@ describe('keeper journal', () => {
     assert.equal(done.updateId, 'u-late')
     assert.equal(done.verified, true)
     assert.ok(events.some((e) => e.event === 'reconciled' && e.status === 'completed'))
+  })
+
+  test('a token-loan liquidation whose response was lost is verified by its TokenLoanClosed', async () => {
+    const loan = tokenLoan({ maturity: iso(-HOUR) })
+    const fake = scriptedLedger([acsEntry('pkg:Veil:TokenLoan', loan.contractId, loan.args)], { end: 100 })
+    routes.push(
+      { match: (c) => c.url.endsWith('/allocation-factory'), reply: { json: { factoryId: 'factory-1', choiceContext: { choiceContextData: {}, disclosedContracts: [] } } } },
+      { match: (c) => c.url.endsWith('/settlement-factory'), reply: { json: { factoryId: 'factory-1', choiceContext: { choiceContextData: {}, disclosedContracts: [] } } } },
+    )
+    const { k, journal } = keeper(true)
+    fake.submits.push(networkError('ECONNRESET'))
+    assert.equal((await k.tick()).unknown, 1)
+    const op = `liquidateOverdue:${loan.contractId}`
+    const entry = journal.get(op)
+
+    fake.contracts = []
+    fake.completionPages.push([completion(entry, { updateId: 'u-token', offset: 107 })])
+    fake.updates.set('u-token', { update: { Transaction: { value: { updateId: 'u-token', events: [
+      { ArchivedEvent: { contractId: loan.contractId, templateId: 'pkg:Veil:TokenLoan' } },
+      { CreatedEvent: { contractId: 'closed-1', templateId: 'pkg:Veil:TokenLoanClosed' } },
+    ] } } } })
+    assert.equal((await k.tick()).unknown, 0)
+    const done = journal.get(op)
+    assert.equal(done.status, 'completed')
+    assert.equal(done.verified, true)
   })
 
   test('unknown with no completion stays unknown and is never resubmitted', async () => {
@@ -864,7 +853,7 @@ describe('parseConfig', () => {
     assert.equal(config.once, true)
     assert.equal(config.intervalMs, 10_000)
     assert.equal(config.ledgerUrl, 'http://x')
-    assert.equal(config.packageRef, '#veil-lite')
+    assert.equal(config.packageRef, '#veil')
     assert.throws(() => parseConfig(['--bogus'], {}), /unknown argument/)
   })
 })

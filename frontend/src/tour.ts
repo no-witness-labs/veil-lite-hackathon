@@ -7,7 +7,7 @@
 // The view passed in is already scoped to this browser's desk (desk.ts): its
 // own streams, marks and deals only, so other visitors never move the guide.
 import type { Contract, Role, Valuation } from './types'
-import { isCoinDeal, marginCallOf, statusOf } from './state.ts'
+import { assetLabel, isTokenDeal, marginCallOf, statusOf } from './state.ts'
 
 export type TourTrack = 'tbill' | 'coin'
 export type StepId = 'price' | 'offer' | 'accept' | 'stress' | 'call' | 'cure' | 'repay' | 'privacy'
@@ -19,7 +19,7 @@ export interface TourStep {
   instruction: string
 }
 
-const TRACK_ASSET: Record<TourTrack, string> = { tbill: 'Tokenized T-Bill', coin: 'Canton Coin' }
+const TRACK_ASSET: Record<TourTrack, string> = { tbill: 'Tokenized T-Bill', coin: 'Amulet' }
 /** Lowest price at which the default offer (100 against 150 T-Bill or 1,000 CC,
  * 90% threshold) can still be originated; a stressed price left behind by an
  * earlier run on this desk would otherwise block the next Create offer. */
@@ -37,13 +37,13 @@ export function tourSteps(track: TourTrack): TourStep[] {
     {
       id: 'offer', role: 'lender', title: 'Fund an offer',
       instruction: coin
-        ? 'Choose collateral Canton Coin (real), keep the other terms and press Create offer. The principal is reserved now.'
+        ? 'Choose collateral Canton Coin (real), keep the other terms and press Create offer. The principal, demo USDCx, is committed in a registry allocation now.'
         : 'Keep the default terms (every field is editable) and press Create offer. The principal is reserved now.',
     },
     {
       id: 'accept', role: 'borrower', title: 'Accept and lock collateral',
       instruction: coin
-        ? 'Press Accept offer. In one transaction 1,000 real Canton Coin locks in a CIP-112 committed allocation and the principal arrives.'
+        ? 'Press Accept offer. In one transaction 1,000 real Canton Coin locks in a CIP-112 committed allocation and the USDCx settles to you.'
         : 'Press Accept offer. In one transaction 150 T-Bill units lock and the principal arrives.',
     },
     {
@@ -114,9 +114,7 @@ const isFresh = (mark: Valuation, now: number) => {
 
 export function trackOfDeal(deal?: Contract): TourTrack | undefined {
   if (!deal) return undefined
-  // A closed Canton Coin loan is a LoanClosed record whose asset says so.
-  if (deal.template === 'LoanClosed') return deal.args.collateralAsset === TRACK_ASSET.coin ? 'coin' : 'tbill'
-  return isCoinDeal(deal) ? 'coin' : 'tbill'
+  return isTokenDeal(deal) ? 'coin' : 'tbill'
 }
 
 const breaches = (loan: KnownLoan, unitPrice: number) =>
@@ -207,7 +205,7 @@ export function tourHints(step: TourStep | undefined, view: TourView, track: Tou
   const deal = view.deal
   const dealTrack = trackOfDeal(deal)
   if (deal && dealTrack && dealTrack !== track && statusOf(deal) !== 'repaid' && statusOf(deal) !== 'liquidated') {
-    hints.push(`The open loan uses ${TRACK_ASSET[dealTrack]}. Switch the tour to that track, or finish that loan first.`)
+    hints.push(`The open loan uses ${assetLabel(TRACK_ASSET[dealTrack])}. Switch the tour to that track, or finish that loan first.`)
   }
   if (step?.id === 'price') {
     const marks = view.marks.filter((m) => m.collateralAsset === TRACK_ASSET[track] && isFresh(m, view.now))

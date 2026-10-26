@@ -32,6 +32,7 @@ const deal = (template, contractId, args) => ({
     ...args,
   },
 })
+const registry = (admin, id) => ({ instrument: { admin, id }, allocationFactory: `${id}-factory`, settlementFactory: `${id}-factory` })
 const mark = (contractId, streamId, unitPrice, observedAt, collateralAsset = 'Tokenized T-Bill') => ({
   contractId,
   template: 'CollateralValuation',
@@ -55,19 +56,24 @@ function fixture() {
       marginCall: { issuedAt: iso(-30000), deadline: iso(30000), unitPrice: '0.5' },
     }),
     mark('m-stale', 's-stale', 1.0, iso(-10 * 60000)),
-    // Margin call due later, partially repaid Canton Coin loan
-    deal('CoinLoan', 'coin-call-later', {
+    // Margin call due later, partially repaid token loan against Canton Coin.
+    // It names no issuer: the demo issuer is the admin of its USDCx.
+    deal('TokenLoan', 'coin-call-later', {
+      issuer: undefined,
+      principalRegistry: registry(ISSUER, 'USDCx'),
+      collateralRegistry: registry('DSO::1', 'Amulet'),
       valuationStreamId: 's-coin',
-      allocationCid: 'alloc-1',
+      lockCid: 'alloc-1',
       amountRepaid: '25',
       marginCall: { issuedAt: iso(-30000), deadline: iso(120000), unitPrice: '0.5' },
     }),
-    mark('m-coin', 's-coin', 1.0, iso(-1000), 'Canton Coin'),
+    mark('m-coin', 's-coin', 1.0, iso(-1000), 'Amulet'),
     deal('LoanClosed', 'closed-repaid', { collateralAsset: 'Tokenized T-Bill', reason: 'Repaid' }),
     deal('LoanClosed', 'closed-liq', { collateralAsset: 'Tokenized T-Bill', reason: 'LiquidatedAtMaturity' }),
-    deal('LoanClosed', 'closed-wo', { collateralAsset: 'Canton Coin', reason: 'WrittenOff' }),
-    // Foreign issuer never enters the book.
+    deal('TokenLoanClosed', 'closed-wo', { issuer: undefined, principalInstrument: { admin: ISSUER, id: 'USDCx' }, collateralInstrument: { admin: 'DSO::1', id: 'Amulet' }, reason: 'WrittenOff' }),
+    // Foreign issuer never enters the book, nor a token loan of another USDCx admin.
     deal('Loan', 'foreign', { issuer: 'Other::9', collateralAsset: 'Tokenized T-Bill' }),
+    deal('TokenLoan', 'foreign-token', { issuer: undefined, principalRegistry: registry('Other::9', 'USDCx'), collateralRegistry: registry('DSO::1', 'Amulet') }),
   ]
 }
 
@@ -84,6 +90,8 @@ test('builds one row per issuer-matching deal, sorted by risk', () => {
   assert.equal(byId['loan-call-soon'].ltvState, 'stale')
   assert.equal(byId['loan-call-soon'].ltv, null)
   assert.equal(byId['coin-call-later'].asset, 'Canton Coin')
+  assert.equal(byId['coin-call-later'].unit, 'demo USDCx')
+  assert.equal(byId['loan-breach'].unit, 'simulated USDC')
   assert.equal(byId['coin-call-later'].allocationCid, 'alloc-1')
   // 25 repaid settles the 5 interest first, then 20 of principal.
   assert.equal(byId['coin-call-later'].outstandingPrincipal, 80)
@@ -99,13 +107,14 @@ test('summary covers only open loans', () => {
   const summary = summarizeBook(buildBookRows(fixture(), ISSUER, NOW))
   assert.equal(summary.active, 4)
   assert.equal(summary.inMarginCall, 2)
-  assert.equal(summary.totalOutstandingPrincipal, 380)
+  // The token loan's 80 demo USDCx is never added to simulated cash.
+  assert.deepEqual(summary.outstandingByUnit, { 'simulated USDC': 300, 'demo USDCx': 80 })
   assert.ok(Math.abs(summary.worstLtv - 133.333) < 0.01)
   assert.equal(summary.nextDeadline, iso(30000))
 })
 
 test('empty book summarises to zeros and nulls', () => {
-  assert.deepEqual(summarizeBook([]), { totalOutstandingPrincipal: 0, active: 0, inMarginCall: 0, worstLtv: null, nextDeadline: null })
+  assert.deepEqual(summarizeBook([]), { outstandingByUnit: {}, active: 0, inMarginCall: 0, worstLtv: null, nextDeadline: null })
 })
 
 test('compareRisk puts the sooner deadline first within a tier', () => {

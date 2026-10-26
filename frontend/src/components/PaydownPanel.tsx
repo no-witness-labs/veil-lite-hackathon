@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { Contract, Valuation } from '../types'
-import { UNIT_CASH, balanceOf, fmtAmount, marginCallOf, repaidOf } from '../state'
+import { balanceOf, fmtAmount, marginCallOf, principalUnit, repaidOf } from '../state'
 import { Button, Field, Panel } from '../ui/primitives'
 
 /** Pay part of the balance in cash. Interest is settled first, then principal,
@@ -26,6 +26,7 @@ export function PaydownPanel({
     return () => window.clearInterval(timer)
   }, [])
 
+  const unit = principalUnit(loan)
   const principal = Number(loan.args.principal)
   const interest = Number(loan.args.interest)
   const collateral = Number(loan.args.collateralQuantity)
@@ -47,7 +48,7 @@ export function PaydownPanel({
       : payment >= outstandingDue
         ? `Pay less than the ${fmtAmount(outstandingDue)} outstanding, or use Repay to settle and release collateral.`
         : payment > availableCash
-          ? `Only ${fmtAmount(availableCash)} ${UNIT_CASH} is available.`
+          ? `Only ${fmtAmount(availableCash)} ${unit} is available.`
           : callOpen && !markFresh
             ? 'A margin call is open: a fresh mark is needed to prove the payment cures it.'
             : callOpen && !(ltvAfter < threshold)
@@ -55,7 +56,7 @@ export function PaydownPanel({
               : null
 
   return (
-    <Panel title="Pay down" kicker={`Outstanding: ${fmtAmount(outstandingDue)} ${UNIT_CASH}`}>
+    <Panel title="Pay down" kicker={`Outstanding: ${fmtAmount(outstandingDue)} ${unit}`}>
       <div style={{ padding: 'var(--space-5)', display: 'grid', gap: 'var(--space-4)' }}>
         <p style={{ color: 'var(--ink-500)', lineHeight: 'var(--leading-relaxed)' }}>
           Pay part of the balance in cash. It settles interest first, then principal.
@@ -63,7 +64,7 @@ export function PaydownPanel({
         </p>
         <div className="v-row" style={{ gap: 'var(--space-3)', alignItems: 'flex-end', flexWrap: 'wrap' }}>
           <div className="v-grow" style={{ minWidth: 200 }}>
-            <Field label={`Amount (${UNIT_CASH})`}>
+            <Field label={`Amount (${unit})`}>
               <input
                 className="v-input"
                 type="number"
@@ -81,7 +82,7 @@ export function PaydownPanel({
           </Button>
         </div>
         <p className="v-metric__note" style={{ color: blocker ? 'var(--danger)' : undefined }}>
-          {blocker ?? `Leaves ${fmtAmount(after.outstandingDue)} ${UNIT_CASH} outstanding${Number.isFinite(ltvAfter) ? ` at ${ltvAfter.toFixed(1)}% LTV` : ''}.`}
+          {blocker ?? `Leaves ${fmtAmount(after.outstandingDue)} ${unit} outstanding${Number.isFinite(ltvAfter) ? ` at ${ltvAfter.toFixed(1)}% LTV` : ''}.`}
         </p>
       </div>
     </Panel>

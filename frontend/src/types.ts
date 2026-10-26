@@ -19,9 +19,12 @@ export type TemplateName =
   | 'ValuationStream'
   | 'CollateralValuation'
   | 'SubstitutionRequest'
-  | 'CoinLoanOffer'
-  | 'CoinLoan'
+  | 'TokenOfferRequest'
+  | 'TokenLoanOffer'
+  | 'TokenLoan'
+  | 'TokenLoanClosed'
   | 'Amulet'
+  | 'Token'
 
 /** The valuation record attached to an active margin-call workflow. */
 export interface MarginCall {
@@ -60,12 +63,17 @@ export interface DealArgs {
   liquidationUnitPrice?: string | null
   collateralSeized?: string | null
   collateralReturned?: string | null
-  // Canton Coin collateral (CIP-112 committed allocation)
-  coinAdmin?: string
+  // Token Standard loans (1.0.0): pinned registries, the committed funding
+  // and collateral allocations, and the closed record's instruments
+  principalRegistry?: Registry
+  collateralRegistry?: Registry
+  principalInstrument?: Instrument
+  collateralInstrument?: Instrument
   settlementRef?: string
-  allocationCid?: string
-  // 0.10.0: the lock's executors; absent or null on loans opened by 0.9.0
-  settlementExecutors?: string[] | null
+  settlementAnchor?: string
+  fundingAllocationCid?: string
+  lockCid?: string
+  payments?: string | number
   // Substitution request
   releaseAsset?: string
   releaseQuantity?: string
@@ -77,12 +85,32 @@ export interface DealArgs {
   amount?: string
   asset?: string
   quantity?: string
+  // Demo USDCx holding (splice-test-token-v2 Token)
+  holding?: TokenHolding
+}
+
+export interface Instrument {
+  admin: string
+  id: string
+}
+
+export interface Registry {
+  instrument: Instrument
+  allocationFactory: string
+  settlementFactory: string
+}
+
+export interface TokenHolding {
+  account: { owner: string | null; provider: string | null; id: string }
+  instrumentId: Instrument
+  amount: string
+  lock: unknown | null
 }
 
 /** A wallet holding owned by the active party (its own cash / collateral). */
 export interface Holding {
   contractId: string
-  kind: 'cash' | 'collateral' | 'coin'
+  kind: 'cash' | 'collateral' | 'coin' | 'usdcx'
   amount: number
   asset?: string
   issuer?: string
