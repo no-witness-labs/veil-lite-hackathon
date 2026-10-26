@@ -6,10 +6,22 @@ const NOW = Date.parse('2026-09-27T10:00:00Z')
 const fresh = new Date(NOW - 60_000).toISOString()
 const stale = new Date(NOW - 10 * 60_000).toISOString()
 const mark = (asset, unitPrice, observedAt = fresh, streamId = `s-${asset}`) => ({ contractId: `m-${asset}`, unitPrice, observedAt, collateralAsset: asset, streamId, valuationAgent: 'V', lender: 'L', borrower: 'B', regulator: 'R', offset: 1 })
-const loan = (template, over = {}) => ({
-  contractId: 'c1', template, offset: 1,
-  args: { principal: '100', interest: '5', collateralQuantity: template.startsWith('Coin') ? '1000' : '150', liquidationThresholdLtv: '90', valuationStreamId: template.startsWith('Coin') ? 's-Canton Coin' : 's-Tokenized T-Bill', collateralAsset: template.startsWith('Coin') ? undefined : 'Tokenized T-Bill', marginCall: null, ...over },
-})
+// A token loan lends demo USDCx against Canton Coin, whose marks are named by
+// its instrument id, Amulet.
+const loan = (template, over = {}) => {
+  const token = template.startsWith('Token')
+  return {
+    contractId: 'c1', template, offset: 1,
+    args: {
+      principal: '100', interest: '5', collateralQuantity: token ? '1000' : '150', liquidationThresholdLtv: '90',
+      valuationStreamId: token ? 's-Amulet' : 's-Tokenized T-Bill',
+      ...(token
+        ? { collateralRegistry: { instrument: { admin: 'DSO', id: 'Amulet' } }, collateralInstrument: { admin: 'DSO', id: 'Amulet' } }
+        : { collateralAsset: 'Tokenized T-Bill' }),
+      marginCall: null, ...over,
+    },
+  }
+}
 const view = (role, deal, marks = [], now = NOW) => ({ role, deal, marks, now })
 const ids = (p) => [...p.done].sort()
 
@@ -47,14 +59,14 @@ test('a reset (no loan for a party that would see it) rewinds the loan steps', (
 })
 
 test('a loan on the other track does not count, and is pointed out', () => {
-  const coinLoan = loan('CoinLoan')
+  const coinLoan = loan('TokenLoan')
   assert.deepEqual(ids(advance({ done: new Set() }, view('lender', coinLoan), 'tbill')), [])
   const hints = tourHints(tourSteps('tbill')[1], view('lender', coinLoan), 'tbill')
   assert.ok(hints.some((h) => /Canton Coin/.test(h)))
 })
 
-test('the coin track follows a CoinLoan', () => {
-  const done = advance({ done: new Set() }, view('borrower', loan('CoinLoan'), [mark('Canton Coin', 0.11)]), 'coin')
+test('the coin track follows a TokenLoan', () => {
+  const done = advance({ done: new Set() }, view('borrower', loan('TokenLoan'), [mark('Amulet', 0.11)]), 'coin')
   assert.equal(currentStep(tourSteps('coin'), done.done).id, 'call')
 })
 
@@ -76,8 +88,8 @@ test('the valuer view completes the stress step from the remembered loan terms',
 })
 
 test('a repaid Canton Coin loan completes the coin track', () => {
-  const called = advance({ done: new Set(['price', 'offer', 'accept', 'stress', 'call', 'cure']) }, view('borrower', loan('CoinLoan')), 'coin')
-  const closed = { contractId: 'c2', template: 'LoanClosed', offset: 2, args: { reason: 'Repaid', collateralAsset: 'Canton Coin', collateralQuantity: '1000' } }
+  const called = advance({ done: new Set(['price', 'offer', 'accept', 'stress', 'call', 'cure']) }, view('borrower', loan('TokenLoan')), 'coin')
+  const closed = { ...loan('TokenLoanClosed', { reason: 'Repaid' }), contractId: 'c2', offset: 2 }
   const repaid = advance(called, view('regulator', closed), 'coin')
   assert.equal(currentStep(tourSteps('coin'), repaid.done).id, 'privacy')
   // The same closed record does not count for the T-Bill track.

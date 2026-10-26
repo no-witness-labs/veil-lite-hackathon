@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { Draft, Valuation } from '../types'
-import { PARTY_NAMES, UNIT_CASH, assessValuation, fmtAmount, fmtPct, fmtTimestamp, ltvBand } from '../state'
+import { PARTY_NAMES, UNIT_CASH, UNIT_USDCX, assessValuation, fmtAmount, fmtPct, fmtTimestamp, ltvBand } from '../state'
+import { COIN_ASSET } from '../runtime'
 import { Button, DateInput, Field, Label, Meter, Metric, MetricRow, NumberInput, Panel, Section, Tag } from '../ui/primitives'
 
 /** Order-ticket style form for originating a facility. The economics are
@@ -31,14 +32,16 @@ export function OfferTicket({
   }, [])
 
   const liquidationThresholdLtv = draft.thresholdLtv
-  const coinCollateral = draft.collateralAsset === 'Canton Coin'
+  const coinCollateral = draft.collateralAsset === COIN_ASSET
+  // A Canton Coin loan lends demo USDCx; a T-Bill loan lends simulated cash.
+  const unit = coinCollateral ? UNIT_USDCX : UNIT_CASH
   const repayment = draft.principal + draft.interest
   const coupon = draft.principal > 0 ? (draft.interest / draft.principal) * 100 : 0
   const maturityMs = parseMaturity(draft.maturity)
   const termMessage = !Number.isFinite(draft.principal) || draft.principal <= 0
     ? 'Principal must be greater than zero.'
     : draft.principal > availableCash
-      ? `Principal exceeds the ${fmtAmount(availableCash)} ${UNIT_CASH} available to fund the offer.`
+      ? `Principal exceeds the ${fmtAmount(availableCash)} ${unit} available to fund the offer.`
     : !Number.isFinite(draft.thresholdLtv) || draft.thresholdLtv <= 0 || draft.thresholdLtv > 100
       ? 'Liquidation threshold must be above 0% and at most 100%.'
     : !Number.isInteger(draft.marginCallWindowSeconds) || draft.marginCallWindowSeconds < 60 || draft.marginCallWindowSeconds > 86400
@@ -76,17 +79,17 @@ export function OfferTicket({
             gap: 'var(--space-4)',
           }}
         >
-          <Field label="Principal (simulated USDC)" hint={`${fmtAmount(availableCash)} available`}>
+          <Field label={`Principal (${unit})`} hint={`${fmtAmount(availableCash)} available`}>
             <NumberInput value={draft.principal} onChange={(v) => onChange('principal', v)} />
           </Field>
-          <Field label="Interest (simulated USDC)" hint={`${fmtPct(coupon)} coupon`}>
+          <Field label={`Interest (${unit})`} hint={`${fmtPct(coupon)} coupon`}>
             <NumberInput value={draft.interest} onChange={(v) => onChange('interest', v)} />
           </Field>
           <Field label="Collateral asset" hint={coinCollateral ? 'Real DevNet Canton Coin, locked in a CIP-112 committed allocation' : 'Simulated tokenised T-Bill'}>
             <div className="v-row" role="radiogroup" aria-label="Collateral asset" style={{ gap: 'var(--space-2)', flexWrap: 'wrap' }}>
               {[
                 { value: 'Tokenized T-Bill', label: 'Tokenized T-Bill', enabled: true },
-                { value: 'Canton Coin', label: 'Canton Coin (real)', enabled: coinAvailable },
+                { value: COIN_ASSET, label: 'Canton Coin (real)', enabled: coinAvailable },
               ].map((option) => (
                 <Button
                   key={option.value}
@@ -97,7 +100,7 @@ export function OfferTicket({
                   onClick={() => {
                     onChange('collateralAsset', option.value)
                     // A sensible starting size for each asset's price level.
-                    onChange('collateral', option.value === 'Canton Coin' ? 1000 : 150)
+                    onChange('collateral', option.value === COIN_ASSET ? 1000 : 150)
                   }}
                 >
                   {option.label}
@@ -124,13 +127,13 @@ export function OfferTicket({
         <Metric
           label="Repayment at maturity"
           value={Number.isFinite(repayment) ? fmtAmount(repayment) : '—'}
-          unit={UNIT_CASH}
+          unit={unit}
           size="lg"
         />
         <Metric
           label="Collateral value @ mark"
           value={collateralValue !== undefined && Number.isFinite(collateralValue) ? fmtAmount(collateralValue) : '—'}
-          unit={collateralValue !== undefined ? UNIT_CASH : undefined}
+          unit={collateralValue !== undefined ? unit : undefined}
           size="lg"
         />
         <div>

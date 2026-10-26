@@ -240,8 +240,54 @@ What this showed:
   API (the test token here) needs its admin to serve them.
 
 Still not exercised: the DA Registry Utility that issues the real USDCx and
-CBTC, the web app, keeper and API (still on the 0.10.0 coin flow), and an
-external-party borrower signing token-loan transactions with its own key.
+CBTC, and an external-party borrower signing token-loan transactions with its
+own key.
+
+## The app on token loans (step 4)
+
+The web app, the API and the keeper use the 1.0 token-loan choices. The
+Canton Coin track lends demo USDCx (Splice's reference token, issued by the
+demo issuer) against real Canton Coin; the T-Bill track is unchanged.
+
+- **Demo USDCx registry** (`api/_usdcx.js`, `POST /api/registry/usdcx/context`).
+  The reference token has no off-ledger API, so the server serves its factory,
+  choice context and disclosures from the ledger, reading as the issuer. It
+  discloses the holdings an allocation locked only to that allocation's
+  executors or authorizer, and creates the issuer's `TokenRules` on first use.
+  The wallet top-up mints USDCx to the shared lender and borrower, counting
+  only unlocked holdings.
+- **One create for roles.** A role may not create contracts, with one
+  exception: the lender may create-and-fund its own `TokenOfferRequest`
+  (`FundTokenOffer`, `lender` = its party), so the request never exists
+  unfunded.
+- **Valuation streams** for Canton Coin are named by the instrument id
+  (`Amulet`), which the token-loan choices check; the app labels it Canton
+  Coin.
+- **Committed offers.** Until an offer expires only the borrower can release
+  the principal, by rejecting. The lender's Withdraw appears after expiry;
+  Start over, reset and the desk janitor reject an unexpired offer as the
+  borrower and withdraw an expired one as the lender.
+- **Registry endpoints.** The client and keeper fall back to Scan's V1
+  allocation-factory endpoint on a 404 (Scan 0.6.12 has no V2 one); the API
+  allows it and also a loopback validator URL, for running against LocalNet.
+- **Keeper.** One-transaction liquidation (`LiquidateToken`,
+  `LiquidateTokenOverdue`), `CloseLapsedTokenLoan` after the lock deadline, and
+  reconciliation that expects a `TokenLoanClosed`.
+
+Verified on Splice LocalNet 0.6.12 with the app's own client module
+(`frontend/src/ledger.ts`) against the Vite dev server: an offer commits 100
+USDCx and the lender cannot withdraw it early; acceptance locks 1,000 CC and
+pays 100 USDCx; a 30 pay-down reaches the lender; a margin call, then
+liquidation moves the 1,000 CC to the lender; a rejection returns the
+principal; a full repayment of 105 unlocks the CC; Start over writes off an
+open loan (the CC unlocks) and rejects an open offer (the principal returns).
+The keeper, run against the same ledger, issued the call on a breached loan
+and liquidated it after the window.
+
+Not yet done: deployment to hackcanton-01. The node runs veil-lite 0.10.0, and
+1.0.0 is not upgrade-compatible, so it cannot be uploaded under the same
+package name. The demo issuer's USDCx also needs the reference token's DAR on
+the node.
 
 Tests: `test/daml/Veil/TokenLoanTest.daml` (lifecycle, margin call and
 liquidation, cure by pay-down, overdue and lapse, write-off, committed offers

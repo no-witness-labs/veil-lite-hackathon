@@ -32,6 +32,7 @@ const deal = (template, contractId, args) => ({
     ...args,
   },
 })
+const registry = (admin, id) => ({ instrument: { admin, id }, allocationFactory: `${id}-factory`, settlementFactory: `${id}-factory` })
 const mark = (contractId, streamId, unitPrice, observedAt, collateralAsset = 'Tokenized T-Bill') => ({
   contractId,
   template: 'CollateralValuation',
@@ -55,19 +56,24 @@ function fixture() {
       marginCall: { issuedAt: iso(-30000), deadline: iso(30000), unitPrice: '0.5' },
     }),
     mark('m-stale', 's-stale', 1.0, iso(-10 * 60000)),
-    // Margin call due later, partially repaid Canton Coin loan
-    deal('CoinLoan', 'coin-call-later', {
+    // Margin call due later, partially repaid token loan against Canton Coin.
+    // It names no issuer: the demo issuer is the admin of its USDCx.
+    deal('TokenLoan', 'coin-call-later', {
+      issuer: undefined,
+      principalRegistry: registry(ISSUER, 'USDCx'),
+      collateralRegistry: registry('DSO::1', 'Amulet'),
       valuationStreamId: 's-coin',
-      allocationCid: 'alloc-1',
+      lockCid: 'alloc-1',
       amountRepaid: '25',
       marginCall: { issuedAt: iso(-30000), deadline: iso(120000), unitPrice: '0.5' },
     }),
-    mark('m-coin', 's-coin', 1.0, iso(-1000), 'Canton Coin'),
+    mark('m-coin', 's-coin', 1.0, iso(-1000), 'Amulet'),
     deal('LoanClosed', 'closed-repaid', { collateralAsset: 'Tokenized T-Bill', reason: 'Repaid' }),
     deal('LoanClosed', 'closed-liq', { collateralAsset: 'Tokenized T-Bill', reason: 'LiquidatedAtMaturity' }),
-    deal('LoanClosed', 'closed-wo', { collateralAsset: 'Canton Coin', reason: 'WrittenOff' }),
-    // Foreign issuer never enters the book.
+    deal('TokenLoanClosed', 'closed-wo', { issuer: undefined, principalInstrument: { admin: ISSUER, id: 'USDCx' }, collateralInstrument: { admin: 'DSO::1', id: 'Amulet' }, reason: 'WrittenOff' }),
+    // Foreign issuer never enters the book, nor a token loan of another USDCx admin.
     deal('Loan', 'foreign', { issuer: 'Other::9', collateralAsset: 'Tokenized T-Bill' }),
+    deal('TokenLoan', 'foreign-token', { issuer: undefined, principalRegistry: registry('Other::9', 'USDCx'), collateralRegistry: registry('DSO::1', 'Amulet') }),
   ]
 }
 

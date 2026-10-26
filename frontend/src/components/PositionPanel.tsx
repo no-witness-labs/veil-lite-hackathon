@@ -2,18 +2,18 @@ import { useEffect, useState } from 'react'
 import type { Contract, MarginCall, Role, Status, Valuation } from '../types'
 import {
   PARTY_NAMES,
+  assetLabel,
   assetOf,
-  isCoinDeal,
+  isTokenDeal,
+  principalUnit,
   STATUS_LABEL,
   STATUS_TONE,
-  UNIT_CASH,
   assessValuation,
   collateralState,
   daysTo,
   dealNumbers,
   fmtAmount,
   fmtDate,
-  fmtMoney,
   fmtPct,
   fmtTimestamp,
   fmtUtcTime,
@@ -110,12 +110,15 @@ export function PositionPanel({
 
   const band = markPrice ? ltvBand(ltv, threshold) : undefined
   const escrow = collateralState(status)
+  const unit = principalUnit(deal)
+  const tokenDeal = isTokenDeal(deal)
   const closed = status === 'repaid' || status === 'liquidated'
   const tenor = daysTo(maturity)
 
   const gates: Gates = {
     observer: role === 'regulator',
-    withdraw: role === 'lender' && status === 'offered',
+    // A token offer's principal is committed until it expires.
+    withdraw: role === 'lender' && status === 'offered' && (!tokenDeal || offerExpired),
     accept: role === 'borrower' && status === 'offered' && beforeMaturity && !offerExpired && acceptance?.status === 'healthy',
     repay: role === 'borrower' && status === 'active',
     issue: role === 'lender' && status === 'active' && beforeMaturity && !marginCall && markBreach,
@@ -150,24 +153,24 @@ export function PositionPanel({
         <Metric
           label={status === 'offered' ? 'Funded principal' : 'Principal'}
           value={fmtAmount(principal)}
-          unit={UNIT_CASH}
+          unit={unit}
           size="lg"
-          note={status === 'offered' ? 'Reserved in issuer-signed offer escrow' : undefined}
+          note={status === 'offered' ? (tokenDeal ? 'Committed in a USDCx registry allocation' : 'Reserved in issuer-signed offer escrow') : undefined}
         />
         <Metric
           label="Interest"
           value={fmtAmount(interest)}
-          unit={UNIT_CASH}
+          unit={unit}
           size="lg"
           note={`${fmtPct(couponPct)} coupon`}
         />
         <Metric
           label={repaid > 0 && status === 'active' ? 'Outstanding' : 'Repayment'}
           value={fmtAmount(status === 'active' ? repayment : principal + interest)}
-          unit={UNIT_CASH}
+          unit={unit}
           size="lg"
           tone="ok"
-          note={repaid > 0 ? `${fmtAmount(repaid)} ${UNIT_CASH} paid down` : undefined}
+          note={repaid > 0 ? `${fmtAmount(repaid)} ${unit} paid down` : undefined}
         />
         <Metric
           label="Maturity (ledger UTC)"
@@ -189,24 +192,22 @@ export function PositionPanel({
             </Tag>
           </div>
           <div style={{ fontSize: 'var(--text-md)', fontWeight: 600 }}>
-            {assetOf(deal) ?? 'Tokenized T-Bill'}{' '}
-            <span className="v-muted">{isCoinDeal(deal) ? '(DevNet Canton Coin)' : '(simulated)'}</span>
+            {assetLabel(assetOf(deal)) || 'Tokenized T-Bill'}{' '}
+            <span className="v-muted">{tokenDeal ? '(DevNet Canton Coin)' : '(simulated)'}</span>
           </div>
-          {deal.template === 'CoinLoan' && (
+          {deal.template === 'TokenLoan' && (
             <div className="v-metric__note" style={{ marginTop: 'var(--space-2)' }}>
-              {deal.args.settlementExecutors && deal.args.settlementExecutors.length > 1
-                ? 'Locked by the token standard itself: a CIP-112 committed allocation that settles (liquidation) or cancels (release on repayment) only with both the lender\'s and the borrower\'s authority, which Veil\'s loan choices supply.'
-                : 'Locked by the token standard itself: a CIP-112 committed allocation opened before 0.10.0, which the lender alone executes.'}{' '}
-              {deal.args.allocationCid && <span className="v-id" title={deal.args.allocationCid}>allocation {shortId(deal.args.allocationCid, 10, 6)}</span>}
+              Locked by the token standard itself: a CIP-112 committed allocation that settles (liquidation) or cancels (release on repayment) only with both the lender's and the borrower's authority, which Veil's loan choices supply.{' '}
+              {deal.args.lockCid && <span className="v-id" title={deal.args.lockCid}>allocation {shortId(deal.args.lockCid, 10, 6)}</span>}
             </div>
           )}
           <div className="v-row" style={{ gap: 'var(--space-5)', marginTop: 'var(--space-3)', flexWrap: 'wrap' }}>
-            <Metric label="Quantity" value={fmtAmount(collateral, 0)} unit={isCoinDeal(deal) ? 'CC' : 'units'} />
-            <Metric label="Unit mark" value={markPrice ? markPrice.toFixed(2) : '—'} unit={markPrice ? UNIT_CASH : undefined} />
+            <Metric label="Quantity" value={fmtAmount(collateral, 0)} unit={tokenDeal ? 'CC' : 'units'} />
+            <Metric label="Unit mark" value={markPrice ? markPrice.toFixed(2) : '—'} unit={markPrice ? unit : undefined} />
             <Metric
               label="Market value"
               value={markPrice ? fmtAmount(collateralValue) : '—'}
-              unit={markPrice ? UNIT_CASH : undefined}
+              unit={markPrice ? unit : undefined}
               note={markPrice ? 'at the attested mark' : 'awaiting mark'}
             />
           </div>
@@ -228,7 +229,7 @@ export function PositionPanel({
             </div>
             <div className="v-metric__note" style={{ color: valuation && !markFresh ? 'var(--danger)' : undefined }}>
               {valuation
-                ? `${valuation.unitPrice.toFixed(2)} ${UNIT_CASH}/unit, observed ${fmtTimestamp(valuation.observedAt)}: ${markFresh ? 'fresh for margin actions' : markIssue}`
+                ? `${valuation.unitPrice.toFixed(2)} ${unit}/unit, observed ${fmtTimestamp(valuation.observedAt)}: ${markFresh ? 'fresh for margin actions' : markIssue}`
                 : 'No valuation has been published for this facility.'}
             </div>
             {(deal.args.valuationStreamId || valuation?.streamId) && (
@@ -297,6 +298,8 @@ export function PositionPanel({
         topUpQty={topUpQty}
         onTopUpQtyChange={setTopUpInput}
         repayment={repayment}
+        unit={unit}
+        committedUntil={tokenDeal && status === 'offered' && !offerExpired ? deal.args.expiresAt ?? undefined : undefined}
         busy={busy}
         actions={actions}
       />
@@ -323,7 +326,7 @@ function Header({ deal, status, marginCall }: { deal: Contract; status: Status; 
           )}
         </div>
         <div className="v-row" style={{ gap: 'var(--space-3)', marginTop: 2, flexWrap: 'wrap' }}>
-          <Label>VEIL-0001, repo-style, in {UNIT_CASH}</Label>
+          <Label>VEIL-0001, repo-style, in {principalUnit(deal)}</Label>
           <span className="v-id" title={deal.contractId}>
             {deal.template} {shortId(deal.contractId, 10, 6)}, offset {deal.offset}
           </span>
@@ -424,6 +427,8 @@ function ActionBar({
   topUpQty,
   onTopUpQtyChange,
   repayment,
+  unit,
+  committedUntil,
   busy,
   actions,
 }: {
@@ -441,6 +446,8 @@ function ActionBar({
   topUpQty: number
   onTopUpQtyChange: (value: string) => void
   repayment: number
+  unit: string
+  committedUntil?: string
   busy: boolean
   actions: PositionActions
 }) {
@@ -452,6 +459,7 @@ function ActionBar({
   let hintTone: 'danger' | undefined
   if (gates.observer) hint = 'Observer rights — read-only, cannot transact'
   else if (gates.closed) hint = 'Facility closed — no further actions'
+  else if (role === 'lender' && committedUntil) hint = `Principal committed until the offer expires (${fmtTimestamp(committedUntil)}); until then only the borrower can release it, by rejecting`
   else if (role === 'borrower' && status === 'offered' && !gates.accept) {
     hint = !beforeMaturity ? 'Offer expired at maturity' : `Cannot accept — ${acceptanceMessage ?? 'matching valuation unavailable'}`
     hintTone = 'danger'
@@ -513,7 +521,7 @@ function ActionBar({
         )}
         {gates.repay && (
           <Button variant="ok" onClick={actions.onRepay} busy={busy}>
-            Repay {fmtMoney(repayment)}
+            Repay {fmtAmount(repayment)} {unit}
           </Button>
         )}
         {lenderActive && !marginCall && !gates.overdue && (

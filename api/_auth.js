@@ -309,10 +309,20 @@ function validateCommands(body, auth, env = process.env) {
   }
 
   const command = commandShape(commands.commands[0], env)
-  if (auth.role !== 'operator' && (command.kind === 'CreateCommand' || command.kind === 'CreateAndExerciseCommand')) {
+  if (auth.role !== 'operator' && (command.kind === 'CreateCommand'
+    || (command.kind === 'CreateAndExerciseCommand' && !fundsOwnTokenOffer(command.value, auth, rolePartyValue, env)))) {
     throw new AuthError(403, 'COMMAND_FORBIDDEN')
   }
   return { config, actAs, readAs }
+}
+
+// The one create a role may submit: the lender's token-offer terms, funded in
+// the same command, so the request itself never becomes an active contract.
+function fundsOwnTokenOffer(value, auth, party, env) {
+  return auth.role === 'lender'
+    && value.templateId === `${packageRef(env)}:Veil:TokenOfferRequest`
+    && value.choice === 'FundTokenOffer'
+    && value.createArguments.lender === party
 }
 
 // Registry contracts (e.g. the Canton Coin allocation factory) are disclosed by

@@ -20,14 +20,14 @@ const deal = (template, contractId, streamId, extra = {}) => ({
 })
 const desk = (id, streams) => ({ token: `t-${id}`, deskId: id, streams, expiresAt: Math.floor(NOW / 1000) + 3600 })
 
-const A = desk('A', { 'Tokenized T-Bill': 'a-tb', 'Tokenized MMF': 'a-mmf', 'Canton Coin': 'a-cc' })
-const B = desk('B', { 'Tokenized T-Bill': 'b-tb', 'Tokenized MMF': 'b-mmf', 'Canton Coin': 'b-cc' })
+const A = desk('A', { 'Tokenized T-Bill': 'a-tb', 'Tokenized MMF': 'a-mmf', Amulet: 'a-cc' })
+const B = desk('B', { 'Tokenized T-Bill': 'b-tb', 'Tokenized MMF': 'b-mmf', Amulet: 'b-cc' })
 
 /** Two visitors on the shared parties, as the lender sees them. */
 function ledger() {
   return [
-    mark('a-tb', 'Tokenized T-Bill'), mark('a-mmf', 'Tokenized MMF'), mark('a-cc', 'Canton Coin', '0.15'),
-    mark('b-tb', 'Tokenized T-Bill', '0.62'), mark('b-mmf', 'Tokenized MMF'), mark('b-cc', 'Canton Coin', '0.15'),
+    mark('a-tb', 'Tokenized T-Bill'), mark('a-mmf', 'Tokenized MMF'), mark('a-cc', 'Amulet', '0.15'),
+    mark('b-tb', 'Tokenized T-Bill', '0.62'), mark('b-mmf', 'Tokenized MMF'), mark('b-cc', 'Amulet', '0.15'),
     deal('LoanOffer', 'offer-a', 'a-tb'),
     deal('Loan', 'loan-b', 'b-tb'),
     { contractId: 'sub-b', template: 'SubstitutionRequest', offset: offset++, args: { ...parties, newValuationStreamId: 'b-mmf', newAsset: 'Tokenized MMF', newQuantity: '160' } },

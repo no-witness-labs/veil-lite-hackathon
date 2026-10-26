@@ -20,10 +20,11 @@ export interface Desk {
 
 const DESK_SCOPED = new Set<TemplateName>([
   'LoanOffer',
-  'CoinLoanOffer',
+  'TokenLoanOffer',
   'Loan',
-  'CoinLoan',
+  'TokenLoan',
   'LoanClosed',
+  'TokenLoanClosed',
   'SubstitutionRequest',
   'CollateralValuation',
   'ValuationStream',

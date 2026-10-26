@@ -219,6 +219,88 @@ test('regulator and outsider cannot submit; ordinary users cannot create; operat
   assertAuthError(() => authorizeLedgerRequest(req(operator, 'POST', '/v2/commands/submit-and-wait-for-transaction', readonly), '/v2/commands/submit-and-wait-for-transaction', readonly), 403, 'PARTY_FORBIDDEN')
 })
 
+test('a lender may create-and-fund its own token offer, and no other create', () => {
+  const submitPath = '/v2/commands/submit-and-wait-for-transaction'
+  const fund = (sub, party, value = {}) => ({
+    commands: {
+      commands: [{ CreateAndExerciseCommand: {
+        templateId: '#veil-lite:Veil:TokenOfferRequest',
+        createArguments: { lender: party },
+        choice: 'FundTokenOffer',
+        choiceArgument: {},
+        ...value,
+      } }],
+      commandId: 'fund', actAs: [party], userId: sub,
+    },
+  })
+  const check = (sub, body) => authorizeLedgerRequest(req(jwt({ sub }), 'POST', submitPath, body), submitPath, body)
+  const lender = partyEnv.VEIL_PARTY_LENDER
+  check('veil-lender', fund('veil-lender', lender))
+  // Another lender named in the terms, another choice, another template, or
+  // another role: all refused.
+  assertAuthError(() => check('veil-lender', fund('veil-lender', lender, { createArguments: { lender: partyEnv.VEIL_PARTY_BORROWER } })), 403, 'COMMAND_FORBIDDEN')
+  assertAuthError(() => check('veil-lender', fund('veil-lender', lender, { choice: 'Archive' })), 403, 'COMMAND_FORBIDDEN')
+  assertAuthError(() => check('veil-lender', fund('veil-lender', lender, { templateId: '#veil-lite:Veil:ValuationStream', choice: 'PublishInitial' })), 403, 'COMMAND_FORBIDDEN')
+  const borrower = partyEnv.VEIL_PARTY_BORROWER
+  assertAuthError(() => check('veil-borrower', fund('veil-borrower', borrower, { createArguments: { lender: borrower } })), 403, 'COMMAND_FORBIDDEN')
+})
+
+test('demo USDCx registry: transacting roles only; locked holdings disclosed only to an allocation\'s executors and authorizer', async () => {
+  Object.assign(process.env, sharedNodeEnv, { VEIL_LEDGER_TARGET: 'http://ledger.test' })
+  const issuer = partyEnv.VEIL_PARTY_ISSUER
+  const rulesCid = 'aa'.repeat(20)
+  const allocationCid = 'bb'.repeat(20)
+  const lockedCid = 'cc'.repeat(20)
+  const otherCid = 'dd'.repeat(20)
+  const event = (templateId, contractId, extra = {}) => ({ contractEntry: { JsActiveContract: { synchronizerId: 'sync::1', createdEvent: { templateId, contractId, createdEventBlob: `blob-${contractId}`, offset: 1, ...extra } } } })
+  const reads = []
+  globalThis.fetch = async (url, init) => {
+    if (url === sharedNodeEnv.VEIL_OIDC_TOKEN_URL) return new Response(JSON.stringify({ access_token: 'node-access', expires_in: 10800 }), { status: 200 })
+    if (url.endsWith('/v2/state/ledger-end')) return new Response('{"offset":5}', { status: 200 })
+    const filters = JSON.parse(init.body).eventFormat.filtersByParty
+    reads.push(Object.keys(filters)[0])
+    const filter = filters[issuer].cumulative[0].identifierFilter
+    let entries = []
+    if (filter.TemplateFilter?.value.templateId.endsWith(':TokenRules')) entries = [event('tt:Splice.Testing.Tokens.TestTokenV2:TokenRules', rulesCid, { createArgument: { admin: issuer } })]
+    if (filter.TemplateFilter?.value.templateId.endsWith(':Token')) entries = [event('tt:Splice.Testing.Tokens.TestTokenV2.Holding:Token', lockedCid), event('tt:Splice.Testing.Tokens.TestTokenV2.Holding:Token', otherCid)]
+    if (filter.InterfaceFilter) {
+      entries = [event('tt:Splice.Testing.Tokens.TestTokenV2.Allocation:TokenAllocationV2', allocationCid, {
+        interfaceViews: [{ viewValue: { allocation: { authorizer: { owner: partyEnv.VEIL_PARTY_LENDER } }, settlement: { executors: [partyEnv.VEIL_PARTY_LENDER, partyEnv.VEIL_PARTY_BORROWER] }, holdingCids: [lockedCid] } }],
+      })]
+    }
+    return new Response(JSON.stringify(entries), { status: 200, headers: { 'content-type': 'application/json' } })
+  }
+  const post = (sub, body) => ({ method: 'POST', url: '/api/registry/usdcx/context', headers: { authorization: `Bearer ${jwt({ sub })}` }, body: JSON.stringify(body) })
+  const ask = async (sub, body) => {
+    const res = response()
+    await proxyRegistryRequest(post(sub, body), res, '/usdcx/context')
+    return { status: res.statusCode, body: JSON.parse(res.body) }
+  }
+
+  const ok = await ask('veil-borrower', { allocationCids: [allocationCid] })
+  assert.equal(ok.status, 200)
+  assert.equal(ok.body.admin, issuer)
+  assert.equal(ok.body.instrumentId, 'USDCx')
+  assert.equal(ok.body.factoryId, rulesCid)
+  assert.deepEqual(ok.body.choiceContext.choiceContextData.values['testTokenV2/tokenRules'], { tag: 'AV_ContractId', value: rulesCid })
+  assert.deepEqual(ok.body.choiceContext.disclosedContracts, [
+    { templateId: 'tt:Splice.Testing.Tokens.TestTokenV2:TokenRules', contractId: rulesCid, createdEventBlob: `blob-${rulesCid}`, synchronizerId: 'sync::1' },
+    { templateId: 'tt:Splice.Testing.Tokens.TestTokenV2.Holding:Token', contractId: lockedCid, createdEventBlob: `blob-${lockedCid}`, synchronizerId: 'sync::1' },
+  ], 'the rules and only the holding the allocation locked')
+  assert.ok(reads.every((party) => party === issuer), 'read as the registry admin')
+
+  // Without allocations: only the rules.
+  assert.deepEqual((await ask('veil-lender', {})).body.choiceContext.disclosedContracts.map((d) => d.contractId), [rulesCid])
+  // The operator acts for every party.
+  assert.equal((await ask('veil-operator', { allocationCids: [allocationCid] })).status, 200)
+  // Read-only roles, unknown allocations, malformed ids and extra fields are refused.
+  assert.equal((await ask('veil-regulator', { allocationCids: [allocationCid] })).body.code, 'ROLE_FORBIDDEN')
+  assert.equal((await ask('veil-outsider', {})).status, 403)
+  assert.equal((await ask('veil-lender', { allocationCids: ['ee'.repeat(20)] })).body.code, 'ALLOCATION_NOT_FOUND')
+  assert.equal((await ask('veil-lender', { allocationCids: ['not-a-contract-id'] })).status, 400)
+  assert.equal((await ask('veil-lender', { allocationCids: [allocationCid], party: 'x' })).status, 400)
+})
+
 test('unknown/admin routes are not proxied and caller bearer is forwarded unchanged', async () => {
   assertAuthError(() => routePolicy('/v2/packages', 'POST'), 404, 'ROUTE_NOT_FOUND')
   const token = jwt({ sub: 'veil-lender' })
@@ -761,10 +843,17 @@ test('registry responses are size-capped and upstream error bodies reduced to th
   assert.ok(!failed.body.includes('internal'))
 })
 
-test('registry base URL must be https on an allow-listed host', async () => {
+test('registry base URL must be https on an allow-listed host, or a validator on this machine', async () => {
   assert.equal(registryTarget({ VEIL_REGISTRY_URL: `${REGISTRY_URL}/` }), REGISTRY_URL)
+  // Splice LocalNet's validator.
+  assert.equal(registryTarget({ VEIL_REGISTRY_URL: 'http://localhost:3903/api/validator/v0/scan-proxy' }), 'http://localhost:3903/api/validator/v0/scan-proxy')
+  assert.equal(registryTarget({ VEIL_REGISTRY_URL: 'http://127.0.0.1:3903/x' }), 'http://127.0.0.1:3903/x')
   for (const bad of [
     REGISTRY_URL.replace('https:', 'http:'),
+    'http://localhost.evil.example:3903/x',
+    'http://127.0.0.2:3903/x',
+    'http://user:pw@localhost:3903/x',
+    'file://localhost/etc/passwd',
     'https://evil.example/api/validator/v0/scan-proxy',
     'https://validator-api-http.validator.hackcanton-01.devnet.naas.noders.services.evil.example/x',
     'https://user:pw@validator-api-http.validator.hackcanton-01.devnet.naas.noders.services/x',

@@ -11,19 +11,18 @@
 //   - margin calls only before maturity; liquidation only once the call
 //     deadline has passed on a fresh, still-breaching mark;
 //   - overdue liquidation once now > maturity. A T-Bill Loan needs a fresh mark
-//     (0.9.0 returns surplus collateral at that price); a CoinLoan needs none;
-//   - a CoinLoan past its settlement deadline (maturity + 1 day) can no longer
-//     settle: it is closed with CloseLapsedCoinLoan (0.10.0), nothing seized.
+//     (0.9.0 returns surplus collateral at that price); a TokenLoan needs none;
+//   - a TokenLoan past its lock deadline (maturity + 1 day) can no longer
+//     settle: it is closed with CloseLapsedTokenLoan, nothing seized.
 
-export const COIN_ASSET = 'Canton Coin'
 export const FRESHNESS_MS = 300_000
-export const COIN_SETTLEMENT_GRACE_MS = 86_400_000
+export const LOCK_GRACE_MS = 86_400_000
 
 export const DEFAULT_OPTIONS = {
   // Margin applied against the ledger's own clock so a decided action is not
   // rejected because this host's clock is slightly ahead or behind.
   skewMs: 5_000,
-  // Warn when a CoinLoan's allocation settlement deadline is this close.
+  // Warn when a TokenLoan's collateral lock deadline is this close.
   settlementWarnHours: 6,
 }
 
@@ -99,7 +98,8 @@ function timeMs(value, field) {
   return ms
 }
 
-const collateralAssetOf = (loan) => (loan.template === 'CoinLoan' ? COIN_ASSET : loan.args.collateralAsset)
+// A token loan's mark is named by its collateral instrument id.
+const collateralAssetOf = (loan) => (loan.template === 'TokenLoan' ? loan.args.collateralRegistry?.instrument?.id : loan.args.collateralAsset)
 
 /** Marks that the ledger's checkedPrice would accept for this loan. */
 export function marksForLoan(loan, marks) {
@@ -115,7 +115,7 @@ export function marksForLoan(loan, marks) {
 
 const CHOICES = {
   Loan: { issueMarginCall: 'IssueMarginCall', liquidate: 'Liquidate', liquidateOverdue: 'LiquidateOverdue' },
-  CoinLoan: { issueMarginCall: 'IssueCoinMarginCall', liquidate: 'LiquidateCoin', liquidateOverdue: 'LiquidateCoinOverdue', closeLapsed: 'CloseLapsedCoinLoan' },
+  TokenLoan: { issueMarginCall: 'IssueTokenMarginCall', liquidate: 'LiquidateToken', liquidateOverdue: 'LiquidateTokenOverdue', closeLapsed: 'CloseLapsedTokenLoan' },
 }
 
 /** Kinds that change ledger state; every other kind is informational. */
@@ -124,7 +124,7 @@ export const EXECUTABLE = new Set(['issueMarginCall', 'liquidate', 'liquidateOve
 /**
  * Decide what the lender should do for each loan.
  *
- * @param loans  [{ contractId, template: 'Loan' | 'CoinLoan', args }] as read from the ACS
+ * @param loans  [{ contractId, template: 'Loan' | 'TokenLoan', args }] as read from the ACS
  * @param marks  [{ contractId, args }] active CollateralValuation contracts
  * @param now    Date or epoch ms (the keeper's estimate of ledger time)
  * @returns one or more actions per loan: executable kinds (issueMarginCall,
@@ -186,8 +186,8 @@ function decideLoan(loan, marks, nowMs, skewMs, settlementWarnHours) {
   const out = []
   const maturityMs = timeMs(a.maturity, 'maturity')
 
-  if (loan.template === 'CoinLoan') {
-    const settlementDeadlineMs = maturityMs + COIN_SETTLEMENT_GRACE_MS
+  if (loan.template === 'TokenLoan') {
+    const settlementDeadlineMs = maturityMs + LOCK_GRACE_MS
     const hoursLeft = (settlementDeadlineMs - nowMs) / 3_600_000
     if (hoursLeft <= settlementWarnHours) {
       out.push({
@@ -196,20 +196,20 @@ function decideLoan(loan, marks, nowMs, skewMs, settlementWarnHours) {
         settlementDeadline: new Date(settlementDeadlineMs).toISOString(),
         hoursLeft: Math.round(hoursLeft * 100) / 100,
         reason: hoursLeft <= 0
-          ? 'allocation settlement deadline has passed: the borrower can now withdraw the locked Canton Coin'
-          : `allocation settlement deadline in ${hoursLeft.toFixed(2)}h: after it the borrower can withdraw the locked Canton Coin`,
+          ? 'collateral lock deadline has passed: the borrower can now withdraw the locked collateral'
+          : `collateral lock deadline in ${hoursLeft.toFixed(2)}h: after it the borrower can withdraw the locked collateral`,
       })
     }
   }
 
   if (nowMs > maturityMs + skewMs) {
-    if (loan.template === 'CoinLoan' && nowMs > maturityMs + COIN_SETTLEMENT_GRACE_MS + skewMs) {
+    if (loan.template === 'TokenLoan' && nowMs > maturityMs + LOCK_GRACE_MS + skewMs) {
       // The registry refuses to settle a lapsed lock; record the lapse.
-      out.push({ ...base(loan), kind: 'closeLapsed', choice: choices.closeLapsed, reason: `collateral lock lapsed at ${new Date(maturityMs + COIN_SETTLEMENT_GRACE_MS).toISOString()}; nothing can be seized` })
+      out.push({ ...base(loan), kind: 'closeLapsed', choice: choices.closeLapsed, reason: `collateral lock lapsed at ${new Date(maturityMs + LOCK_GRACE_MS).toISOString()}; nothing can be seized` })
       return out
     }
-    if (loan.template === 'CoinLoan') {
-      // The Canton Coin allocation settles its fixed leg; no price is involved.
+    if (loan.template === 'TokenLoan') {
+      // The committed lock settles its fixed leg; no price is involved.
       out.push({ ...base(loan), kind: 'liquidateOverdue', choice: choices.liquidateOverdue, reason: `past maturity ${a.maturity}` })
       return out
     }

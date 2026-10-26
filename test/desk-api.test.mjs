@@ -99,13 +99,23 @@ function response() {
 
 /* ------------------------------------------------------------ fake ledger -- */
 
+const DSO = 'DSO::1'
+const usdcx = (owner, amount) => ({ holding: { account: { owner, provider: null, id: '' }, instrumentId: { admin: P.issuer, id: 'USDCx' }, amount, lock: null, meta: { values: {} } } })
+const registryOf = (admin, id) => ({ instrument: { admin, id }, allocationFactory: `${id}-factory`, settlementFactory: `${id}-factory` })
+
 const STAKEHOLDERS = {
   CollateralValuation: (a) => [a.valuationAgent, a.lender, a.borrower, a.regulator],
   LoanOffer: (a) => [a.issuer, a.lender, a.borrower, a.regulator],
-  CoinLoanOffer: (a) => [a.issuer, a.lender, a.borrower, a.regulator],
   Loan: (a) => [a.issuer, a.lender, a.borrower, a.regulator],
-  CoinLoan: (a) => [a.issuer, a.lender, a.borrower, a.regulator],
   LoanClosed: (a) => [a.issuer, a.lender, a.borrower, a.regulator],
+  // Token deals: the demo issuer is the USDCx admin, not a stakeholder.
+  TokenLoanOffer: (a) => [a.lender, a.borrower, a.regulator],
+  TokenLoan: (a) => [a.lender, a.borrower, a.regulator],
+  TokenLoanClosed: (a) => [a.lender, a.borrower, a.regulator],
+  // Demo USDCx (splice-test-token-v2): holdings, rules and allocations.
+  Token: (a) => [a.holding.instrumentId.admin, a.holding.account.owner],
+  TokenRules: (a) => [a.admin],
+  TokenAllocation: (a) => [a.view.allocation.admin],
   SubstitutionRequest: (a) => [a.issuer, a.lender, a.borrower, a.regulator],
   CashHolding: (a) => [a.issuer, a.owner],
   CollateralHolding: (a) => [a.issuer, a.owner],
@@ -118,7 +128,18 @@ const SEED_WALLETS = [
   ['CollateralHolding', { issuer: P.issuer, owner: P.borrower, asset: 'Tokenized T-Bill', quantity: '15000.0000000000' }],
   ['CollateralHolding', { issuer: P.issuer, owner: P.borrower, asset: 'Tokenized T-Bill', quantity: '5000.0000000000' }],
   ['CollateralHolding', { issuer: P.issuer, owner: P.borrower, asset: 'Tokenized MMF', quantity: '16000.0000000000' }],
+  ['Token', usdcx(P.lender, '10000.0000000000')],
+  ['Token', usdcx(P.borrower, '1000.0000000000')],
 ]
+
+/** Non-Veil templates by their module, as the ledger reports them. */
+const TEMPLATE_IDS = {
+  Token: 'tt123:Splice.Testing.Tokens.TestTokenV2.Holding:Token',
+  TokenRules: 'tt123:Splice.Testing.Tokens.TestTokenV2:TokenRules',
+  TokenAllocation: 'tt123:Splice.Testing.Tokens.TestTokenV2.Allocation:TokenAllocationV2',
+}
+const templateIdOf = (template) => TEMPLATE_IDS[template] ?? `pkg123:Veil:${template}`
+const nameOf = (templateId) => Object.keys(TEMPLATE_IDS).find((t) => templateId.endsWith(TEMPLATE_IDS[t].slice('tt123'.length))) ?? templateId.split(':').at(-1)
 
 /** An in-memory ACS that applies the commands the desk endpoint sends; the
  * wallets start seeded unless `holdings: false`. */
@@ -133,10 +154,23 @@ function fakeLedger({ holdings = true } = {}) {
   const mark = (asset, observedAt, streamId = `stream-${state.next++}`, price = '1') => add('CollateralValuation', {
     valuationAgent: P.valuer, lender: P.lender, borrower: P.borrower, regulator: P.regulator, collateralAsset: asset, streamId, unitPrice: price, observedAt,
   })
-  const deal = (template, streamId, extra = {}) => add(template, {
-    issuer: P.issuer, lender: P.lender, borrower: P.borrower, regulator: P.regulator, valuationAgent: P.valuer, valuationStreamId: streamId,
-    principal: '100', interest: '5', collateralAsset: 'Tokenized T-Bill', collateralQuantity: '150', ...extra,
-  })
+  const deal = (template, streamId, extra = {}) => add(template, template.startsWith('Token')
+    ? {
+      lender: P.lender, borrower: P.borrower, regulator: P.regulator, valuationAgent: P.valuer, valuationStreamId: streamId,
+      principalRegistry: registryOf(P.issuer, 'USDCx'), collateralRegistry: registryOf(DSO, 'Amulet'),
+      principal: '100', interest: '5', collateralQuantity: '1000', settlementRef: 'veil-1', settlementAnchor: 'anchor-1',
+      maturity: new Date(Date.now() + 7 * 86_400_000).toISOString(), expiresAt: new Date(Date.now() + 86_400_000).toISOString(), ...extra,
+    }
+    : {
+      issuer: P.issuer, lender: P.lender, borrower: P.borrower, regulator: P.regulator, valuationAgent: P.valuer, valuationStreamId: streamId,
+      principal: '100', interest: '5', collateralAsset: 'Tokenized T-Bill', collateralQuantity: '150', ...extra,
+    })
+  /** The lender's committed principal for a token offer: a locked holding and
+   * the allocation that locked it, as the issuer's registry holds them. */
+  const funding = (owner = P.lender, amount = '100') => {
+    const locked = add('Token', { holding: { ...usdcx(owner, amount).holding, lock: { holders: [P.issuer] } } })
+    return add('TokenAllocation', { view: { allocation: { admin: P.issuer, authorizer: { owner, provider: null, id: '' } }, settlement: { executors: [P.lender, P.borrower] }, holdingCids: [locked.contractId] } })
+  }
   const remove = (cid) => {
     const index = state.contracts.findIndex((c) => c.contractId === cid)
     if (index < 0) {
@@ -151,6 +185,10 @@ function fakeLedger({ holdings = true } = {}) {
     if (command.CreateCommand) {
       const { templateId, createArguments } = command.CreateCommand
       const template = templateId.split(':').at(-1)
+      if (template === 'Token' || template === 'TokenRules') {
+        assert.equal(templateId, `#splice-test-token-v2:${TEMPLATE_IDS[template].split(':').slice(1).join(':')}`)
+        return add(template, createArguments)
+      }
       assert.equal(templateId, `#veil-lite:Veil:${template}`)
       assert.ok(template === 'CashHolding' || template === 'CollateralHolding', template)
       add(template, createArguments)
@@ -166,10 +204,12 @@ function fakeLedger({ holdings = true } = {}) {
     const { templateId, contractId, choice } = command.ExerciseCommand
     const contract = remove(contractId)
     assert.equal(templateId, `#veil-lite:Veil:${contract.template}`)
-    if (choice === 'Withdraw' || choice === 'WithdrawCoinOffer') add('CashHolding', { issuer: P.issuer, owner: P.lender, amount: contract.args.principal })
+    if (choice === 'Withdraw') add('CashHolding', { issuer: P.issuer, owner: P.lender, amount: contract.args.principal })
+    if (choice === 'RejectTokenOffer' || choice === 'WithdrawTokenOffer') add('Token', usdcx(P.lender, contract.args.principal))
     if (choice === 'CancelSubstitution') add('CollateralHolding', { issuer: P.issuer, owner: P.borrower, asset: contract.args.newAsset, quantity: contract.args.newQuantity })
-    if (choice === 'WriteOffCoin') add('LoanClosed', { ...contract.args, collateralAsset: 'Canton Coin', reason: 'WrittenOff' })
-    if (choice === 'CloseLapsedCoinLoan') add('LoanClosed', { ...contract.args, collateralAsset: 'Canton Coin', reason: 'CollateralLapsed' })
+    const closed = (reason) => add('TokenLoanClosed', { ...contract.args, principalInstrument: contract.args.principalRegistry.instrument, collateralInstrument: contract.args.collateralRegistry.instrument, reason })
+    if (choice === 'WriteOffToken') closed('WrittenOff')
+    if (choice === 'CloseLapsedTokenLoan') closed('CollateralLapsed')
     return null
   }
 
@@ -193,9 +233,23 @@ function fakeLedger({ holdings = true } = {}) {
       const body = JSON.parse(init.body)
       const party = Object.keys(body.eventFormat.filtersByParty)[0]
       state.acsReadsByParty[party] = (state.acsReadsByParty[party] ?? 0) + 1
+      const filter = body.eventFormat.filtersByParty[party].cumulative[0].identifierFilter
+      // A template or interface filter returns blobs (and the interface's view);
+      // the allocation interface is implemented only by TokenAllocation here.
+      const only = filter.TemplateFilter ? nameOf(filter.TemplateFilter.value.templateId) : filter.InterfaceFilter ? 'TokenAllocation' : null
       return json(state.contracts
-        .filter((c) => (STAKEHOLDERS[c.template]?.(c.args) ?? []).includes(party))
-        .map((c) => ({ contractEntry: { JsActiveContract: { createdEvent: { contractId: c.contractId, templateId: `pkg123:Veil:${c.template}`, offset: c.offset, createArgument: c.args } } } })))
+        .filter((c) => (STAKEHOLDERS[c.template]?.(c.args) ?? []).includes(party) && (only === null || c.template === only))
+        .map((c) => ({
+          synchronizerId: 'sync',
+          contractEntry: { JsActiveContract: {
+            synchronizerId: 'sync',
+            createdEvent: {
+              contractId: c.contractId, templateId: templateIdOf(c.template), offset: c.offset, createArgument: c.args,
+              ...(only ? { createdEventBlob: `blob-${c.contractId}` } : {}),
+              ...(filter.InterfaceFilter ? { interfaceViews: [{ viewValue: c.args.view }] } : {}),
+            },
+          } },
+        })))
     }
     if (path === '/v2/commands/submit-and-wait-for-transaction') {
       const body = JSON.parse(init.body)
@@ -204,7 +258,7 @@ function fakeLedger({ holdings = true } = {}) {
       try {
         const created = body.commands.commands.map(apply).filter(Boolean)
         state.offset += 1
-        return json({ transaction: { updateId: `u-${state.offset}`, offset: state.offset, events: created.map((c) => ({ CreatedEvent: { contractId: c.contractId, templateId: `pkg123:Veil:${c.template}`, ...(state.eventArguments ? { createArgument: c.args } : {}) } })) } })
+        return json({ transaction: { updateId: `u-${state.offset}`, offset: state.offset, events: created.map((c) => ({ CreatedEvent: { contractId: c.contractId, templateId: templateIdOf(c.template), ...(state.eventArguments ? { createArgument: c.args } : {}) } })) } })
       } catch (error) {
         state.contracts = before
         if (error.status === 404) return json({ code: 'CONTRACT_NOT_FOUND', cause: 'gone', errorCategory: 11 }, 404)
@@ -213,10 +267,10 @@ function fakeLedger({ holdings = true } = {}) {
     }
     throw new Error(`unexpected ledger path ${path}`)
   }
-  return { state, add, mark, deal, fetchImpl }
+  return { state, add, mark, deal, funding, fetchImpl }
 }
 
-const ASSETS = ['Tokenized T-Bill', 'Tokenized MMF', 'Canton Coin']
+const ASSETS = ['Tokenized T-Bill', 'Tokenized MMF', 'Amulet']
 const minutesAgo = (m) => new Date(Date.now() - m * 60_000).toISOString()
 
 function deskOf(ledger, observedAt = minutesAgo(1)) {
@@ -242,7 +296,7 @@ test('create requires a valid Veil session and POST', async () => {
   assert.ok(anonymous.json().requestId)
 
   const now = Math.floor(Date.now() / 1000)
-  const { token: deskToken } = signDeskToken({ deskId: 'desk-0001', streams: { 'Canton Coin': 's' }, ledger: P.issuer }, privatePem, now)
+  const { token: deskToken } = signDeskToken({ deskId: 'desk-0001', streams: { Amulet: 's' }, ledger: P.issuer }, privatePem, now)
   const deskAsSession = await call({ action: 'create' }, deskToken)
   assert.equal(deskAsSession.statusCode, 401, 'a desk token is not a session')
 
@@ -274,7 +328,8 @@ test('create opens one stream per valued asset in one transaction and returns a 
   assert.deepEqual(submission.actAs, [P.lender, P.borrower, P.valuer])
   assert.equal(submission.userId, 'team-ledger-user')
   assert.equal(ledger.state.lastAuthorization, 'Bearer node-access')
-  const coin = submission.commands.find((c) => c.CreateAndExerciseCommand.createArguments.collateralAsset === 'Canton Coin')
+  // Canton Coin is priced under its instrument id, which the token-loan choices check.
+  const coin = submission.commands.find((c) => c.CreateAndExerciseCommand.createArguments.collateralAsset === 'Amulet')
   assert.equal(coin.CreateAndExerciseCommand.choiceArgument.unitPrice, '0.15')
   assert.equal(submission.commands[0].CreateAndExerciseCommand.createArguments.regulator, P.regulator)
 
@@ -341,22 +396,21 @@ test('create reuses a live desk without touching the ledger, and repairs a janit
   assert.notEqual(fresh.deskId, first.deskId)
 })
 
-test('close records a lapsed Canton Coin lock without the registry', async () => {
+test('close records a lapsed token-loan lock without the registry', async () => {
   const ledger = fakeLedger()
   globalThis.fetch = ledger.fetchImpl
   const mine = (await call({ action: 'create' })).json()
-  const coin = mine.streams['Canton Coin']
   const maturity = new Date(Date.now() - 2 * 86_400_000).toISOString()
-  const lapsed = ledger.deal('CoinLoan', coin, { collateralAsset: undefined, allocationCid: 'alloc-9', coinAdmin: 'DSO::1', settlementRef: 'veil-9', maturity, settlementExecutors: [P.lender, P.borrower] })
+  const lapsed = ledger.deal('TokenLoan', mine.streams.Amulet, { lockCid: 'lock-9', maturity })
   ledger.state.submissions = []
 
   const res = await call({ action: 'close', deskToken: mine.token }, roleToken('veil-borrower'))
   assert.equal(res.statusCode, 200, res.body)
   const [close, batch] = ledger.state.submissions
   assert.deepEqual(close.actAs, [P.lender])
-  assert.deepEqual(close.commands[0].ExerciseCommand, { templateId: '#veil-lite:Veil:CoinLoan', contractId: lapsed.contractId, choice: 'CloseLapsedCoinLoan', choiceArgument: {} })
+  assert.deepEqual(close.commands[0].ExerciseCommand, { templateId: '#veil-lite:Veil:TokenLoan', contractId: lapsed.contractId, choice: 'CloseLapsedTokenLoan', choiceArgument: {} })
   assert.equal(ledger.state.registryCalls.length, 0)
-  assert.ok(batch.commands.some((c) => c.ExerciseCommand.choice === 'Dismiss'), 'the lapse record is dismissed with the desk')
+  assert.ok(batch.commands.some((c) => c.ExerciseCommand.choice === 'DismissTokenLoanClosed'), 'the lapse record is dismissed with the desk')
 })
 
 test('close touches only its own desk\'s contracts, in reset order, and never burns holdings', async () => {
@@ -366,31 +420,50 @@ test('close touches only its own desk\'s contracts, in reset order, and never bu
   const theirs = deskOf(ledger)
   const tbill = mine.streams['Tokenized T-Bill']
   const mmf = mine.streams['Tokenized MMF']
-  const coin = mine.streams['Canton Coin']
+  const coin = mine.streams.Amulet
   const myOffer = ledger.deal('LoanOffer', tbill)
   const myLoan = ledger.deal('Loan', tbill)
   const myClosed = ledger.deal('LoanClosed', tbill, { reason: 'Repaid' })
   const mySub = ledger.add('SubstitutionRequest', { issuer: P.issuer, lender: P.lender, borrower: P.borrower, regulator: P.regulator, valuationAgent: P.valuer, releaseAsset: 'Tokenized T-Bill', releaseQuantity: '150', newAsset: 'Tokenized MMF', newQuantity: '160', newValuationStreamId: mmf })
-  const myCoinLoan = ledger.deal('CoinLoan', coin, { collateralAsset: undefined, allocationCid: 'alloc-1', coinAdmin: 'DSO::1', settlementRef: 'veil-1' })
+  const funding = ledger.funding()
+  const myTokenOffer = ledger.deal('TokenLoanOffer', coin, { fundingAllocationCid: funding.contractId })
+  const myTokenLoan = ledger.deal('TokenLoan', coin, { lockCid: 'lock-1' })
   const theirLoan = ledger.deal('Loan', theirs['Tokenized T-Bill'])
-  const theirOffer = ledger.deal('CoinLoanOffer', theirs['Canton Coin'])
+  const theirOffer = ledger.deal('TokenLoanOffer', theirs.Amulet, { fundingAllocationCid: ledger.funding().contractId })
   const foreign = ledger.deal('Loan', tbill, { issuer: 'Other::9' })
+  const foreignToken = ledger.deal('TokenLoan', coin, { principalRegistry: registryOf('Other::9', 'USDCx'), lockCid: 'lock-x' })
   const holding = ledger.add('CashHolding', { issuer: P.issuer, owner: P.lender, amount: '500' })
+  ledger.add('TokenRules', { admin: P.issuer })
   ledger.state.submissions = []
 
   const res = await call({ action: 'close', deskToken: mine.token }, roleToken('veil-borrower'))
   assert.equal(res.statusCode, 200, res.body)
-  assert.deepEqual(res.json().closed, { offers: 1, loans: 1, coinLoans: 1, closed: 2, substitutions: 1, marks: 3 })
+  assert.deepEqual(res.json().closed, { offers: 2, loans: 1, tokenLoans: 1, closed: 2, substitutions: 1, marks: 3 })
 
-  // Canton Coin first: WriteOffCoin as the lender, with the registry's cancel
-  // context and only the four disclosed-contract fields.
-  const [writeOff, batch] = ledger.state.submissions
+  // Token deals first, each with its registry's context and only the four
+  // disclosed-contract fields. The borrower rejects the offer, which cancels
+  // the committed principal: the demo USDCx registry discloses its rules and
+  // the lender's locked holding.
+  const [reject, writeOff, batch] = ledger.state.submissions
+  assert.deepEqual(reject.actAs, [P.borrower])
+  assert.equal(reject.commands[0].ExerciseCommand.choice, 'RejectTokenOffer')
+  assert.equal(reject.commands[0].ExerciseCommand.contractId, myTokenOffer.contractId)
+  const rules = ledger.state.contracts.find((c) => c.template === 'TokenRules')
+  assert.deepEqual(reject.commands[0].ExerciseCommand.choiceArgument.cancelArgs.context, {
+    values: { 'testTokenV2/accountConfigs': { tag: 'AV_List', value: [] }, 'testTokenV2/tokenRules': { tag: 'AV_ContractId', value: rules.contractId } },
+  })
+  assert.deepEqual(reject.disclosedContracts.map((d) => d.contractId), [rules.contractId, funding.args.view.holdingCids[0]])
+  assert.ok(reject.disclosedContracts.every((d) => Object.keys(d).join() === 'templateId,contractId,createdEventBlob,synchronizerId'))
+
+  // The lender writes the loan off, cancelling the Canton Coin lock with the
+  // registry's cancel context.
   assert.deepEqual(writeOff.actAs, [P.lender])
-  assert.equal(writeOff.commands[0].ExerciseCommand.choice, 'WriteOffCoin')
-  assert.equal(writeOff.commands[0].ExerciseCommand.contractId, myCoinLoan.contractId)
-  assert.deepEqual(writeOff.commands[0].ExerciseCommand.choiceArgument.cancelExtraArgs.context, { values: { ctx: 'cancel' } })
+  assert.equal(writeOff.commands[0].ExerciseCommand.choice, 'WriteOffToken')
+  assert.equal(writeOff.commands[0].ExerciseCommand.contractId, myTokenLoan.contractId)
+  assert.deepEqual(writeOff.commands[0].ExerciseCommand.choiceArgument.cancelArgs.context, { values: { ctx: 'cancel' } })
   assert.deepEqual(writeOff.disclosedContracts, [{ templateId: 'Splice:X', contractId: 'disclosed-1', createdEventBlob: 'blob', synchronizerId: 'sync' }])
-  assert.match(ledger.state.registryCalls[0].url, /\/registry\/allocations\/v2\/alloc-1\/choice-contexts\/cancel$/)
+  assert.equal(ledger.state.registryCalls.length, 1)
+  assert.match(ledger.state.registryCalls[0].url, /\/registry\/allocations\/v2\/lock-1\/choice-contexts\/cancel$/)
 
   const choices = batch.commands.map((c) => `${c.ExerciseCommand.choice}:${c.ExerciseCommand.contractId}`)
   assert.deepEqual(choices.slice(0, 4), [
@@ -399,22 +472,39 @@ test('close touches only its own desk\'s contracts, in reset order, and never bu
     `Archive:${myLoan.contractId}`,
     `Dismiss:${myClosed.contractId}`,
   ])
-  assert.ok(choices[4].startsWith('Dismiss:LoanClosed-'), 'the written-off coin loan record is dismissed too')
+  assert.ok(choices[4].startsWith('DismissTokenLoanClosed:TokenLoanClosed-'), 'the written-off token loan record is dismissed too')
   assert.equal(choices.slice(5).filter((c) => c.startsWith('Archive:CollateralValuation')).length, 3)
   assert.deepEqual(batch.actAs, [P.issuer, P.lender, P.borrower, P.valuer])
 
   const left = new Set(ledger.state.contracts.map((c) => c.contractId))
-  for (const c of [theirLoan, theirOffer, foreign, holding]) assert.ok(left.has(c.contractId), `${c.contractId} untouched`)
+  for (const c of [theirLoan, theirOffer, foreign, foreignToken, holding]) assert.ok(left.has(c.contractId), `${c.contractId} untouched`)
   for (const stream of Object.values(theirs)) assert.ok(ledger.state.contracts.some((c) => c.args.streamId === stream))
-  assert.ok(!ledger.state.contracts.some((c) => Object.values(mine.streams).includes(c.args.streamId) || Object.values(mine.streams).includes(c.args.valuationStreamId) && c.args.issuer === P.issuer))
   // Escrow came back instead of being burned.
   assert.ok(ledger.state.contracts.some((c) => c.template === 'CashHolding' && c.args.amount === '100'))
   assert.ok(ledger.state.contracts.some((c) => c.template === 'CollateralHolding' && c.args.asset === 'Tokenized MMF'))
+  assert.ok(ledger.state.contracts.some((c) => c.template === 'Token' && c.args.holding.account.owner === P.lender && c.args.holding.amount === '100' && c.args.holding.lock === null))
 
   const expired = signDeskToken({ deskId: mine.deskId, streams: mine.streams, ledger: P.issuer }, privatePem, Math.floor(Date.now() / 1000) - DESK_TTL_SECONDS - 5).token
   const refused = await call({ action: 'close', deskToken: expired })
   assert.equal(refused.statusCode, 401)
   assert.equal(refused.json().code, 'DESK_EXPIRED')
+})
+
+test('close: an expired token offer is withdrawn by the lender', async () => {
+  const ledger = fakeLedger()
+  globalThis.fetch = ledger.fetchImpl
+  const mine = (await call({ action: 'create' })).json()
+  const offer = ledger.deal('TokenLoanOffer', mine.streams.Amulet, { fundingAllocationCid: ledger.funding().contractId, expiresAt: new Date(Date.now() - 3_600_000).toISOString() })
+  ledger.state.submissions = []
+  assert.equal((await call({ action: 'close', deskToken: mine.token })).statusCode, 200)
+  // No rules existed yet: the registry creates them as the issuer, once.
+  const [rules, withdraw] = ledger.state.submissions
+  assert.deepEqual(rules.actAs, [P.issuer])
+  assert.deepEqual(rules.commands[0].CreateCommand, { templateId: '#splice-test-token-v2:Splice.Testing.Tokens.TestTokenV2:TokenRules', createArguments: { admin: P.issuer } })
+  assert.deepEqual(withdraw.actAs, [P.lender])
+  assert.equal(withdraw.commands[0].ExerciseCommand.contractId, offer.contractId)
+  assert.equal(withdraw.commands[0].ExerciseCommand.choice, 'WithdrawTokenOffer')
+  assert.ok(withdraw.commands[0].ExerciseCommand.choiceArgument.withdrawArgs.context.values['testTokenV2/tokenRules'])
 })
 
 test('janitor: streams idle over 30 minutes are closed first, never the caller\'s own', async () => {
@@ -491,7 +581,7 @@ test('without a Vercel request context the janitor and top-up run detached and l
   }
   assert.ok(!ledger.state.contracts.some((c) => Object.values(idle).includes(c.args.streamId)))
   assert.ok(logLines.some((line) => /"msg":"desk janitor"/.test(line)))
-  assert.equal(logLines.filter((line) => /"msg":"desk holdings top-up"/.test(line)).length, 4)
+  assert.equal(logLines.filter((line) => /"msg":"desk holdings top-up"/.test(line)).length, 6)
 })
 
 test('close retries once when a contract moved meanwhile', async () => {
@@ -548,6 +638,11 @@ test('top-up: drained wallets get one batched submission back to their seed amou
   ledger.add('CollateralHolding', { issuer: P.issuer, owner: P.borrower, asset: 'Tokenized MMF', quantity: '4000.0000000000' })
   // Another issuer's cash does not count toward the demo wallet.
   ledger.add('CashHolding', { issuer: 'Other::9', owner: P.lender, amount: '9000' })
+  // Demo USDCx: the lender's is full. The borrower's 900 locked in a payment is
+  // not spendable, so only its 200 counts, below 25% of 1000.
+  ledger.add('Token', usdcx(P.lender, '10000.0000000000'))
+  ledger.add('Token', usdcx(P.borrower, '200.0000000000'))
+  ledger.add('Token', { holding: { ...usdcx(P.borrower, '900.0000000000').holding, lock: { holders: [P.issuer] } } })
   const pending = vercelContext()
   const res = await call({ action: 'create' })
   assert.equal(res.statusCode, 200, res.body)
@@ -561,7 +656,9 @@ test('top-up: drained wallets get one batched submission back to their seed amou
   assert.deepEqual(created(topUp), [
     { template: 'CashHolding', issuer: P.issuer, owner: P.lender, amount: '8000.01' },
     { template: 'CollateralHolding', issuer: P.issuer, owner: P.borrower, asset: 'Tokenized T-Bill', quantity: '15001' },
+    { template: 'Token', ...usdcx(P.borrower, '800') },
   ])
+  assert.equal(topUp.commands[2].CreateCommand.templateId, '#splice-test-token-v2:Splice.Testing.Tokens.TestTokenV2.Holding:Token')
   assert.ok(!JSON.stringify(topUp).includes('Canton Coin'), 'no Canton Coin is minted')
   assert.equal(ledger.state.contracts.filter((c) => c.template === 'CashHolding' && c.args.owner === P.lender && c.args.issuer === P.issuer).length, 3)
 
@@ -569,6 +666,7 @@ test('top-up: drained wallets get one batched submission back to their seed amou
   assert.deepEqual(lines.map(({ wallet, before, amount, seed }) => ({ wallet, before, amount, seed })), [
     { wallet: 'lenderCash', before: '1999.99', amount: '8000.01', seed: '10000' },
     { wallet: 'borrowerTBill', before: '4999', amount: '15001', seed: '20000' },
+    { wallet: 'borrowerUSDCx', before: '200', amount: '800', seed: '1000' },
   ])
   assert.ok(lines.every((line) => line.level === 'info' && line.requestId))
   assert.ok(!logLines.some((line) => line.includes('offline-refresh') || line.includes('node-access')), 'no secrets in logs')
@@ -588,6 +686,8 @@ test('top-up: wallets at or above the low-water mark are left alone', async () =
   ledger.add('CollateralHolding', { issuer: P.issuer, owner: P.borrower, asset: 'Tokenized T-Bill', quantity: '2500' })
   ledger.add('CollateralHolding', { issuer: P.issuer, owner: P.borrower, asset: 'Tokenized T-Bill', quantity: '2500' })
   ledger.add('CollateralHolding', { issuer: P.issuer, owner: P.borrower, asset: 'Tokenized MMF', quantity: '99999' })
+  ledger.add('Token', usdcx(P.lender, '2500'))
+  ledger.add('Token', usdcx(P.borrower, '250'))
   const pending = vercelContext()
   assert.equal((await call({ action: 'create' })).statusCode, 200)
   await Promise.all(pending)
@@ -632,5 +732,7 @@ test('top-up: the local sandbox tops up with the minted operator token', async (
     { template: 'CashHolding', issuer: P.issuer, owner: P.borrower, amount: '10500' },
     { template: 'CollateralHolding', issuer: P.issuer, owner: P.borrower, asset: 'Tokenized T-Bill', quantity: '20000' },
     { template: 'CollateralHolding', issuer: P.issuer, owner: P.borrower, asset: 'Tokenized MMF', quantity: '16000' },
+    { template: 'Token', ...usdcx(P.lender, '10000') },
+    { template: 'Token', ...usdcx(P.borrower, '1000') },
   ])
 })

@@ -28,6 +28,8 @@ const MESSAGES = Object.freeze({
   REGISTRY_PROXY_ERROR: 'The token registry could not be reached.',
   REGISTRY_TIMEOUT: 'The token registry did not answer in time.',
   REGISTRY_RESPONSE_TOO_LARGE: 'The token registry returned an oversized response.',
+  REGISTRY_ERROR: 'The demo USDCx registry could not answer.',
+  ALLOCATION_NOT_FOUND: 'That allocation is not active at the demo USDCx registry.',
   PROXY_ERROR: 'The ledger could not be reached.',
   LEDGER_TIMEOUT: 'The ledger did not answer in time; the outcome is unknown.',
   LEDGER_ERROR: 'The ledger returned an error.',

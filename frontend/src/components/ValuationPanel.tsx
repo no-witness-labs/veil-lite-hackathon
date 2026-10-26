@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { Contract } from '../types'
-import { UNIT_CASH, fmtTimestamp, shortId } from '../state'
+import { UNIT_CASH, assetLabel, fmtTimestamp, shortId } from '../state'
 import { Button, Field, Label, Metric, Panel, Section, Tag } from '../ui/primitives'
 
 /** Preset marks for the demo: par, and the stressed mark that breaches the
@@ -60,13 +60,13 @@ export function ValuationPanel({
               onClick={() => setAsset(candidate)}
               disabled={busy}
             >
-              {candidate}
+              {assetLabel(candidate)}
             </Button>
           ))}
         </div>
         {!streamReady && (
           <p className="v-metric__note" style={{ color: 'var(--danger)' }}>
-            Exactly one current {asset} mark with a stream lineage is required before publishing.
+            Exactly one current {assetLabel(asset)} mark with a stream lineage is required before publishing.
           </p>
         )}
 
@@ -98,7 +98,7 @@ export function ValuationPanel({
         </div>
       </div>
 
-      <Section label={`Latest visible mark: ${asset}`}>
+      <Section label={`Latest visible mark: ${assetLabel(asset)}`}>
         {latest ? (
           <div className="v-row" style={{ justifyContent: 'space-between', gap: 'var(--space-4)', flexWrap: 'wrap', alignItems: 'baseline' }}>
             <Metric label="" value={Number(latest.args.unitPrice).toFixed(2)} unit={`${UNIT_CASH} / unit`} size="lg" />
@@ -117,7 +117,7 @@ export function ValuationPanel({
             {allMarks.map((mark) => (
               <div key={mark.contractId} className="v-row" style={{ justifyContent: 'space-between', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
                 <span className="v-mono" style={{ fontWeight: 600, color: 'var(--ink-900)' }}>
-                  {mark.args.collateralAsset}: {Number(mark.args.unitPrice).toFixed(2)} {UNIT_CASH} per unit
+                  {assetLabel(mark.args.collateralAsset)}: {Number(mark.args.unitPrice).toFixed(2)} {UNIT_CASH} per unit
                 </span>
                 <span className="v-id">{fmtTimestamp(mark.args.observedAt ?? '')}</span>
               </div>

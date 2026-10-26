@@ -7,10 +7,11 @@
 import type { Contract, ValuationStatus } from './types'
 import {
   assessValuation,
+  assetLabel,
   assetOf,
   balanceOf,
   currentDeal,
-  isCoinDeal,
+  dealIssuer,
   marginCallOf,
   repaidOf,
   valuationCandidates,
@@ -73,7 +74,7 @@ export interface BookSummary {
   nextDeadline: string | null
 }
 
-const DEAL_TEMPLATES = new Set(['LoanOffer', 'Loan', 'LoanClosed', 'CoinLoanOffer', 'CoinLoan'])
+const DEAL_TEMPLATES = new Set(['LoanOffer', 'Loan', 'LoanClosed', 'TokenLoanOffer', 'TokenLoan', 'TokenLoanClosed'])
 
 const num = (value: unknown): number => {
   const n = Number(value)
@@ -81,8 +82,8 @@ const num = (value: unknown): number => {
 }
 
 export function bookStatusOf(deal: Contract): BookStatus {
-  if (deal.template === 'LoanOffer' || deal.template === 'CoinLoanOffer') return 'offered'
-  if (deal.template === 'Loan' || deal.template === 'CoinLoan') return marginCallOf(deal) ? 'margin-call' : 'active'
+  if (deal.template === 'LoanOffer' || deal.template === 'TokenLoanOffer') return 'offered'
+  if (deal.template === 'Loan' || deal.template === 'TokenLoan') return marginCallOf(deal) ? 'margin-call' : 'active'
   switch (deal.args.reason) {
     case 'Repaid':
       return 'repaid'
@@ -103,7 +104,7 @@ export const isOpenLoan = (row: BookRow) => row.status === 'active' || row.statu
  * sorted first. */
 export function buildBookRows(contracts: Contract[], issuer: string | undefined, now: number, deskStreams: ReadonlySet<string> = new Set()): BookRow[] {
   return contracts
-    .filter((c) => DEAL_TEMPLATES.has(c.template) && (issuer === undefined || c.args.issuer === issuer))
+    .filter((c) => DEAL_TEMPLATES.has(c.template) && (issuer === undefined || dealIssuer(c) === issuer))
     .map((deal) => {
       const status = bookStatusOf(deal)
       const principal = num(deal.args.principal)
@@ -143,8 +144,8 @@ export function buildBookRows(contracts: Contract[], issuer: string | undefined,
         template: deal.template,
         offset: deal.offset,
         status,
-        reason: deal.template === 'LoanClosed' ? String(deal.args.reason ?? '') : '',
-        asset: assetOf(deal) ?? '',
+        reason: deal.template === 'LoanClosed' || deal.template === 'TokenLoanClosed' ? String(deal.args.reason ?? '') : '',
+        asset: assetLabel(assetOf(deal)),
         collateralQuantity,
         principal,
         interest,
@@ -160,7 +161,9 @@ export function buildBookRows(contracts: Contract[], issuer: string | undefined,
         breached: ltv !== null && threshold !== null && ltv >= threshold,
         marginCallDeadline: marginCallOf(deal)?.deadline ?? '',
         maturity: deal.args.maturity ?? '',
-        allocationCid: isCoinDeal(deal) ? String(deal.args.allocationCid ?? '') : '',
+        // The registry allocation holding the deal's assets: the committed
+        // principal of an offer, the collateral lock of a loan.
+        allocationCid: String((deal.template === 'TokenLoanOffer' ? deal.args.fundingAllocationCid : deal.template === 'TokenLoan' ? deal.args.lockCid : '') ?? ''),
         lender: deal.args.lender ?? '',
         borrower: deal.args.borrower ?? '',
         mine: onDesk(deal, deskStreams),
@@ -230,7 +233,7 @@ export function selectDeal(contracts: Contract[], issuer: string | undefined, se
   if (selectedId) {
     const picked = contracts.find((c) => c.contractId === selectedId
       && DEAL_TEMPLATES.has(c.template)
-      && (issuer === undefined || c.args.issuer === issuer))
+      && (issuer === undefined || dealIssuer(c) === issuer))
     if (picked) return picked
   }
   return currentDeal(contracts, issuer)
