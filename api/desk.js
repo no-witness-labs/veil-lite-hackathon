@@ -221,6 +221,8 @@ async function openStreams(ledger, config, assets) {
 // agrees.
 const LOCK_GRACE_MS = 86_400_000
 const LAPSE_MARGIN_MS = 60_000
+/** Re-reads while closing a desk that visitors keep adding to. */
+const MAX_CLOSE_ROUNDS = 3
 
 function lockLapsed(maturity, nowMs) {
   const maturityMs = Date.parse(maturity)
@@ -251,32 +253,21 @@ async function cancelArgs(ledger, issuer, registry, allocationCid) {
 async function closeStreams(ledger, config, streamIds) {
   if (streamIds.length === 0) return { offers: 0, loans: 0, tokenLoans: 0, closed: 0, substitutions: 0, marks: 0 }
   const { issuer, parties } = config
-  let scoped = deskContracts(await ledger.active(parties.lender), streamIds, issuer)
-  const tokenOffers = scoped.tokenOffers.length
-  const tokenLoans = scoped.tokenLoans.length
-  for (const offer of scoped.tokenOffers) {
-    const cancel = await cancelArgs(ledger, issuer, offer.args.principalRegistry, offer.args.fundingAllocationCid)
-    // Until the offer expires only the borrower's rejection releases the
-    // committed principal; after it, the lender withdraws it.
-    const command = Date.now() > Date.parse(offer.args.expiresAt) + LAPSE_MARGIN_MS
-      ? [[parties.lender], ledger.exercise('TokenLoanOffer', offer.contractId, 'WithdrawTokenOffer', { withdrawArgs: cancel.args })]
-      : [[parties.borrower], ledger.exercise('TokenLoanOffer', offer.contractId, 'RejectTokenOffer', { cancelArgs: cancel.args })]
-    await ledger.submit(command[0], [command[1]], 'close-token-offer', cancel.disclosed)
-  }
-  for (const loan of scoped.tokenLoans) {
-    if (lockLapsed(loan.args.maturity, Date.now())) {
-      // The lock lapsed: nothing to release, and the borrower can withdraw it.
-      // Record the lapse; the closed record is dismissed below.
-      await ledger.submit([parties.lender], [ledger.exercise('TokenLoan', loan.contractId, 'CloseLapsedTokenLoan')], 'close-lapsed-token')
+  let tokenOffers = 0
+  let tokenLoans = 0
+  for (let round = 0; ; round += 1) {
+    const scoped = deskContracts(await ledger.active(parties.lender), streamIds, issuer)
+    // A visitor may fund an offer or accept one while the desk closes. Token
+    // deals are closed before anything else, and the desk is re-read until
+    // none is left: archiving the marks first would strand a committed
+    // principal or a locked collateral where no cleanup finds it again.
+    if (scoped.tokenOffers.length + scoped.tokenLoans.length > 0) {
+      if (round >= MAX_CLOSE_ROUNDS) throw new LedgerCallError(409, 'DESK_BUSY', 'New loans kept opening on this desk while it closed; try again.')
+      await closeTokenDeals(ledger, config, scoped)
+      tokenOffers += scoped.tokenOffers.length
+      tokenLoans += scoped.tokenLoans.length
       continue
     }
-    // Never strand the borrower's collateral: the lender writes the loan off,
-    // which cancels the lock with both counterparties' authority.
-    const cancel = await cancelArgs(ledger, issuer, loan.args.collateralRegistry, loan.args.lockCid)
-    await ledger.submit([parties.lender], [ledger.exercise('TokenLoan', loan.contractId, 'WriteOffToken', { cancelArgs: cancel.args })], 'write-off-token', cancel.disclosed)
-  }
-  for (let attempt = 0; ; attempt += 1) {
-    if (tokenOffers + tokenLoans > 0 || attempt > 0) scoped = deskContracts(await ledger.active(parties.lender), streamIds, issuer)
     const commands = [
       ...scoped.offers.map((c) => ledger.exercise('LoanOffer', c.contractId, 'Withdraw')),
       ...scoped.substitutions.map((c) => ledger.exercise('SubstitutionRequest', c.contractId, 'CancelSubstitution')),
@@ -293,9 +284,38 @@ async function closeStreams(ledger, config, streamIds) {
       await ledger.submit([issuer, parties.lender, parties.borrower, parties.valuer], commands, 'close')
       return counts
     } catch (error) {
-      // A visitor may have moved a contract meanwhile; re-read once.
-      if (attempt > 0 || !retryable(error)) throw error
+      // A visitor may have moved a contract meanwhile; re-read and retry.
+      if (round >= MAX_CLOSE_ROUNDS || !retryable(error)) throw error
     }
+  }
+}
+
+/** Release every token deal's assets, each with its registry's context:
+ * offers are rejected (or, once expired, withdrawn) so the lender's committed
+ * principal returns; loans are written off so the borrower's collateral
+ * unlocks, or recorded as lapsed once the lock can no longer settle. */
+async function closeTokenDeals(ledger, config, scoped) {
+  const { issuer, parties } = config
+  for (const offer of scoped.tokenOffers) {
+    const cancel = await cancelArgs(ledger, issuer, offer.args.principalRegistry, offer.args.fundingAllocationCid)
+    // Until the offer expires only the borrower's rejection releases the
+    // committed principal; after it, the lender withdraws it.
+    const command = Date.now() > Date.parse(offer.args.expiresAt) + LAPSE_MARGIN_MS
+      ? [[parties.lender], ledger.exercise('TokenLoanOffer', offer.contractId, 'WithdrawTokenOffer', { withdrawArgs: cancel.args })]
+      : [[parties.borrower], ledger.exercise('TokenLoanOffer', offer.contractId, 'RejectTokenOffer', { cancelArgs: cancel.args })]
+    await ledger.submit(command[0], [command[1]], 'close-token-offer', cancel.disclosed)
+  }
+  for (const loan of scoped.tokenLoans) {
+    if (lockLapsed(loan.args.maturity, Date.now())) {
+      // The lock lapsed: nothing to release, and the borrower can withdraw it.
+      // Record the lapse; the closed record is dismissed with the desk.
+      await ledger.submit([parties.lender], [ledger.exercise('TokenLoan', loan.contractId, 'CloseLapsedTokenLoan')], 'close-lapsed-token')
+      continue
+    }
+    // Never strand the borrower's collateral: the lender writes the loan off,
+    // which cancels the lock with both counterparties' authority.
+    const cancel = await cancelArgs(ledger, issuer, loan.args.collateralRegistry, loan.args.lockCid)
+    await ledger.submit([parties.lender], [ledger.exercise('TokenLoan', loan.contractId, 'WriteOffToken', { cancelArgs: cancel.args })], 'write-off-token', cancel.disclosed)
   }
 }
 

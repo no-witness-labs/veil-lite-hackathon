@@ -219,13 +219,17 @@ test('regulator and outsider cannot submit; ordinary users cannot create; operat
   assertAuthError(() => authorizeLedgerRequest(req(operator, 'POST', '/v2/commands/submit-and-wait-for-transaction', readonly), '/v2/commands/submit-and-wait-for-transaction', readonly), 403, 'PARTY_FORBIDDEN')
 })
 
-test('a lender may create-and-fund its own token offer, and no other create', () => {
+test('a lender may create-and-fund its own demo-USDCx token offer, and no other create', () => {
   const submitPath = '/v2/commands/submit-and-wait-for-transaction'
   const fund = (sub, party, value = {}) => ({
     commands: {
       commands: [{ CreateAndExerciseCommand: {
         templateId: '#veil-lite:Veil:TokenOfferRequest',
-        createArguments: { lender: party },
+        createArguments: {
+          lender: party,
+          principalRegistry: { instrument: { admin: partyEnv.VEIL_PARTY_ISSUER, id: 'USDCx' } },
+          collateralRegistry: { instrument: { admin: 'DSO::1', id: 'Amulet' } },
+        },
         choice: 'FundTokenOffer',
         choiceArgument: {},
         ...value,
@@ -238,11 +242,30 @@ test('a lender may create-and-fund its own token offer, and no other create', ()
   check('veil-lender', fund('veil-lender', lender))
   // Another lender named in the terms, another choice, another template, or
   // another role: all refused.
-  assertAuthError(() => check('veil-lender', fund('veil-lender', lender, { createArguments: { lender: partyEnv.VEIL_PARTY_BORROWER } })), 403, 'COMMAND_FORBIDDEN')
+  const terms = fund('veil-lender', lender).commands.commands[0].CreateAndExerciseCommand.createArguments
+  const withTerms = (over) => fund('veil-lender', lender, { createArguments: { ...terms, ...over } })
+  assertAuthError(() => check('veil-lender', withTerms({ lender: partyEnv.VEIL_PARTY_BORROWER })), 403, 'COMMAND_FORBIDDEN')
+  // Only the demo pairing: not the shared lender's real Canton Coin as
+  // principal, not another admin's USDCx, not other collateral.
+  assertAuthError(() => check('veil-lender', withTerms({ principalRegistry: { instrument: { admin: 'DSO::1', id: 'Amulet' } } })), 403, 'COMMAND_FORBIDDEN')
+  assertAuthError(() => check('veil-lender', withTerms({ principalRegistry: { instrument: { admin: 'Other::9', id: 'USDCx' } } })), 403, 'COMMAND_FORBIDDEN')
+  assertAuthError(() => check('veil-lender', withTerms({ collateralRegistry: { instrument: { admin: partyEnv.VEIL_PARTY_ISSUER, id: 'USDCx' } } })), 403, 'COMMAND_FORBIDDEN')
+  assertAuthError(() => check('veil-lender', withTerms({ principalRegistry: undefined })), 403, 'COMMAND_FORBIDDEN')
   assertAuthError(() => check('veil-lender', fund('veil-lender', lender, { choice: 'Archive' })), 403, 'COMMAND_FORBIDDEN')
   assertAuthError(() => check('veil-lender', fund('veil-lender', lender, { templateId: '#veil-lite:Veil:ValuationStream', choice: 'PublishInitial' })), 403, 'COMMAND_FORBIDDEN')
   const borrower = partyEnv.VEIL_PARTY_BORROWER
-  assertAuthError(() => check('veil-borrower', fund('veil-borrower', borrower, { createArguments: { lender: borrower } })), 403, 'COMMAND_FORBIDDEN')
+  assertAuthError(() => check('veil-borrower', fund('veil-borrower', borrower, { createArguments: { ...terms, lender: borrower } })), 403, 'COMMAND_FORBIDDEN')
+})
+
+test('roles may not archive contracts directly; only reset (the operator) does', () => {
+  const submitPath = '/v2/commands/submit-and-wait-for-transaction'
+  const archive = (sub, party, template) => ({ commands: { commands: [{ ExerciseCommand: { templateId: `#veil-lite:Veil:${template}`, contractId: '#offer', choice: 'Archive', choiceArgument: {} } }], commandId: 'archive', actAs: [party], userId: sub } })
+  const check = (sub, body) => authorizeLedgerRequest(req(jwt({ sub }), 'POST', submitPath, body), submitPath, body)
+  // A funded token offer has the lender as its only signatory: archiving it
+  // would strand the committed principal.
+  assertAuthError(() => check('veil-lender', archive('veil-lender', partyEnv.VEIL_PARTY_LENDER, 'TokenLoanOffer')), 403, 'COMMAND_FORBIDDEN')
+  assertAuthError(() => check('veil-borrower', archive('veil-borrower', partyEnv.VEIL_PARTY_BORROWER, 'TokenLoan')), 403, 'COMMAND_FORBIDDEN')
+  check('veil-operator', archive('veil-operator', partyEnv.VEIL_PARTY_LENDER, 'Loan'))
 })
 
 test('demo USDCx registry: transacting roles only; locked holdings disclosed only to an allocation\'s executors and authorizer', async () => {

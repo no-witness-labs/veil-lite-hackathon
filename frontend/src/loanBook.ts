@@ -9,6 +9,7 @@ import {
   assessValuation,
   assetLabel,
   assetOf,
+  principalUnit,
   balanceOf,
   currentDeal,
   dealIssuer,
@@ -41,6 +42,8 @@ export interface BookRow {
   /** LoanClosed.reason verbatim; empty for open deals. */
   reason: string
   asset: string
+  /** What principal, payments and balances are counted in. */
+  unit: string
   collateralQuantity: number
   principal: number
   interest: number
@@ -65,7 +68,8 @@ export interface BookRow {
 }
 
 export interface BookSummary {
-  totalOutstandingPrincipal: number
+  /** Open principal per denomination: demo USDCx and simulated cash never add up. */
+  outstandingByUnit: Record<string, number>
   active: number
   inMarginCall: number
   /** Highest fresh-mark LTV across open loans, or null when none is priced. */
@@ -146,6 +150,7 @@ export function buildBookRows(contracts: Contract[], issuer: string | undefined,
         status,
         reason: deal.template === 'LoanClosed' || deal.template === 'TokenLoanClosed' ? String(deal.args.reason ?? '') : '',
         asset: assetLabel(assetOf(deal)),
+        unit: principalUnit(deal),
         collateralQuantity,
         principal,
         interest,
@@ -204,7 +209,10 @@ export function summarizeBook(rows: BookRow[]): BookSummary {
     .filter((d) => Number.isFinite(Date.parse(d)))
     .sort((a, b) => Date.parse(a) - Date.parse(b))
   return {
-    totalOutstandingPrincipal: open.reduce((sum, r) => sum + (Number.isFinite(r.outstandingPrincipal) ? r.outstandingPrincipal : 0), 0),
+    outstandingByUnit: open.reduce<Record<string, number>>((sums, r) => {
+      if (Number.isFinite(r.outstandingPrincipal)) sums[r.unit] = (sums[r.unit] ?? 0) + r.outstandingPrincipal
+      return sums
+    }, {}),
     active: open.length,
     inMarginCall: open.filter((r) => r.status === 'margin-call').length,
     worstLtv: ltvs.length > 0 ? Math.max(...ltvs) : null,
@@ -251,7 +259,7 @@ export interface BookExportMeta {
 
 export const EXPORT_COLUMNS: (keyof BookRow)[] = [
   'contractId', 'template', 'status', 'reason', 'asset', 'collateralQuantity',
-  'principal', 'interest', 'repaid', 'outstandingPrincipal', 'outstandingDue',
+  'unit', 'principal', 'interest', 'repaid', 'outstandingPrincipal', 'outstandingDue',
   'ltv', 'ltvState', 'markPrice', 'markObservedAt', 'threshold', 'breached',
   'marginCallDeadline', 'maturity', 'allocationCid', 'lender', 'borrower', 'mine', 'offset',
 ]

@@ -204,8 +204,16 @@ function fakeLedger({ holdings = true } = {}) {
     const { templateId, contractId, choice } = command.ExerciseCommand
     const contract = remove(contractId)
     assert.equal(templateId, `#veil-lite:Veil:${contract.template}`)
+    state.onExercise?.(choice, contract)
     if (choice === 'Withdraw') add('CashHolding', { issuer: P.issuer, owner: P.lender, amount: contract.args.principal })
-    if (choice === 'RejectTokenOffer' || choice === 'WithdrawTokenOffer') add('Token', usdcx(P.lender, contract.args.principal))
+    if (choice === 'RejectTokenOffer' || choice === 'WithdrawTokenOffer') {
+      // The registry cancels the funding allocation and unlocks its holdings.
+      const allocation = remove(contract.args.fundingAllocationCid)
+      for (const cid of allocation.args.view.holdingCids) {
+        const locked = remove(cid)
+        add('Token', { holding: { ...locked.args.holding, lock: null } })
+      }
+    }
     if (choice === 'CancelSubstitution') add('CollateralHolding', { issuer: P.issuer, owner: P.borrower, asset: contract.args.newAsset, quantity: contract.args.newQuantity })
     const closed = (reason) => add('TokenLoanClosed', { ...contract.args, principalInstrument: contract.args.principalRegistry.instrument, collateralInstrument: contract.args.collateralRegistry.instrument, reason })
     if (choice === 'WriteOffToken') closed('WrittenOff')
@@ -267,7 +275,7 @@ function fakeLedger({ holdings = true } = {}) {
     }
     throw new Error(`unexpected ledger path ${path}`)
   }
-  return { state, add, mark, deal, funding, fetchImpl }
+  return { state, add, mark, deal, funding, fetchImpl, onExercise: (fn) => { state.onExercise = fn } }
 }
 
 const ASSETS = ['Tokenized T-Bill', 'Tokenized MMF', 'Amulet']
@@ -488,6 +496,28 @@ test('close touches only its own desk\'s contracts, in reset order, and never bu
   const refused = await call({ action: 'close', deskToken: expired })
   assert.equal(refused.statusCode, 401)
   assert.equal(refused.json().code, 'DESK_EXPIRED')
+})
+
+test('close: a token offer funded while the desk closes is released before the marks go', async () => {
+  const ledger = fakeLedger()
+  globalThis.fetch = ledger.fetchImpl
+  const mine = (await call({ action: 'create' })).json()
+  const coin = mine.streams.Amulet
+  ledger.deal('TokenLoan', coin, { lockCid: 'lock-1' })
+  // Another tab funds an offer on this desk right after the write-off.
+  let late
+  ledger.onExercise((choice) => {
+    if (choice === 'WriteOffToken' && !late) late = ledger.deal('TokenLoanOffer', coin, { fundingAllocationCid: ledger.funding().contractId })
+  })
+  ledger.state.submissions = []
+  const res = await call({ action: 'close', deskToken: mine.token })
+  assert.equal(res.statusCode, 200, res.body)
+  const choices = ledger.state.submissions.flatMap((s) => s.commands.map((c) => c.ExerciseCommand?.choice)).filter(Boolean)
+  assert.ok(choices.indexOf('RejectTokenOffer') > choices.indexOf('WriteOffToken'))
+  assert.ok(choices.indexOf('RejectTokenOffer') < choices.indexOf('Archive'), 'the late offer is rejected before the marks are archived')
+  assert.ok(!ledger.state.contracts.some((c) => c.contractId === late.contractId))
+  assert.ok(!ledger.state.contracts.some((c) => c.template === 'TokenAllocation' || (c.template === 'Token' && c.args.holding.lock !== null)), 'no principal left committed')
+  assert.equal(res.json().closed.offers, 1)
 })
 
 test('close: an expired token offer is withdrawn by the lender', async () => {

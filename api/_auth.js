@@ -310,7 +310,10 @@ function validateCommands(body, auth, env = process.env) {
 
   const command = commandShape(commands.commands[0], env)
   if (auth.role !== 'operator' && (command.kind === 'CreateCommand'
-    || (command.kind === 'CreateAndExerciseCommand' && !fundsOwnTokenOffer(command.value, auth, rolePartyValue, env)))) {
+    || (command.kind === 'CreateAndExerciseCommand' && !fundsOwnTokenOffer(command.value, auth, rolePartyValue, config, env))
+    // A bare Archive bypasses every choice's cleanup: archiving a funded
+    // token offer would strand its committed principal. Only reset archives.
+    || (command.kind === 'ExerciseCommand' && command.value.choice === 'Archive'))) {
     throw new AuthError(403, 'COMMAND_FORBIDDEN')
   }
   return { config, actAs, readAs }
@@ -318,11 +321,18 @@ function validateCommands(body, auth, env = process.env) {
 
 // The one create a role may submit: the lender's token-offer terms, funded in
 // the same command, so the request itself never becomes an active contract.
-function fundsOwnTokenOffer(value, auth, party, env) {
+// The terms must be the app's pairing, demo USDCx (the configured issuer's)
+// lent against Canton Coin: any other principal, such as the shared lender's
+// real Canton Coin, would be committed where no cleanup finds it.
+function fundsOwnTokenOffer(value, auth, party, config, env) {
+  const terms = value.createArguments
+  const principal = terms.principalRegistry?.instrument
   return auth.role === 'lender'
     && value.templateId === `${packageRef(env)}:Veil:TokenOfferRequest`
     && value.choice === 'FundTokenOffer'
-    && value.createArguments.lender === party
+    && terms.lender === party
+    && principal?.admin === config.issuer && principal?.id === 'USDCx'
+    && terms.collateralRegistry?.instrument?.id === 'Amulet'
 }
 
 // Registry contracts (e.g. the Canton Coin allocation factory) are disclosed by

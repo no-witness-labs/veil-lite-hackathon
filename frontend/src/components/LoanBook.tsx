@@ -118,7 +118,13 @@ export function LoanBook({
       }
     >
       <MetricRow cols={5}>
-        <Metric label="Principal outstanding" value={fmtAmount(summary.totalOutstandingPrincipal)} unit={UNIT_CASH} />
+        <Metric
+          label="Principal outstanding"
+          value={Object.keys(summary.outstandingByUnit).length === 0
+            ? fmtAmount(0)
+            : Object.entries(summary.outstandingByUnit).map(([unit, amount]) => `${fmtAmount(amount)} ${unit}`).join(', ')}
+          unit={Object.keys(summary.outstandingByUnit).length === 0 ? UNIT_CASH : undefined}
+        />
         <Metric label="Active" value={summary.active} />
         <Metric label="Margin call" value={summary.inMarginCall} tone={summary.inMarginCall > 0 ? 'danger' : undefined} />
         <Metric

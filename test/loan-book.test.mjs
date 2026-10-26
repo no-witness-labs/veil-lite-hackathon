@@ -90,6 +90,8 @@ test('builds one row per issuer-matching deal, sorted by risk', () => {
   assert.equal(byId['loan-call-soon'].ltvState, 'stale')
   assert.equal(byId['loan-call-soon'].ltv, null)
   assert.equal(byId['coin-call-later'].asset, 'Canton Coin')
+  assert.equal(byId['coin-call-later'].unit, 'demo USDCx')
+  assert.equal(byId['loan-breach'].unit, 'simulated USDC')
   assert.equal(byId['coin-call-later'].allocationCid, 'alloc-1')
   // 25 repaid settles the 5 interest first, then 20 of principal.
   assert.equal(byId['coin-call-later'].outstandingPrincipal, 80)
@@ -105,13 +107,14 @@ test('summary covers only open loans', () => {
   const summary = summarizeBook(buildBookRows(fixture(), ISSUER, NOW))
   assert.equal(summary.active, 4)
   assert.equal(summary.inMarginCall, 2)
-  assert.equal(summary.totalOutstandingPrincipal, 380)
+  // The token loan's 80 demo USDCx is never added to simulated cash.
+  assert.deepEqual(summary.outstandingByUnit, { 'simulated USDC': 300, 'demo USDCx': 80 })
   assert.ok(Math.abs(summary.worstLtv - 133.333) < 0.01)
   assert.equal(summary.nextDeadline, iso(30000))
 })
 
 test('empty book summarises to zeros and nulls', () => {
-  assert.deepEqual(summarizeBook([]), { totalOutstandingPrincipal: 0, active: 0, inMarginCall: 0, worstLtv: null, nextDeadline: null })
+  assert.deepEqual(summarizeBook([]), { outstandingByUnit: {}, active: 0, inMarginCall: 0, worstLtv: null, nextDeadline: null })
 })
 
 test('compareRisk puts the sooner deadline first within a tier', () => {
