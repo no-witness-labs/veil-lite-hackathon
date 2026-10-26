@@ -9,6 +9,7 @@ module Veil.RegistryTest where
 import Daml.Script
 import DA.Assert ((===))
 import DA.Optional (isNone, isSome)
+import DA.Text qualified as T
 import DA.TextMap qualified as TextMap
 import DA.Time (seconds)
 import Veil
@@ -117,6 +118,16 @@ fixture = do
 submitWith : Fixture -> Party -> [Disclosure] -> Commands a -> Script a
 submitWith f p extra = submit (actAs p <> discloseMany (f.rules <> extra))
 
+-- | The registry itself refuses the submission, for the given reason. Every
+-- contract it reads is disclosed, so a missing disclosure cannot stand in for
+-- the refusal.
+registryRefuses : Text -> Fixture -> Party -> [Disclosure] -> Commands a -> Script ()
+registryRefuses reason f p extra cmds = do
+  result <- trySubmit (actAs p <> discloseMany (f.rules <> extra)) cmds
+  case result of
+    Left err -> assertMsg ("refused for another reason: " <> show err) (reason `T.isInfixOf` show err)
+    Right _ -> assertFail "the registry accepted it"
+
 transferArgs : ExtraArgs -> TransferArgs
 transferArgs args = TransferArgs with sendArgs = args; receiveArgs = args; settleArgs = args
 
@@ -166,9 +177,10 @@ testRegistryLifecycle = script do
   -- alone at the registry: the lock is committed and settles only with both
   -- executors, through the factory.
   Some loan <- queryContractId f.borrower loanCid
-  submitMustFail f.borrower do
+  collateral <- lockedBy f.cbtc loan.lockCid
+  registryRefuses "Cannot withdraw a committed allocation before its settlement deadline" f f.borrower collateral do
     exerciseCmd loan.lockCid Token.Allocation_Withdraw with actors = [f.borrower]; extraArgs = f.cbtcArgs
-  submitMustFail f.borrower do
+  registryRefuses "'actors' does not have the same elements as one of 'allowed actors'" f f.borrower collateral do
     exerciseCmd loan.lockCid Token.Allocation_Cancel with actors = [f.borrower]; extraArgs = f.cbtcArgs
 
   inputs <- unlocked f.borrower f.usdc

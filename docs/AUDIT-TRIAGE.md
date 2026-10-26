@@ -208,14 +208,18 @@ The same choices now run against registry code Veil did not write:
   collateral, payments reach the lender, repayment unlocks the collateral,
   liquidation moves the whole lock, a rejected offer unlocks the principal, and
   a borrower short of collateral cannot accept. The borrower cannot cancel or
-  withdraw the lock alone at the registry.
+  withdraw the lock alone at the registry: each attempt has every contract
+  disclosed and must fail with the registry's own reason.
 - **Canton Coin (Amulet 0.1.22) on Splice LocalNet 0.6.12**, with factories,
   choice context and disclosures served by Scan through the validator's scan
-  proxy. `scripts/token-loans-localnet.mjs` runs three loans on a fresh LocalNet
+  proxy. `scripts/token-loans-localnet.mjs` runs three loans on LocalNet
   (USDCx against CBTC repaid; USDCx against CC liquidated after a margin call,
   settled through the DSO's `SettlementFactory`; USDCx against CC repaid, the
-  lock cancelled) and checks every balance. Run of Oct 25, 2026:
-  [`LOCALNET-TOKEN-LOANS-RUN-2026-10-25.log`](LOCALNET-TOKEN-LOANS-RUN-2026-10-25.log).
+  lock cancelled). After each step it checks both parties' free and locked
+  USDCx, CBTC and CC, and it counts the borrower's attempt to cancel the lock
+  alone only if the ledger refuses it for the registry's reason. Run of
+  Oct 26, 2026:
+  [`LOCALNET-TOKEN-LOANS-RUN-2026-10-26.log`](LOCALNET-TOKEN-LOANS-RUN-2026-10-26.log).
 
 What this showed:
 

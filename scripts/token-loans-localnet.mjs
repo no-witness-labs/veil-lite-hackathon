@@ -32,7 +32,7 @@ async function http(base, path, body, method = body === undefined ? 'GET' : 'POS
   const r = await fetch(base + path, { method, headers: H, body: body === undefined ? undefined : JSON.stringify(body) })
   const text = await r.text()
   let data; try { data = JSON.parse(text) } catch { data = text }
-  if (!r.ok) throw new Error(`${method} ${path} → ${r.status} ${JSON.stringify(data).slice(0, 600)}`)
+  if (!r.ok) throw Object.assign(new Error(`${method} ${path} → ${r.status} ${JSON.stringify(data).slice(0, 600)}`), { status: r.status, body: data })
   return data
 }
 const call = (path, body, method) => http(J, path, body, method)
@@ -67,8 +67,15 @@ async function submit(actAs, command, disclosed = []) {
   })
   return r.transaction
 }
-const mustFail = async (what, run) => {
-  try { await run() } catch (e) { info(`refused as expected: ${what} (${String(e.message).match(/"cause":"([^"]{0,140})/)?.[1] ?? e.message.slice(0, 140)})`); return }
+// Only the ledger's own rejection, for the expected reason, counts: a network,
+// authentication or server error is rethrown rather than read as a refusal.
+const mustFail = async (what, reason, run) => {
+  try { await run() } catch (e) {
+    const cause = typeof e.body?.cause === 'string' ? e.body.cause : ''
+    if (e.status !== 400 || !cause.includes(reason)) throw e
+    info(`refused as expected: ${what} (${cause.slice(0, 140)})`)
+    return
+  }
   throw new Error(`${what} was accepted`)
 }
 
@@ -261,7 +268,7 @@ step('Loan A: 100 USDCx against 150 CBTC')
   info('acceptance pays the principal and locks the collateral in one transaction')
   await expectBalance('borrower', p.borrower, usdc.instrument, 100, 0)
   await expectBalance('borrower', p.borrower, cbtc.instrument, 50, 150)
-  await mustFail('the borrower cancelling the lock alone at the registry', () =>
+  await mustFail('the borrower cancelling the lock alone at the registry', "'actors' does not have the same elements as one of 'allowed actors'", () =>
     submit([p.borrower], exercise(ALLOCATION, loan.createArgument.lockCid, 'Allocation_Cancel', { actors: [p.borrower], extraArgs: cbtc.args }), cbtc.disclosed))
   const pay = await payments(p, usdc)
   const paid = createdIn(await submit([p.borrower], exercise(T.TokenLoan, loan.contractId, 'PayDownToken', { amount: dec(30), ...pay, valuationCid: null }), usdc.disclosed), T.TokenLoan)[0]
@@ -281,12 +288,15 @@ step('Loan B: 100 USDCx against 1,000 CC, liquidated after a margin call')
   await usdc.mint(p.lender, 100)
   const s = await stream(p, 'Amulet', 0.15)
   const offer = await fundOffer(p, usdc, cc, s, `loan-b-${RUN}`, 1000)
+  await expectBalance('lender', p.lender, usdc.instrument, 1005, 100)
   const lock = await amuletAllocationFactory()
   const loan = await acceptOffer(p, usdc, cc, s, offer, lock)
   info('1,000 CC locked by Amulet in a committed allocation that lender and borrower execute together')
   await expectBalance('borrower', p.borrower, cc.instrument, tapped.free - 1000, 1000, 1)
+  await expectBalance('lender', p.lender, usdc.instrument, 1005, 0)
+  await expectBalance('borrower', p.borrower, usdc.instrument, 100, 0)
   const stressed = await publish(p, s, 0.09)
-  info('CC marked at 0.09: 105 owed on 90 of collateral, LTV 116.7%')
+  info('CC marked at 0.09: 100 of principal outstanding on 90 of collateral, LTV 111.1%')
   const called = createdIn(await submit([p.lender], exercise(T.TokenLoan, loan.contractId, 'IssueTokenMarginCall', { valuationCid: stressed })), T.TokenLoan)[0]
   info('margin call issued; waiting out the 60-second window')
   await sleep(62_000)
@@ -306,6 +316,9 @@ step('Loan B: 100 USDCx against 1,000 CC, liquidated after a margin call')
   info(`liquidated: ${closed.createArgument.reason} at ${closed.createArgument.liquidationUnitPrice}, ${closed.createArgument.collateralSeized} CC to the lender`)
   await expectBalance('lender', p.lender, cc.instrument, 1000, 0, 1)
   await expectBalance('borrower', p.borrower, cc.instrument, tapped.free - 1000, 0, 1)
+  info('the borrower keeps the principal; the lender holds the collateral')
+  await expectBalance('lender', p.lender, usdc.instrument, 1005, 0)
+  await expectBalance('borrower', p.borrower, usdc.instrument, 100, 0)
 }
 
 // --- C: USDCx against Canton Coin, repaid
@@ -313,14 +326,18 @@ step('Loan C: 100 USDCx against 1,000 CC, repaid')
 {
   const s = await stream(p, 'Amulet', 0.15)
   const offer = await fundOffer(p, usdc, cc, s, `loan-c-${RUN}`, 1000)
+  await expectBalance('lender', p.lender, usdc.instrument, 905, 100)
   const loan = await acceptOffer(p, usdc, cc, s, offer, await amuletAllocationFactory())
   await expectBalance('borrower', p.borrower, cc.instrument, tapped.free - 2000, 1000, 1)
+  await expectBalance('borrower', p.borrower, usdc.instrument, 200, 0)
   await usdc.mint(p.borrower, 5)
   const cancel = await amuletCancel(loan.createArgument.lockCid)
   const closed = createdIn(await submit([p.borrower], exercise(T.TokenLoan, loan.contractId, 'RepayToken', { ...(await payments(p, usdc)), cancelArgs: cancel.args }),
     [...usdc.disclosed, ...cancel.disclosed]), T.TokenLoanClosed)[0]
   info(`repaid: ${closed.createArgument.reason}; the lock is cancelled and the CC is the borrower's again`)
   await expectBalance('borrower', p.borrower, cc.instrument, tapped.free - 1000, 0, 1)
+  await expectBalance('lender', p.lender, usdc.instrument, 1010, 0)
+  await expectBalance('borrower', p.borrower, usdc.instrument, 100, 0)
 }
 
 step('Done: three loans settled through real registries')

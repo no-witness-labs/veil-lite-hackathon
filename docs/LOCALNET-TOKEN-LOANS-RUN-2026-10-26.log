@@ -15,7 +15,7 @@
     acceptance pays the principal and locks the collateral in one transaction
     borrower holds 100 USDCx
     borrower holds 50 CBTC and 150 locked
-    refused as expected: the borrower cancelling the lock alone at the registry (DAML_FAILURE(9,98533532): Interpretation error: Error: User failure: UNHANDLED_EXCEPTION/DA.Exception.GeneralError:GeneralError (error categ)
+    refused as expected: the borrower cancelling the lock alone at the registry (DAML_FAILURE(9,a3bd5521): Interpretation error: Error: User failure: UNHANDLED_EXCEPTION/DA.Exception.GeneralError:GeneralError (error categ)
     paid down 30
     lender holds 930 USDCx
     repaid: Repaid, 105.0000000000 USDCx
@@ -24,18 +24,28 @@
     borrower holds 0 USDCx
 
 ==> Loan B: 100 USDCx against 1,000 CC, liquidated after a margin call
+    lender holds 1005 USDCx and 100 locked
     1,000 CC locked by Amulet in a committed allocation that lender and borrower execute together
     borrower holds 2000 Amulet and 1000 locked
-    CC marked at 0.09: 105 owed on 90 of collateral, LTV 116.7%
+    lender holds 1005 USDCx
+    borrower holds 100 USDCx
+    CC marked at 0.09: 100 of principal outstanding on 90 of collateral, LTV 111.1%
     margin call issued; waiting out the 60-second window
     liquidated: Liquidated at 0.0900000000, 1000.0000000000 CC to the lender
     lender holds 1000 Amulet
     borrower holds 2000 Amulet
+    the borrower keeps the principal; the lender holds the collateral
+    lender holds 1005 USDCx
+    borrower holds 100 USDCx
 
 ==> Loan C: 100 USDCx against 1,000 CC, repaid
+    lender holds 905 USDCx and 100 locked
     borrower holds 1000 Amulet and 1000 locked
+    borrower holds 200 USDCx
     repaid: Repaid; the lock is cancelled and the CC is the borrower's again
     borrower holds 2000 Amulet
+    lender holds 1010 USDCx
+    borrower holds 100 USDCx
 
 ==> Done: three loans settled through real registries
     lender: {"free":1010,"locked":0} USDCx, {"free":1000,"locked":0} CC
