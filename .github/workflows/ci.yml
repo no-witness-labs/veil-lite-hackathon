@@ -87,6 +87,10 @@ jobs:
         working-directory: vendor/decman
         run: sha256sum -c SHA256SUMS
 
+      - name: Verify the vendored Splice test token
+        working-directory: vendor/splice-test-token-v2
+        run: sha256sum -c SHA256SUMS
+
       - name: Build and test the price committee and wallet packages
         run: |
           set -euo pipefail

@@ -1,0 +1,5 @@
+splice-test-token-v2-1.0.0.dar is copied unchanged from https://github.com/hyperledger-labs/splice
+(tag 0.6.12, commit 17fd29aad170e8f20074aa64624c4506177ea7bd), daml/dars/. It is Splice's reference
+implementation of a Token Standard V2 registry, used here only in tests and on LocalNet as the stand-in
+for USDCx and CBTC. Licensed under the Apache License 2.0 (Copyright Digital Asset (Switzerland) GmbH
+and/or its affiliates). SHA256SUMS lists its checksum; CI verifies it.

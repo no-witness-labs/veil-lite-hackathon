@@ -194,12 +194,58 @@ How the 0.10.0 residual items change, after a review of `9ce901b`:
 - **Unchanged:** a liquidation transfers the whole lock (no surplus, as for
   0.10.0 coin loans). The mocks in `test/daml/Veil/TokenMocks.daml` now require
   every leg of a batch to have exactly one sending and one receiving allocation,
-  and can cap expiry with a TTL, but they carry no balances: tests check which
-  allocations exist and settle, not debits and credits. Real registries
-  (Amulet, the DA Registry Utility for USDCx and CBTC) are not yet exercised.
+  and can cap expiry with a TTL, but they carry no balances: those tests check
+  which allocations exist and settle, not debits and credits.
+
+## Real registries (step 3)
+
+The same choices now run against registry code Veil did not write:
+
+- **Splice's reference V2 token** (`splice-test-token-v2` 1.0.0, vendored
+  unchanged from Splice 0.6.12 in `vendor/splice-test-token-v2/`) stands in
+  for USDCx and CBTC. `test/daml/Veil/RegistryTest.daml` checks real balances:
+  the offer locks the lender's principal, acceptance pays it out and locks the
+  collateral, payments reach the lender, repayment unlocks the collateral,
+  liquidation moves the whole lock, a rejected offer unlocks the principal, and
+  a borrower short of collateral cannot accept. The borrower cannot cancel or
+  withdraw the lock alone at the registry: each attempt has every contract
+  disclosed and must fail with the registry's own reason.
+- **Canton Coin (Amulet 0.1.22) on Splice LocalNet 0.6.12**, with factories,
+  choice context and disclosures served by Scan through the validator's scan
+  proxy. `scripts/token-loans-localnet.mjs` runs three loans on LocalNet
+  (USDCx against CBTC repaid; USDCx against CC liquidated after a margin call,
+  settled through the DSO's `SettlementFactory`; USDCx against CC repaid, the
+  lock cancelled). After each step it checks both parties' free and locked
+  USDCx, CBTC and CC, and it counts the borrower's attempt to cancel the lock
+  alone only if the ledger refuses it for the registry's reason. Run of
+  Oct 26, 2026:
+  [`LOCALNET-TOKEN-LOANS-RUN-2026-10-26.log`](LOCALNET-TOKEN-LOANS-RUN-2026-10-26.log).
+
+What this showed:
+
+- Amulet settles only with its admin as a co-actor
+  (`allocation.admin :: settlement.executors`), which it gets through its own
+  settlement factory. Veil's pinned-factory design is therefore required, not
+  just defensive.
+- Scan 0.6.12 has no V2 `allocation-factory` endpoint. Its V1 endpoint returns
+  the same factory (`ExternalPartyAmuletRules` implements both) and the
+  context the V2 allocation reads, so the script uses it. The V2
+  `settlement-factory` and `cancel` endpoints exist.
+- Amulet caps an allocation's expiry at 90 days (`tokenStandardMaxTTL`), so a
+  Canton Coin lock, and hence a loan, can run at most 89 days (lock deadline =
+  maturity + 1 day) until lock renewal exists.
+- A settling party who is not the holdings' owner (the borrower when the
+  principal settles; the lender at liquidation) needs the locked holdings
+  disclosed. Scan serves them for Amulet; a registry without an off-ledger
+  API (the test token here) needs its admin to serve them.
+
+Still not exercised: the DA Registry Utility that issues the real USDCx and
+CBTC, the web app, keeper and API (still on the 0.10.0 coin flow), and an
+external-party borrower signing token-loan transactions with its own key.
 
 Tests: `test/daml/Veil/TokenLoanTest.daml` (lifecycle, margin call and
 liquidation, cure by pay-down, overdue and lapse, write-off, committed offers
 and lender archive, offer guards, forged funding, lock needs both executors and
 a bilateral batch, allocation expiry, registry replacement, unique settlement
-anchors).
+anchors) and `test/daml/Veil/RegistryTest.daml` (the above against Splice's
+reference token, with balances).
